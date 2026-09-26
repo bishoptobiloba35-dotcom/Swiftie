@@ -89,15 +89,15 @@ app.get("/api/track/:trackingCode", async (req, res) => {
   res.json({ id: delivery.id, trackingCode: delivery.trackingCode, status: delivery.status, pickup: delivery.pickup, dropoff: delivery.dropoff, driverId: delivery.driverId, pickupPhotoUrl: delivery.pickupPhotoUrl, latestLocation, updatedAt: delivery.updatedAt });
 });
 
-app.get("/api/driver/:driverId/jobs", async (req, res) => {
+app.get("/api/driver/:driverId/jobs", requireAuth("DRIVER"), async (req, res) => {
   const jobs = databaseEnabled()
     ? await listOpenJobs()
     : [...deliveries.values()].filter(d => !d.driverId && ["CREATED", "PAYMENT_AUTHORIZED"].includes(d.status));
   res.json({ driverId: req.params.driverId, jobs: jobs.map(safeDelivery) });
 });
 
-app.post("/api/deliveries/:id/accept", async (req, res) => {
-  const driverId = String(req.body?.driverId ?? "");
+app.post("/api/deliveries/:id/accept", requireAuth("DRIVER"), async (req, res) => {
+  const driverId = identity(req);
   if (!driverId) return res.status(400).json({ error: "driverId is required" });
   if (databaseEnabled()) {
     const updated = await transitionDelivery(req.params.id, "CREATED", "DRIVER_ASSIGNED", driverId)
@@ -114,7 +114,7 @@ app.post("/api/deliveries/:id/accept", async (req, res) => {
   res.json(safeDelivery(delivery));
 });
 
-app.post("/api/deliveries/:id/at-pickup", async (req, res) => {
+app.post("/api/deliveries/:id/at-pickup", requireAuth("DRIVER"), async (req, res) => {
   const driverId = String(req.body?.driverId ?? "");
   if (databaseEnabled()) {
     const updated = await transitionDelivery(req.params.id, "DRIVER_ASSIGNED", "DRIVER_AT_PICKUP", driverId);
@@ -130,7 +130,7 @@ app.post("/api/deliveries/:id/at-pickup", async (req, res) => {
   res.json(safeDelivery(delivery));
 });
 
-app.post("/api/deliveries/:id/pickup", async (req, res) => {
+app.post("/api/deliveries/:id/pickup", requireAuth("DRIVER"), async (req, res) => {
   const driverId = String(req.body?.driverId ?? "");
   const photo = String(req.body?.pickupPhotoUrl ?? "");
   if (!photo) return res.status(400).json({ error: "Pickup parcel photo is required" });
@@ -148,7 +148,7 @@ app.post("/api/deliveries/:id/pickup", async (req, res) => {
   res.json(safeDelivery(delivery));
 });
 
-app.post("/api/deliveries/:id/start-trip", async (req, res) => {
+app.post("/api/deliveries/:id/start-trip", requireAuth("DRIVER"), async (req, res) => {
   const driverId = String(req.body?.driverId ?? "");
   if (databaseEnabled()) {
     const updated = await transitionDelivery(req.params.id, "PICKED_UP", "IN_TRANSIT", driverId);
@@ -164,7 +164,7 @@ app.post("/api/deliveries/:id/start-trip", async (req, res) => {
   res.json(safeDelivery(delivery));
 });
 
-app.post("/api/deliveries/:id/location", async (req, res) => {
+app.post("/api/deliveries/:id/location", requireAuth("DRIVER"), async (req, res) => {
   const delivery = await getOne(req.params.id);
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   const event = {
@@ -180,7 +180,7 @@ app.post("/api/deliveries/:id/location", async (req, res) => {
   res.status(201).json(event);
 });
 
-app.post("/api/deliveries/:id/arrived", async (req, res) => {
+app.post("/api/deliveries/:id/arrived", requireAuth("DRIVER"), async (req, res) => {
   const driverId = String(req.body?.driverId ?? "");
   if (databaseEnabled()) {
     const updated = await transitionDelivery(req.params.id, "IN_TRANSIT", "ARRIVED", driverId);
@@ -196,7 +196,7 @@ app.post("/api/deliveries/:id/arrived", async (req, res) => {
   res.json(safeDelivery(delivery));
 });
 
-app.post("/api/deliveries/:id/complete", async (req, res) => {
+app.post("/api/deliveries/:id/complete", requireAuth("DRIVER"), async (req, res) => {
   const driverId = String(req.body?.driverId ?? "");
   const pin = String(req.body?.receiverPin ?? "");
   if (databaseEnabled()) {
