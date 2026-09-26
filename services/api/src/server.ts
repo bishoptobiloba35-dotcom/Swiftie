@@ -3,7 +3,7 @@ import cors from "cors";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { attachRealtime, publishDeliveryLocation } from "./realtime.js";
+import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation } from "./database/deliveryRepository.js";
@@ -93,12 +93,14 @@ app.post("/api/deliveries/:id/accept", async (req, res) => {
     const updated = await transitionDelivery(req.params.id, "CREATED", "DRIVER_ASSIGNED", driverId)
       ?? await transitionDelivery(req.params.id, "PAYMENT_AUTHORIZED", "DRIVER_ASSIGNED", driverId);
     if (!updated) return res.status(409).json({ error: "Delivery is no longer available" });
+    publishDeliveryUpdate(req.params.id, safeDelivery(updated));
     return res.json(safeDelivery(updated));
   }
   const delivery = deliveries.get(req.params.id);
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   if (delivery.driverId || !["CREATED", "PAYMENT_AUTHORIZED"].includes(delivery.status)) return res.status(409).json({ error: "Delivery is no longer available" });
   delivery.driverId = driverId; delivery.status = "DRIVER_ASSIGNED"; delivery.updatedAt = new Date().toISOString();
+  publishDeliveryUpdate(delivery.id, safeDelivery(delivery));
   res.json(safeDelivery(delivery));
 });
 
@@ -114,6 +116,7 @@ app.post("/api/deliveries/:id/at-pickup", async (req, res) => {
   if (delivery.driverId !== driverId) return res.status(403).json({ error: "Driver is not assigned to this delivery" });
   if (delivery.status !== "DRIVER_ASSIGNED") return res.status(409).json({ error: "Delivery is not awaiting pickup" });
   delivery.status = "DRIVER_AT_PICKUP"; delivery.updatedAt = new Date().toISOString();
+  publishDeliveryUpdate(delivery.id, safeDelivery(delivery));
   res.json(safeDelivery(delivery));
 });
 
@@ -131,6 +134,7 @@ app.post("/api/deliveries/:id/pickup", async (req, res) => {
   if (delivery.driverId !== driverId) return res.status(403).json({ error: "Driver is not assigned to this delivery" });
   if (delivery.status !== "DRIVER_AT_PICKUP") return res.status(409).json({ error: "Driver must be at pickup first" });
   delivery.pickupPhotoUrl = photo; delivery.status = "PICKED_UP"; delivery.updatedAt = new Date().toISOString();
+  publishDeliveryUpdate(delivery.id, safeDelivery(delivery));
   res.json(safeDelivery(delivery));
 });
 
@@ -146,6 +150,7 @@ app.post("/api/deliveries/:id/start-trip", async (req, res) => {
   if (delivery.driverId !== driverId) return res.status(403).json({ error: "Driver is not assigned to this delivery" });
   if (delivery.status !== "PICKED_UP") return res.status(409).json({ error: "Parcel must be picked up first" });
   delivery.status = "IN_TRANSIT"; delivery.updatedAt = new Date().toISOString();
+  publishDeliveryUpdate(delivery.id, safeDelivery(delivery));
   res.json(safeDelivery(delivery));
 });
 
@@ -177,6 +182,7 @@ app.post("/api/deliveries/:id/arrived", async (req, res) => {
   if (delivery.driverId !== driverId) return res.status(403).json({ error: "Driver is not assigned to this delivery" });
   if (delivery.status !== "IN_TRANSIT") return res.status(409).json({ error: "Delivery is not in transit" });
   delivery.status = "ARRIVED"; delivery.updatedAt = new Date().toISOString();
+  publishDeliveryUpdate(delivery.id, safeDelivery(delivery));
   res.json(safeDelivery(delivery));
 });
 
@@ -195,6 +201,7 @@ app.post("/api/deliveries/:id/complete", async (req, res) => {
   if (!["IN_TRANSIT", "ARRIVED"].includes(delivery.status)) return res.status(409).json({ error: "Delivery is not ready for completion" });
   if (pin !== delivery.receiverPin) return res.status(401).json({ error: "Invalid receiver PIN" });
   delivery.status = "DELIVERED"; delivery.updatedAt = new Date().toISOString();
+  publishDeliveryUpdate(delivery.id, safeDelivery(delivery));
   res.json(safeDelivery(delivery));
 });
 
