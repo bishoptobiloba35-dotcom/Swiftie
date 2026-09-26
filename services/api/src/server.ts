@@ -8,7 +8,7 @@ import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
-import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents } from "./database/deliveryRepository.js";
+import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus } from "./database/deliveryRepository.js";
 import { pingDatabase } from "./database/db.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
@@ -64,6 +64,60 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to create delivery" });
   }
+});
+
+app.post("/api/deliveries/:id/payment", requireAuth("CUSTOMER"), async (req, res) => {
+  const userId = identity(req);
+  const delivery = databaseEnabled()
+    ? await findDeliveryForUser(req.params.id, userId, "CUSTOMER")
+    : await getOne(req.params.id);
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+
+  const amountMinor = Number(req.body?.amountMinor);
+  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+    return res.status(400).json({ error: "A valid server-calculated amount is required" });
+  }
+
+  if (!databaseEnabled()) {
+    return res.status(503).json({ error: "Payments require the production database and payment provider" });
+  }
+
+  const payment = await createPayment({
+    deliveryId: delivery.id,
+    provider: process.env.PAYMENT_PROVIDER || "pending",
+    amountMinor,
+    currency: "NGN"
+  });
+  await recordDeliveryEvent({
+    deliveryId: delivery.id,
+    eventType: "PAYMENT_CREATED",
+    actorUserId: userId,
+    metadata: { paymentId: payment.id, amountMinor, currency: "NGN" }
+  });
+  res.status(201).json({ payment });
+});
+
+app.post("/api/deliveries/:id/payment/status", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
+  const userId = identity(req);
+  const role = (req as typeof req & { user?: { role: "CUSTOMER" | "ADMIN" } }).user!.role;
+  const delivery = databaseEnabled()
+    ? await findDeliveryForUser(req.params.id, userId, role)
+    : await getOne(req.params.id);
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+
+  const status = String(req.body?.status ?? "");
+  if (!["AUTHORIZED","HELD","RELEASED","REFUNDED","FAILED"].includes(status)) {
+    return res.status(400).json({ error: "Invalid payment status" });
+  }
+  const payment = await updatePaymentStatus(req.params.id, status as any, req.body?.providerReference);
+  if (!payment) return res.status(404).json({ error: "Payment not found" });
+  await recordDeliveryEvent({
+    deliveryId: delivery.id,
+    eventType: "PAYMENT_STATUS_CHANGED",
+    actorUserId: userId,
+    metadata: { status, providerReference: req.body?.providerReference ?? null }
+  });
+  res.json({ payment });
 });
 
 app.get("/api/deliveries/:id/events", requireAuth("CUSTOMER", "DRIVER", "ADMIN"), async (req, res) => {
