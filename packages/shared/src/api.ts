@@ -57,7 +57,8 @@ export class SwiftDropApi {
 
   connectToTracking(
     deliveryId: string,
-    onLocation: (location: ApiDelivery["latestLocation"]) => void
+    onLocation: (location: ApiDelivery["latestLocation"]) => void,
+    onDeliveryUpdate?: (delivery: Partial<ApiDelivery>) => void
   ): WebSocket {
     const wsBase = this.baseUrl.replace(/^http/, "ws");
     const socket = new WebSocket(
@@ -66,10 +67,14 @@ export class SwiftDropApi {
     socket.onmessage = event => {
       const message = JSON.parse(event.data) as {
         type: string;
-        payload: ApiDelivery["latestLocation"];
+        payload: ApiDelivery["latestLocation"] | Partial<ApiDelivery>;
       };
-      if (message.type === "LOCATION_UPDATED") onLocation(message.payload);
+      if (message.type === "LOCATION_UPDATED") {
+        onLocation(message.payload as ApiDelivery["latestLocation"]);
+      }
+      if (message.type === "DELIVERY_UPDATED") {
+        onDeliveryUpdate?.(message.payload as Partial<ApiDelivery>);
+      }
     };
     return socket;
-  }
-}
+  }}
