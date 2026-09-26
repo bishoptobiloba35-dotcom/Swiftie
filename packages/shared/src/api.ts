@@ -58,6 +58,22 @@ export class SwiftDropApi {
     return response.json() as Promise<{ ok: boolean }>;
   }
 
+  async quote(input: {
+    pickup: { latitude: number; longitude: number };
+    dropoff: { latitude: number; longitude: number };
+  }): Promise<{
+    currency: string; distanceMeters: number; durationSeconds: number;
+    baseFareMinor: number; distanceFareMinor: number; serviceFeeMinor: number; totalMinor: number;
+  }> {
+    const response = await fetch(this.baseUrl + "/api/quotes", {
+      method: "POST",
+      headers: this.headers(true),
+      body: JSON.stringify(input)
+    });
+    if (!response.ok) throw new Error("Unable to calculate delivery quote");
+    return response.json();
+  }
+
   async createDelivery(input: CreateDeliveryInput): Promise<ApiDelivery> {
     const response = await fetch(this.baseUrl + "/api/deliveries", {
       method: "POST",
