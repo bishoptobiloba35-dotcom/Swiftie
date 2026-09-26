@@ -70,6 +70,14 @@ async function getDriverToken(): Promise<string> {
   throw new Error("Please sign in to SwiftDrop Driver first.");
 }
 
+async function getDriverId(): Promise<string> {
+  const stored = await AsyncStorage.getItem("swiftdrop.driverId");
+  if (stored) return stored;
+  const data = await api("/api/driver/me");
+  await AsyncStorage.setItem("swiftdrop.driverId", data.driver.id);
+  return data.driver.id;
+}
+
 async function api(path: string, body?: unknown) {
   const token = await getDriverToken();
   const response = await fetch(API_URL + path, {
@@ -99,7 +107,7 @@ export default function App() {
 
   const refreshJobs = async () => {
     try {
-      const data = await api("/api/driver/" + DRIVER_ID + "/jobs");
+      const data = await api("/api/driver/" + await getDriverId() + "/jobs");
       setJobs(data.jobs);
     } catch (error) {
       Alert.alert("SwiftDrop", error instanceof Error ? error.message : "Could not load jobs");
@@ -135,7 +143,7 @@ export default function App() {
 
   const acceptJob = async (selected: Job) => {
     try {
-      const data = await api("/api/deliveries/" + selected.id + "/accept", { driverId: DRIVER_ID });
+      const data = await api("/api/deliveries/" + selected.id + "/accept", {});
       setJob(data);
       setStatus(data.status);
       await refreshJobs();
@@ -288,7 +296,7 @@ export default function App() {
   const complete = async () => {
     if (!job || pin.length < 4) return;
     try {
-      const data = await api("/api/deliveries/" + job.id + "/complete", { driverId: DRIVER_ID, receiverPin: pin });
+      const data = await api("/api/deliveries/" + job.id + "/complete", { receiverPin: pin });
       setJob(data); setStatus(data.status); setTracking(false);
       Alert.alert("Delivered", "Receiver PIN verified. Delivery completed.");
     } catch (error) {
