@@ -26,7 +26,9 @@ export default function App() {
   const [dropoff, setDropoff] = React.useState("");
   const [receiver, setReceiver] = React.useState("");
   const [phone, setPhone] = React.useState("");
+  const [email, setEmail] = React.useState("");
   const [trackingCode, setTrackingCode] = React.useState("");
+  const [quote, setQuote] = React.useState<{ totalMinor: number; distanceMeters: number; durationSeconds: number } | null>(null);
   const [createdCode, setCreatedCode] = React.useState("");
   const [delivery, setDelivery] = React.useState<ApiDelivery | null>(null);
   const [location, setLocation] = React.useState<ApiDelivery["latestLocation"]>(null);
@@ -35,12 +37,19 @@ export default function App() {
   async function createDelivery() {
     try {
       api.setAccessToken(await getCustomerToken());
+      // Temporary address-to-coordinate adapter for the development flow.
+      // Production will replace this with real geocoding/map selection.
+      const pickupPoint = { latitude: 6.5244, longitude: 3.3792 };
+      const dropoffPoint = { latitude: 6.6018, longitude: 3.3515 };
+      const calculated = await api.quote({ pickup: pickupPoint, dropoff: dropoffPoint });
+      setQuote(calculated);
       const result = await api.createDelivery({
         senderId: CUSTOMER_ID,
         receiverName: receiver,
         receiverPhone: phone,
-        pickup: { label: "Pickup", formattedAddress: pickup },
-        dropoff: { label: "Drop-off", formattedAddress: dropoff }
+        pickup: { label: "Pickup", formattedAddress: pickup, ...pickupPoint },
+        dropoff: { label: "Drop-off", formattedAddress: dropoff, ...dropoffPoint },
+        quote: calculated
       });
       setCreatedCode(result.trackingCode);
       setTrackingCode(result.trackingCode);
@@ -86,6 +95,8 @@ export default function App() {
         <TextInput style={styles.input} placeholder="Drop-off address" value={dropoff} onChangeText={setDropoff} />
         <TextInput style={styles.input} placeholder="Receiver name" value={receiver} onChangeText={setReceiver} />
         <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
+        <TextInput style={styles.input} placeholder="Payment email" keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
+        {quote ? <Text style={styles.code}>Estimated fare: ₦{(quote.totalMinor / 100).toLocaleString()} · {(quote.distanceMeters / 1000).toFixed(1)} km</Text> : null}
         <Pressable style={styles.primary} onPress={() => void createDelivery()}>
           <Text style={styles.primaryText}>Create delivery</Text>
         </Pressable>
