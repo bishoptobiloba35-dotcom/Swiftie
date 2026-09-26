@@ -17,6 +17,14 @@ export type ApiDelivery = {
     accuracyMeters?: number;
     recordedAt: string;
   } | null;
+  locationHistory?: Array<{
+    deliveryId: string;
+    driverId: string;
+    latitude: number;
+    longitude: number;
+    accuracyMeters?: number;
+    recordedAt: string;
+  }>;
   updatedAt: string;
 };
 
