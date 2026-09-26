@@ -1,5 +1,6 @@
 import React from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as WebBrowser from "expo-web-browser";
 import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, ScrollView } from "react-native";
 import { SwiftDropApi, type ApiDelivery } from "../../packages/shared/src/api";
 
@@ -56,10 +57,28 @@ export default function App() {
       setDelivery(result);
       if (!email.trim()) throw new Error("Enter your payment email before creating a delivery.");
       const payment = await api.initializePayment(result.id, email.trim());
-      Alert.alert(
-        "Payment ready",
-        `Amount: ₦${(payment.amountMinor / 100).toLocaleString()}\\nReference: ${payment.reference}\\n\\nOpen the Paystack authorization URL to complete payment.`
+      const checkout = await WebBrowser.openAuthSessionAsync(
+        payment.authorizationUrl,
+        API_URL + "/payment/callback"
       );
+      if (checkout.type === "cancel" || checkout.type === "dismiss") {
+        Alert.alert("Payment", "Checkout was closed. You can return to this delivery and check payment status.");
+      }
+      let verified = false;
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const status = await api.paymentStatus(result.id);
+        if (status.payment.status === "HELD" || status.payment.status === "AUTHORIZED") {
+          verified = true;
+          break;
+        }
+        if (status.payment.status === "FAILED" || status.payment.status === "REFUNDED") break;
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+      if (verified) {
+        Alert.alert("Payment verified", "Your delivery is now available for driver matching.");
+      } else {
+        Alert.alert("Payment pending", "We have not received payment confirmation yet. You can check again shortly.");
+      }
       await loadTracking(result.trackingCode);
     } catch (error) {
       Alert.alert("SwiftDrop", error instanceof Error ? error.message : "The API is not reachable yet.");
