@@ -3,7 +3,7 @@ import cors from "cors";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate } from "./realtime.js";
+import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation } from "./database/deliveryRepository.js";
@@ -68,6 +68,16 @@ app.get("/api/deliveries/:id", async (req, res) => {
   const delivery = await getOne(req.params.id);
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   res.json(safeDelivery(delivery));
+});
+
+app.post("/api/track/session", async (req, res) => {
+  const code = String(req.body?.trackingCode ?? "").trim();
+  if (!code) return res.status(400).json({ error: "trackingCode is required" });
+  const delivery = databaseEnabled()
+    ? await findByTrackingCode(code)
+    : [...deliveries.values()].find(d => d.trackingCode === code) ?? null;
+  if (!delivery) return res.status(404).json({ error: "Tracking code not found" });
+  res.json({ deliveryId: delivery.id, trackingToken: issueTrackingToken(delivery.id) });
 });
 
 app.get("/api/track/:trackingCode", async (req, res) => {
