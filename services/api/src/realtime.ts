@@ -26,9 +26,17 @@ export function attachRealtime(server: Server): void {
   });
 }
 
-export function publishDeliveryLocation(deliveryId: string, payload: unknown): void {
-  const message = JSON.stringify({ type: "LOCATION_UPDATED", payload });
+function publish(deliveryId: string, type: string, payload: unknown): void {
+  const message = JSON.stringify({ type, payload });
   for (const socket of subscribers.get(deliveryId) ?? []) {
     if (socket.readyState === WebSocket.OPEN) socket.send(message);
   }
+}
+
+export function publishDeliveryLocation(deliveryId: string, payload: unknown): void {
+  publish(deliveryId, "LOCATION_UPDATED", payload);
+}
+
+export function publishDeliveryUpdate(deliveryId: string, payload: unknown): void {
+  publish(deliveryId, "DELIVERY_UPDATED", payload);
 }
