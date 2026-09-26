@@ -8,11 +8,14 @@ import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation } from "./database/deliveryRepository.js";
 import { pingDatabase } from "./database/db.js";
+import { requireAuth } from "./authMiddleware.js";
+import authRoutes from "./authRoutes.js";
 
 const app = express();
 const httpServer = createServer(app);
 app.use(cors());
 app.use(express.json());
+app.use("/api/auth", authRoutes);
 
 type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED";
 type MemoryDelivery = {
