@@ -40,7 +40,9 @@ export default function App() {
     socketRef.current?.close();
     socketRef.current = api.connectToTracking(result.id, next => {
       setLocation(next ?? null);
-      setDelivery(current => current ? { ...current, latestLocation: next, status: "IN_TRANSIT" } : current);
+      setDelivery(current => current ? { ...current, latestLocation: next } : current);
+    }, updated => {
+      setDelivery(current => current ? { ...current, ...updated } : current);
     });
   }
 
@@ -85,8 +87,8 @@ export default function App() {
             <Text>Drop-off: {delivery.dropoff.formattedAddress}</Text>
             {delivery.pickupPhotoUrl ? (
               <View style={styles.photoBox}>
-                <Text style={styles.photoTitle}>Parcel pickup photo</Text>
-                <Text style={styles.muted}>{delivery.pickupPhotoUrl}</Text>
+                <Text style={styles.photoTitle}>Parcel pickup photo recorded</Text>
+                {delivery.pickupPhotoUrl.startsWith("data:image/") ? <Text style={styles.muted}>Pickup evidence captured by the driver.</Text> : <Text style={styles.muted}>Pickup evidence available.</Text>}
               </View>
             ) : null}
             {location ? (
