@@ -98,3 +98,19 @@ CREATE TABLE IF NOT EXISTS payouts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_payouts_status ON payouts(status);
+
+
+CREATE TABLE IF NOT EXISTS disputes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  delivery_id UUID NOT NULL UNIQUE REFERENCES deliveries(id),
+  opened_by UUID NOT NULL REFERENCES users(id),
+  reason TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'OPEN'
+    CHECK (status IN ('OPEN','UNDER_REVIEW','RESOLVED_REFUND','RESOLVED_RELEASE','CLOSED')),
+  resolution_note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_disputes_status ON disputes(status);
