@@ -10,7 +10,7 @@ import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus } from "./database/deliveryRepository.js";
 import { pingDatabase } from "./database/db.js";
-import { assignNextDeliveryToDriver } from "./database/deliveryRepository.js";
+import { assignNextDeliveryToDriver, setDriverOnline } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -305,6 +305,20 @@ async function authenticatedDriverId(req: express.Request): Promise<string | nul
   const driver = await driverForUser(userId);
   return driver?.id ?? null;
 }
+
+app.post("/api/driver/availability", requireAuth("DRIVER"), async (req, res) => {
+  try {
+    const driverId = await authenticatedDriverId(req);
+    if (!driverId) return res.status(403).json({ error: "Driver profile is not approved or found" });
+    const online = Boolean(req.body?.online);
+    if (!databaseEnabled()) return res.status(503).json({ error: "Driver availability requires the production database" });
+    const updated = await setDriverOnline(driverId, online);
+    if (!updated) return res.status(403).json({ error: "Driver is not approved" });
+    return res.json({ online });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to update availability" });
+  }
+});
 
 app.post("/api/driver/auto-assign", requireAuth("DRIVER"), async (req, res) => {
   try {
