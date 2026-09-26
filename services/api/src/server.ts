@@ -476,7 +476,8 @@ app.get("/api/admin/deliveries", requireAuth("ADMIN"), async (req, res) => {
   if (status) params.push(status);
   params.push(limit);
   const result = await pool!.query(
-    "SELECT d.id, d.tracking_code, d.sender_id, d.driver_id, d.receiver_name, d.status, d.quote_total_minor, d.quote_currency, d.created_at, d.updated_at FROM deliveries d " + whereClause + " ORDER BY d.updated_at DESC LIMIT $" + params.length,
+    "SELECT d.id, d.tracking_code, d.sender_id, d.driver_id, d.receiver_name, d.status, d.quote_total_minor, d.quote_currency, d.created_at, d.updated_at, " +
+      "(SELECT json_build_object('latitude', le.latitude, 'longitude', le.longitude, 'accuracyMeters', le.accuracy_meters, 'recordedAt', le.recorded_at) FROM location_events le WHERE le.delivery_id=d.id ORDER BY le.recorded_at DESC LIMIT 1) AS latest_location FROM deliveries d " + whereClause + " ORDER BY d.updated_at DESC LIMIT $" + params.length,
     params
   );
   res.json({ deliveries: result.rows });
