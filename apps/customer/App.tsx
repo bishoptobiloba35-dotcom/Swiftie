@@ -1,6 +1,7 @@
 import React from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
+import * as Linking from "expo-linking";
 import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, ScrollView } from "react-native";
 import { SwiftDropApi, type ApiDelivery } from "../../packages/shared/src/api";
 
@@ -59,7 +60,7 @@ export default function App() {
       const payment = await api.initializePayment(result.id, email.trim());
       const checkout = await WebBrowser.openAuthSessionAsync(
         payment.authorizationUrl,
-        API_URL + "/payment/callback"
+        Linking.createURL("payment/callback")
       );
       if (checkout.type === "cancel" || checkout.type === "dismiss") {
         Alert.alert("Payment", "Checkout was closed. You can return to this delivery and check payment status.");
