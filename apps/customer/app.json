@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "SwiftDrop",
+    "slug": "swiftdrop",
+    "version": "0.1.0",
+    "scheme": "swiftdrop",
+    "orientation": "portrait",
+    "ios": { "supportsTablet": true },
+    "android": {}
+  }
+}
