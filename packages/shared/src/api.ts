@@ -92,6 +92,15 @@ export class SwiftDropApi {
     return response.json();
   }
 
+  async paymentStatus(deliveryId: string): Promise<{ payment: { status: string; amountMinor: number; currency: string; providerReference?: string | null } }> {
+    const response = await fetch(this.baseUrl + `/api/deliveries/${deliveryId}/payment/status`, {
+      headers: this.headers()
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to read payment status");
+    return data;
+  }
+
   async initializePayment(deliveryId: string, email: string): Promise<{ authorizationUrl: string; reference: string; amountMinor: number }> {
     const response = await fetch(this.baseUrl + `/api/deliveries/${deliveryId}/payment/initialize`, {
       method: "POST",
