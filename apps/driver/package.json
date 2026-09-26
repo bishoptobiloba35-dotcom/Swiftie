@@ -1,0 +1,13 @@
+{
+  "name": "@swiftdrop/driver",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": { "start": "expo start", "android": "expo run:android", "ios": "expo run:ios" },
+  "dependencies": {
+    "expo": "~54.0.0",
+    "expo-location": "~19.0.0",
+    "react": "19.1.0",
+    "react-native": "0.81.4"
+  }
+}
