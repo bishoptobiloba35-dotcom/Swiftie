@@ -34,6 +34,34 @@ const createDeliverySchema = z.object({
   pickup: z.object({ label: z.string(), formattedAddress: z.string() }),
   dropoff: z.object({ label: z.string(), formattedAddress: z.string() })
 });
+const quoteSchema = z.object({
+  pickup: z.object({ latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
+  dropoff: z.object({ latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) })
+});
+
+function calculateQuote(pickup: { latitude: number; longitude: number }, dropoff: { latitude: number; longitude: number }) {
+  const earthRadius = 6371000;
+  const lat1 = pickup.latitude * Math.PI / 180;
+  const lat2 = dropoff.latitude * Math.PI / 180;
+  const dLat = (dropoff.latitude - pickup.latitude) * Math.PI / 180;
+  const dLng = (dropoff.longitude - pickup.longitude) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  const distanceMeters = earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const distanceKm = distanceMeters / 1000;
+  const baseFareMinor = 50000;
+  const distanceFareMinor = Math.ceil(distanceKm * 18000);
+  const serviceFeeMinor = Math.ceil((baseFareMinor + distanceFareMinor) * 0.05);
+  return {
+    currency: "NGN",
+    distanceMeters: Math.round(distanceMeters),
+    durationSeconds: Math.max(60, Math.round((distanceMeters / 8000) * 3600)),
+    baseFareMinor,
+    distanceFareMinor,
+    serviceFeeMinor,
+    totalMinor: baseFareMinor + distanceFareMinor + serviceFeeMinor
+  };
+}
+
 const trackingCode = () => "SD-" + Math.random().toString(36).slice(2, 8).toUpperCase();
 const safeDelivery = (d: any) => ({ ...d, receiverPin: undefined, receiverPinHash: undefined });
 
@@ -45,6 +73,12 @@ app.get("/health", async (_req, res) => {
   let database = false;
   try { database = await pingDatabase(); } catch {}
   res.json({ ok: true, service: "swiftdrop-api", database });
+});
+
+app.post("/api/quotes", requireAuth("CUSTOMER"), async (req, res) => {
+  const parsed = quoteSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  res.json(calculateQuote(parsed.data.pickup, parsed.data.dropoff));
 });
 
 app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
