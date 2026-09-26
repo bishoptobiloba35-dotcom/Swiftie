@@ -668,7 +668,8 @@ app.post("/api/deliveries/:id/location", requireAuth("DRIVER"), async (req, res)
 });
 
 app.post("/api/deliveries/:id/arrived", requireAuth("DRIVER"), async (req, res) => {
-  const driverId = String(req.body?.driverId ?? "");
+  const driverId = await authenticatedDriverId(req);
+  if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
   if (databaseEnabled()) {
     const updated = await transitionDelivery(req.params.id, "IN_TRANSIT", "ARRIVED", driverId);
     if (!updated) return res.status(409).json({ error: "Delivery is not in transit or driver is not assigned" });
