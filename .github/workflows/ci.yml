@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        project: [api, customer, driver, admin]
+        project: [shared, api, admin]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
