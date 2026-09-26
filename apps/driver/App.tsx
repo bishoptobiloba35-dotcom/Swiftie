@@ -164,11 +164,12 @@ export default function App() {
   const confirmPickup = async () => {
     if (!job) return;
     if (!photoUrl.trim()) {
-      Alert.alert("Parcel photo required", "Add the parcel photo URL for this development build. Camera upload will be connected next.");
+      Alert.alert("Parcel photo required", "Take a parcel photo before confirming pickup.");
       return;
     }
     try {
-      const data = await api("/api/deliveries/" + job.id + "/pickup", { driverId: DRIVER_ID, pickupPhotoUrl: photoUrl.trim() });
+      const upload = await api("/api/uploads/pickup-photo", { image: photoUrl });
+      const data = await api("/api/deliveries/" + job.id + "/pickup", { pickupPhotoUrl: upload.url });
       setJob(data); setStatus(data.status);
     } catch (error) {
       Alert.alert("Pickup", error instanceof Error ? error.message : "Try again");
