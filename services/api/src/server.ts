@@ -147,6 +147,44 @@ app.post("/api/deliveries/:id/payment", requireAuth("CUSTOMER"), async (req, res
   res.status(201).json({ payment });
 });
 
+app.post("/api/payments/paystack/webhook", async (req, res) => {
+  const secret = process.env.PAYMENT_WEBHOOK_SECRET;
+  const signature = req.header("x-paystack-signature");
+  if (!secret || !signature) return res.status(401).end();
+
+  const crypto = await import("node:crypto");
+  const expected = crypto.createHmac("sha512", secret)
+    .update(JSON.stringify(req.body))
+    .digest("hex");
+  if (signature !== expected) return res.status(401).end();
+
+  const event = req.body as any;
+  if (event?.event !== "charge.success") return res.status(200).json({ received: true });
+
+  const data = event.data;
+  const deliveryId = String(data?.metadata?.deliveryId ?? "");
+  const reference = String(data?.reference ?? "");
+  if (!deliveryId || !reference) return res.status(200).json({ received: true });
+
+  const payment = await findPayment(deliveryId);
+  if (!payment || payment.provider !== "paystack" || payment.providerReference !== reference) {
+    return res.status(200).json({ received: true });
+  }
+
+  if (Number(data.amount) !== payment.amountMinor || String(data.currency) !== payment.currency) {
+    await updatePaymentStatus(deliveryId, "FAILED", reference);
+    return res.status(200).json({ received: true });
+  }
+
+  await updatePaymentStatus(deliveryId, "HELD", reference);
+  await recordDeliveryEvent({
+    deliveryId,
+    eventType: "PAYMENT_HELD",
+    metadata: { provider: "paystack", reference }
+  });
+  return res.status(200).json({ received: true });
+});
+
 app.post("/api/deliveries/:id/payment/status", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
   const userId = identity(req);
   const role = (req as typeof req & { user?: { role: "CUSTOMER" | "ADMIN" } }).user!.role;
