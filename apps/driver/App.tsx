@@ -6,7 +6,7 @@ import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
-const DRIVER_ID = "00000000-0000-4000-8000-000000000002";\n\nconst BACKGROUND_LOCATION_TASK = "SWIFTDROP_BACKGROUND_LOCATION";
+const BACKGROUND_LOCATION_TASK = "SWIFTDROP_BACKGROUND_LOCATION";
 
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   if (error) return;
@@ -67,15 +67,7 @@ type Job = {
 async function getDriverToken(): Promise<string> {
   const existing = await AsyncStorage.getItem("swiftdrop.driverAccessToken");
   if (existing) return existing;
-  const response = await fetch(API_URL + "/api/auth/dev-token", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ userId: DRIVER_ID, role: "DRIVER" })
-  });
-  const data = await response.json();
-  if (!response.ok || !data.accessToken) throw new Error(data.error ?? "Driver authentication failed");
-  await AsyncStorage.setItem("swiftdrop.driverAccessToken", data.accessToken);
-  return data.accessToken;
+  throw new Error("Please sign in to SwiftDrop Driver first.");
 }
 
 async function api(path: string, body?: unknown) {
@@ -91,6 +83,9 @@ async function api(path: string, body?: unknown) {
 }
 
 export default function App() {
+  const [signedIn, setSignedIn] = React.useState(false);
+  const [authPhone, setAuthPhone] = React.useState("");
+  const [authPassword, setAuthPassword] = React.useState("");
   const [online, setOnline] = React.useState(false);
   const [jobs, setJobs] = React.useState<Job[]>([]);
   const [job, setJob] = React.useState<Job | null>(null);
@@ -246,7 +241,35 @@ export default function App() {
         }
       );
     })();
-    return () => {
+    async function signIn() {
+    try {
+      const response = await fetch(API_URL + "/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ phone: authPhone, password: authPassword })
+      });
+      const data = await response.json();
+      if (!response.ok || data.user?.role !== "DRIVER") throw new Error(data.error ?? "Driver sign in failed");
+      await AsyncStorage.setItem("swiftdrop.driverAccessToken", data.accessToken);
+      setSignedIn(true);
+    } catch (error) {
+      Alert.alert("Sign in failed", error instanceof Error ? error.message : "Unable to sign in");
+    }
+  }
+
+  if (!signedIn) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Text style={styles.title}>SwiftDrop Driver</Text>
+        <Text style={styles.subtitle}>Sign in to go online and receive deliveries.</Text>
+        <TextInput style={styles.input} placeholder="Phone number" value={authPhone} onChangeText={setAuthPhone} keyboardType="phone-pad" />
+        <TextInput style={styles.input} placeholder="Password" value={authPassword} onChangeText={setAuthPassword} secureTextEntry />
+        <Pressable style={styles.button} onPress={signIn}><Text style={styles.buttonText}>Sign in</Text></Pressable>
+      </SafeAreaView>
+    );
+  }
+
+  return () => {
       cancelled = true;
       subscription?.remove();
     };
