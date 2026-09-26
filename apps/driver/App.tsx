@@ -94,6 +94,12 @@ export default function App() {
   const [signedIn, setSignedIn] = React.useState(false);
   const [authPhone, setAuthPhone] = React.useState("");
   const [authPassword, setAuthPassword] = React.useState("");
+  const [authName, setAuthName] = React.useState("");
+  const [authEmail, setAuthEmail] = React.useState("");
+  const [authMode, setAuthMode] = React.useState<"login" | "register">("login");
+  const [documentType, setDocumentType] = React.useState("DRIVER_LICENSE");
+  const [documentUrl, setDocumentUrl] = React.useState("");
+  const [kycSubmitted, setKycSubmitted] = React.useState(false);
   const [online, setOnline] = React.useState(false);
   const [jobs, setJobs] = React.useState<Job[]>([]);
   const [job, setJob] = React.useState<Job | null>(null);
@@ -264,8 +270,67 @@ export default function App() {
     }
   }
 
+  async function registerDriver() {
+    try {
+      const response = await fetch(API_URL + "/api/auth/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          fullName: authName,
+          phone: authPhone,
+          email: authEmail || undefined,
+          password: authPassword,
+          role: "DRIVER"
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Driver registration failed");
+      await AsyncStorage.setItem("swiftdrop.driverAccessToken", data.accessToken);
+      await AsyncStorage.setItem("swiftdrop.driverId", data.user.id);
+      setSignedIn(true);
+    } catch (error) {
+      Alert.alert("Registration failed", error instanceof Error ? error.message : "Unable to register");
+    }
+  }
+
+  async function submitKyc() {
+    try {
+      await api("/api/driver/documents", { documentType, documentUrl });
+      setKycSubmitted(true);
+      Alert.alert("KYC submitted", "Your document is now pending admin review.");
+    } catch (error) {
+      Alert.alert("KYC submission failed", error instanceof Error ? error.message : "Unable to submit document");
+    }
+  }
+
   if (!signedIn) {
     return (
+      <SafeAreaView style={styles.container}>
+        <Text style={styles.title}>SwiftDrop Driver</Text>
+        <Text style={styles.subtitle}>{authMode === "login" ? "Sign in to receive deliveries." : "Create your driver account."}</Text>
+        {authMode === "register" && <TextInput style={styles.input} placeholder="Full name" value={authName} onChangeText={setAuthName} />}
+        <TextInput style={styles.input} placeholder="Phone number" value={authPhone} onChangeText={setAuthPhone} keyboardType="phone-pad" />
+        {authMode === "register" && <TextInput style={styles.input} placeholder="Email (optional)" value={authEmail} onChangeText={setAuthEmail} keyboardType="email-address" autoCapitalize="none" />}
+        <TextInput style={styles.input} placeholder="Password" value={authPassword} onChangeText={setAuthPassword} secureTextEntry />
+        <Pressable style={styles.button} onPress={authMode === "login" ? signIn : registerDriver}><Text style={styles.buttonText}>{authMode === "login" ? "Sign in" : "Create driver account"}</Text></Pressable>
+        <Pressable onPress={() => setAuthMode(authMode === "login" ? "register" : "login")}><Text style={styles.link}>{authMode === "login" ? "Create a driver account" : "Already have an account? Sign in"}</Text></Pressable>
+      </SafeAreaView>
+    );
+  }
+
+  if (!kycSubmitted) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Text style={styles.title}>Driver verification</Text>
+        <Text style={styles.subtitle}>Submit a document for admin review before going online.</Text>
+        <TextInput style={styles.input} placeholder="Document type" value={documentType} onChangeText={setDocumentType} />
+        <TextInput style={styles.input} placeholder="Secure document URL" value={documentUrl} onChangeText={setDocumentUrl} autoCapitalize="none" />
+        <Pressable style={styles.button} onPress={submitKyc}><Text style={styles.buttonText}>Submit document</Text></Pressable>
+      </SafeAreaView>
+    );
+  }
+
+  return (
       <SafeAreaView style={styles.container}>
         <Text style={styles.title}>SwiftDrop Driver</Text>
         <Text style={styles.subtitle}>Sign in to go online and receive deliveries.</Text>
