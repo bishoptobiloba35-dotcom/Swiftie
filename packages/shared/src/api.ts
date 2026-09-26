@@ -4,8 +4,8 @@ export type ApiDelivery = {
   senderId: string;
   receiverName: string;
   receiverPhone: string;
-  pickup: { label: string; formattedAddress: string };
-  dropoff: { label: string; formattedAddress: string };
+  pickup: { label: string; formattedAddress: string; location?: { latitude: number; longitude: number; recordedAt?: string } };
+  dropoff: { label: string; formattedAddress: string; location?: { latitude: number; longitude: number; recordedAt?: string } };
   quote?: {
     currency: string;
     distanceMeters: number;
