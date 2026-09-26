@@ -37,7 +37,20 @@ export type CreateDeliveryInput = {
 };
 
 export class SwiftDropApi {
+  private accessToken: string | null = null;
+
   constructor(private readonly baseUrl: string) {}
+
+  setAccessToken(token: string): void {
+    this.accessToken = token;
+  }
+
+  private headers(json = false): Record<string, string> {
+    return {
+      ...(json ? { "content-type": "application/json" } : {}),
+      ...(this.accessToken ? { authorization: "Bearer " + this.accessToken } : {})
+    };
+  }
 
   async health(): Promise<{ ok: boolean }> {
     const response = await fetch(this.baseUrl + "/health");
@@ -48,7 +61,7 @@ export class SwiftDropApi {
   async createDelivery(input: CreateDeliveryInput): Promise<ApiDelivery> {
     const response = await fetch(this.baseUrl + "/api/deliveries", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: this.headers(true),
       body: JSON.stringify(input)
     });
     if (!response.ok) throw new Error("Unable to create delivery");
