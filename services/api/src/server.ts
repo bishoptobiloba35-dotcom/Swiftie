@@ -17,6 +17,7 @@ const httpServer = createServer(app);
 app.use(cors());
 app.use(express.json());
 app.use("/api/auth", authRoutes);
+app.use("/uploads", express.static("uploads"));
 
 type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED";
 type MemoryDelivery = {
