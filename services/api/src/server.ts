@@ -524,7 +524,17 @@ app.get("/api/track/:trackingCode", async (req, res) => {
     : [...deliveries.values()].find(d => d.trackingCode === req.params.trackingCode) ?? null;
   if (!delivery) return res.status(404).json({ error: "Tracking code not found" });
   const latestLocation = databaseEnabled() ? await latestPersistentLocation(delivery.id) : getLatestLocation(delivery.id);
-  res.json({ id: delivery.id, trackingCode: delivery.trackingCode, status: delivery.status, pickup: delivery.pickup, dropoff: delivery.dropoff, driverId: delivery.driverId, pickupPhotoUrl: delivery.pickupPhotoUrl, latestLocation, updatedAt: delivery.updatedAt });
+  // Public tracking intentionally omits internal driver identity and other account data.
+  res.json({
+    id: delivery.id,
+    trackingCode: delivery.trackingCode,
+    status: delivery.status,
+    pickup: delivery.pickup,
+    dropoff: delivery.dropoff,
+    pickupPhotoUrl: delivery.pickupPhotoUrl,
+    latestLocation,
+    updatedAt: delivery.updatedAt
+  });
 });
 
 async function authenticatedDriverId(req: express.Request): Promise<string | null> {
