@@ -32,7 +32,16 @@ const deliveries = new Map<string, MemoryDelivery>();
 const createDeliverySchema = z.object({
   senderId: z.string().uuid(), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
   pickup: z.object({ label: z.string(), formattedAddress: z.string() }),
-  dropoff: z.object({ label: z.string(), formattedAddress: z.string() })
+  dropoff: z.object({ label: z.string(), formattedAddress: z.string() }),
+  quote: z.object({
+    currency: z.literal("NGN"),
+    distanceMeters: z.number().int().nonnegative(),
+    durationSeconds: z.number().int().positive(),
+    baseFareMinor: z.number().int().positive(),
+    distanceFareMinor: z.number().int().nonnegative(),
+    serviceFeeMinor: z.number().int().nonnegative(),
+    totalMinor: z.number().int().positive()
+  })
 });
 const quoteSchema = z.object({
   pickup: z.object({ latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
@@ -85,6 +94,9 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   const parsed = createDeliverySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const input = { ...parsed.data, senderId: identity(req) };
+  const quote = parsed.data.quote;
+  const expectedQuote = req.body?.quote;
+  if (JSON.stringify(quote) !== JSON.stringify(expectedQuote)) return res.status(400).json({ error: "Quote is invalid" });
   const pin = String(Math.floor(100000 + Math.random() * 900000));
   try {
     if (databaseEnabled()) {
