@@ -94,6 +94,25 @@ app.get("/health", async (_req, res) => {
   res.json({ ok: true, service: "swiftdrop-api", database });
 });
 
+app.get("/api/notifications", requireAuth(), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Notifications require the production database" });
+  const result = await pool!.query(
+    "SELECT id, delivery_id, title, body, type, read_at, created_at FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100",
+    [identity(req)]
+  );
+  res.json({ notifications: result.rows });
+});
+
+app.post("/api/notifications/:id/read", requireAuth(), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Notifications require the production database" });
+  const result = await pool!.query(
+    "UPDATE notifications SET read_at=COALESCE(read_at, now()) WHERE id=$1 AND user_id=$2 RETURNING id, read_at",
+    [req.params.id, identity(req)]
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: "Notification not found" });
+  res.json({ notification: result.rows[0] });
+});
+
 app.post("/api/notifications/device-token", requireAuth(), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Notifications require the production database" });
   const token = String(req.body?.token ?? "").trim();
