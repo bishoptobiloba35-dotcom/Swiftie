@@ -94,6 +94,13 @@ app.get("/api/track/:trackingCode", async (req, res) => {
   res.json({ id: delivery.id, trackingCode: delivery.trackingCode, status: delivery.status, pickup: delivery.pickup, dropoff: delivery.dropoff, driverId: delivery.driverId, pickupPhotoUrl: delivery.pickupPhotoUrl, latestLocation, updatedAt: delivery.updatedAt });
 });
 
+async function authenticatedDriverId(req: express.Request): Promise<string | null> {
+  const userId = identity(req as express.Request & { user?: { userId: string; role: "CUSTOMER" | "DRIVER" | "ADMIN" } });
+  if (!databaseEnabled()) return userId;
+  const driver = await driverForUser(userId);
+  return driver?.id ?? null;
+}
+
 app.get("/api/driver/:driverId/jobs", requireAuth("DRIVER"), async (req, res) => {
   const jobs = databaseEnabled()
     ? await listOpenJobs()
@@ -102,8 +109,8 @@ app.get("/api/driver/:driverId/jobs", requireAuth("DRIVER"), async (req, res) =>
 });
 
 app.post("/api/deliveries/:id/accept", requireAuth("DRIVER"), async (req, res) => {
-  const driverId = identity(req);
-  if (!driverId) return res.status(400).json({ error: "driverId is required" });
+  const driverId = await authenticatedDriverId(req);
+  if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
   if (databaseEnabled()) {
     const updated = await transitionDelivery(req.params.id, "CREATED", "DRIVER_ASSIGNED", driverId)
       ?? await transitionDelivery(req.params.id, "PAYMENT_AUTHORIZED", "DRIVER_ASSIGNED", driverId);
@@ -120,7 +127,8 @@ app.post("/api/deliveries/:id/accept", requireAuth("DRIVER"), async (req, res) =
 });
 
 app.post("/api/deliveries/:id/at-pickup", requireAuth("DRIVER"), async (req, res) => {
-  const driverId = String(req.body?.driverId ?? "");
+  const driverId = await authenticatedDriverId(req);
+  if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
   if (databaseEnabled()) {
     const updated = await transitionDelivery(req.params.id, "DRIVER_ASSIGNED", "DRIVER_AT_PICKUP", driverId);
     if (!updated) return res.status(409).json({ error: "Delivery is not awaiting pickup or driver is not assigned" });
