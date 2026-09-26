@@ -1,6 +1,7 @@
 import React from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
+import * as Location from "expo-location";
 import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, ScrollView } from "react-native";
 import { SwiftDropApi, type ApiDelivery } from "../../packages/shared/src/api";
 
@@ -74,6 +75,20 @@ export default function App() {
     return { pickup: { latitude: values[0], longitude: values[1] }, dropoff: { latitude: values[2], longitude: values[3] } };
   }
 
+  async function useCurrentPickupLocation() {
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") throw new Error("Location permission is required to use your current position.");
+      const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setPickupLat(String(current.coords.latitude));
+      setPickupLng(String(current.coords.longitude));
+      setPickup(prev => prev || "Current location");
+      Alert.alert("Pickup location set", "Your current GPS coordinates are now selected as the pickup point.");
+    } catch (error) {
+      Alert.alert("Location unavailable", error instanceof Error ? error.message : "Unable to read your location.");
+    }
+  }
+
   async function getQuote() {
     try {
       const coords = coordinates();
@@ -145,7 +160,8 @@ export default function App() {
     <Text style={styles.heading}>Create a delivery</Text>
     <TextInput style={styles.input} placeholder="Pickup address" value={pickup} onChangeText={setPickup} />
     <TextInput style={styles.input} placeholder="Drop-off address" value={dropoff} onChangeText={setDropoff} />
-    <Text style={styles.hint}>Location selection will be replaced by the production map/address search. For now, enter coordinates for each address.</Text>
+    <Text style={styles.hint}>Choose your current location for pickup, or enter coordinates from a map/address search.</Text>
+    <Pressable style={styles.secondary} onPress={() => void useCurrentPickupLocation()}><Text style={styles.secondaryText}>Use my current location for pickup</Text></Pressable>
     <View style={styles.row}><TextInput style={styles.half} placeholder="Pickup latitude" value={pickupLat} onChangeText={setPickupLat} keyboardType="decimal-pad" /><TextInput style={styles.half} placeholder="Pickup longitude" value={pickupLng} onChangeText={setPickupLng} keyboardType="decimal-pad" /></View>
     <View style={styles.row}><TextInput style={styles.half} placeholder="Drop-off latitude" value={dropoffLat} onChangeText={setDropoffLat} keyboardType="decimal-pad" /><TextInput style={styles.half} placeholder="Drop-off longitude" value={dropoffLng} onChangeText={setDropoffLng} keyboardType="decimal-pad" /></View>
     <TextInput style={styles.input} placeholder="Receiver name" value={receiver} onChangeText={setReceiver} />
