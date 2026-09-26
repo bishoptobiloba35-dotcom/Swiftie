@@ -1,0 +1,7 @@
+{
+  "name":"swiftdrop-platform",
+  "private":true,
+  "workspaces":["apps/*","packages/*","services/*"],
+  "scripts":{"build":"npm run build --workspaces --if-present"},
+  "packageManager":"npm@11"
+}
