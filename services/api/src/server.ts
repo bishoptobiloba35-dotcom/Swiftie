@@ -102,10 +102,13 @@ async function authenticatedDriverId(req: express.Request): Promise<string | nul
 }
 
 app.get("/api/driver/:driverId/jobs", requireAuth("DRIVER"), async (req, res) => {
+  const driverId = await authenticatedDriverId(req);
+  if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
+  if (req.params.driverId !== driverId) return res.status(403).json({ error: "Driver identity mismatch" });
   const jobs = databaseEnabled()
     ? await listOpenJobs()
     : [...deliveries.values()].filter(d => !d.driverId && ["CREATED", "PAYMENT_AUTHORIZED"].includes(d.status));
-  res.json({ driverId: req.params.driverId, jobs: jobs.map(safeDelivery) });
+  res.json({ driverId, jobs: jobs.map(safeDelivery) });
 });
 
 app.post("/api/deliveries/:id/accept", requireAuth("DRIVER"), async (req, res) => {
