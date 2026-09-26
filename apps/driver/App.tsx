@@ -3,7 +3,7 @@ import { SafeAreaView, View, Text, Pressable, StyleSheet, Alert, TextInput } fro
 import * as Location from "expo-location";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
-const DRIVER_ID = "demo-driver";
+const DRIVER_ID = "00000000-0000-4000-8000-000000000003";
 
 type Job = {
   id: string; trackingCode: string;
