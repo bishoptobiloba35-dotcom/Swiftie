@@ -47,7 +47,7 @@ app.get("/health", async (_req, res) => {
   res.json({ ok: true, service: "swiftdrop-api", database });
 });
 
-app.post("/api/deliveries", async (req, res) => {
+app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   const parsed = createDeliverySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const input = parsed.data;
