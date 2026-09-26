@@ -2,9 +2,33 @@ import React from "react";
 import { SafeAreaView, View, Text, Pressable, StyleSheet, Alert, TextInput, Image } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Location from "expo-location";
+import * as TaskManager from "expo-task-manager";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
-const DRIVER_ID = "00000000-0000-4000-8000-000000000003";
+const DRIVER_ID = "00000000-0000-4000-8000-000000000003";\n\nconst BACKGROUND_LOCATION_TASK = "SWIFTDROP_BACKGROUND_LOCATION";
+
+TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
+  if (error) return;
+  const locations = (data as { locations?: Location.LocationObject[] } | undefined)?.locations ?? [];
+  const activeDeliveryId = await getActiveDeliveryId();
+  if (!activeDeliveryId) return;
+  for (const location of locations) {
+    try {
+      await api("/api/deliveries/" + activeDeliveryId + "/location", {
+        driverId: DRIVER_ID,
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+        accuracyMeters: location.coords.accuracy
+      });
+    } catch {}
+  }
+});
+
+async function getActiveDeliveryId(): Promise<string | null> {
+  return null;
+}
+
+
 
 type Job = {
   id: string; trackingCode: string;
