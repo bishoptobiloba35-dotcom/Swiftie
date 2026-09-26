@@ -5,12 +5,13 @@
     "version": "0.1.0",
     "scheme": "swiftdrop-driver",
     "orientation": "portrait",
-    "plugins": ["expo-camera", "expo-location"],
+    "plugins": ["expo-camera", ["expo-location", { "isAndroidBackgroundLocationEnabled": true, "isIosBackgroundLocationEnabled": true }]],
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
         "NSCameraUsageDescription": "SwiftDrop uses the camera to capture parcel condition at pickup.",
-        "NSLocationWhenInUseUsageDescription": "SwiftDrop uses your location to provide live delivery tracking while a delivery is active."
+        "NSLocationWhenInUseUsageDescription": "SwiftDrop uses your location to provide live delivery tracking while a delivery is active.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "SwiftDrop uses your location in the background during an active delivery so the sender and receiver can follow the parcel."
       }
     },
     "android": {}
