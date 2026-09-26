@@ -85,6 +85,37 @@ app.get("/health", async (_req, res) => {
   res.json({ ok: true, service: "swiftdrop-api", database });
 });
 
+app.get("/api/locations/search", requireAuth("CUSTOMER"), async (req, res) => {
+  const query = String(req.query.q ?? "").trim();
+  if (query.length < 3) return res.status(400).json({ error: "Search query must be at least 3 characters" });
+  const provider = process.env.MAPS_PROVIDER;
+  const key = process.env.MAPS_API_KEY;
+  if (provider !== "google" || !key) return res.status(503).json({ error: "Maps search is not configured" });
+  try {
+    const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+    url.searchParams.set("address", query);
+    url.searchParams.set("key", key);
+    url.searchParams.set("region", "ng");
+    const response = await fetch(url);
+    if (!response.ok) return res.status(502).json({ error: "Maps provider request failed" });
+    const data = await response.json() as {
+      status?: string;
+      results?: Array<{ formatted_address?: string; geometry?: { location?: { lat?: number; lng?: number } }; place_id?: string }>;
+    };
+    if (data.status !== "OK" && data.status !== "ZERO_RESULTS") return res.status(502).json({ error: "Maps provider returned an error" });
+    res.json({
+      results: (data.results ?? []).slice(0, 8).map((result) => ({
+        id: result.place_id,
+        formattedAddress: result.formatted_address,
+        latitude: result.geometry?.location?.lat,
+        longitude: result.geometry?.location?.lng
+      })).filter((x) => typeof x.latitude === "number" && typeof x.longitude === "number")
+    });
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : "Unable to search locations" });
+  }
+});
+
 app.post("/api/quotes", requireAuth("CUSTOMER"), async (req, res) => {
   const parsed = quoteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
