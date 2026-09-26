@@ -32,8 +32,17 @@ export type CreateDeliveryInput = {
   senderId: string;
   receiverName: string;
   receiverPhone: string;
-  pickup: { label: string; formattedAddress: string };
-  dropoff: { label: string; formattedAddress: string };
+  pickup: { label: string; formattedAddress: string; latitude: number; longitude: number };
+  dropoff: { label: string; formattedAddress: string; latitude: number; longitude: number };
+  quote: {
+    currency: "NGN";
+    distanceMeters: number;
+    durationSeconds: number;
+    baseFareMinor: number;
+    distanceFareMinor: number;
+    serviceFeeMinor: number;
+    totalMinor: number;
+  };
 };
 
 export class SwiftDropApi {
