@@ -321,6 +321,28 @@ app.get("/api/driver/documents", requireAuth("DRIVER"), async (req, res) => {
   res.json({ documents: result.rows });
 });
 
+app.get("/api/admin/drivers/:driverId/documents", requireAuth("ADMIN"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool!.query(
+    "SELECT id, document_type, document_url, status, review_note, created_at, updated_at FROM driver_documents WHERE driver_id=$1 ORDER BY created_at DESC",
+    [req.params.driverId]
+  );
+  res.json({ documents: result.rows });
+});
+
+app.post("/api/admin/driver-documents/:documentId/review", requireAuth("ADMIN"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const status = String(req.body?.status ?? "");
+  const note = String(req.body?.note ?? "").trim();
+  if (status !== "APPROVED" && status !== "REJECTED") return res.status(400).json({ error: "Status must be APPROVED or REJECTED" });
+  const result = await pool!.query(
+    "UPDATE driver_documents SET status=$2, review_note=$3, updated_at=now() WHERE id=$1 RETURNING id, driver_id, document_type, status, review_note, updated_at",
+    [req.params.documentId, status, note || null]
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: "Document not found" });
+  res.json({ document: result.rows[0] });
+});
+
 app.get("/api/admin/drivers", requireAuth("ADMIN"), async (_req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool!.query(
