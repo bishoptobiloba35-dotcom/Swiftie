@@ -81,3 +81,20 @@ CREATE TABLE IF NOT EXISTS payments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
+
+
+CREATE TABLE IF NOT EXISTS payouts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  delivery_id UUID NOT NULL UNIQUE REFERENCES deliveries(id),
+  driver_id UUID NOT NULL REFERENCES drivers(id),
+  amount_minor INTEGER NOT NULL,
+  currency CHAR(3) NOT NULL DEFAULT 'NGN',
+  status TEXT NOT NULL DEFAULT 'PENDING'
+    CHECK (status IN ('PENDING','ELIGIBLE','PROCESSING','RELEASED','FAILED','CANCELLED')),
+  provider TEXT,
+  provider_reference TEXT UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_payouts_status ON payouts(status);
