@@ -166,6 +166,18 @@ export default function App() {
     try {
       const data = await api("/api/deliveries/" + job.id + "/start-trip", { driverId: DRIVER_ID });
       setJob(data); setStatus(data.status);
+      await setActiveDeliveryId(data.id);
+      const foreground = await Location.requestForegroundPermissionsAsync();
+      if (!foreground.granted) {
+        Alert.alert("Location permission", "SwiftDrop needs location access to track the active delivery.");
+        return;
+      }
+      const background = await Location.requestBackgroundPermissionsAsync();
+      if (!background.granted) {
+        Alert.alert("Background tracking", "Background location was not granted. SwiftDrop will continue tracking while this screen is open.");
+      } else {
+        await startBackgroundTracking();
+      }
       setTracking(true);
     } catch (error) {
       Alert.alert("Trip", error instanceof Error ? error.message : "Try again");
