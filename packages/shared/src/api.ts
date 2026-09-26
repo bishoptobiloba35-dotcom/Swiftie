@@ -98,6 +98,15 @@ export class SwiftDropApi {
     return response.json() as Promise<{ ok: boolean }>;
   }
 
+  async searchLocations(query: string): Promise<Array<{ id?: string; formattedAddress?: string; latitude: number; longitude: number }>> {
+    const response = await fetch(this.baseUrl + "/api/locations/search?q=" + encodeURIComponent(query), {
+      headers: this.headers()
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Location search failed");
+    return data.results ?? [];
+  }
+
   async quote(input: {
     pickup: { latitude: number; longitude: number };
     dropoff: { latitude: number; longitude: number };
