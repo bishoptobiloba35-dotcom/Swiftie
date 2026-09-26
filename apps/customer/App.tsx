@@ -17,111 +17,57 @@ export default function App() {
   const [signedIn, setSignedIn] = React.useState(false);
   const [authPhone, setAuthPhone] = React.useState("");
   const [authPassword, setAuthPassword] = React.useState("");
+  const [authName, setAuthName] = React.useState("");
+  const [authEmail, setAuthEmail] = React.useState("");
+  const [authMode, setAuthMode] = React.useState<"login" | "register">("login");
 
   async function signIn() {
     try {
-      const result = await api.login(authPhone, authPassword);
-      await AsyncStorage.setItem("swiftdrop.customerAccessToken", result.accessToken);
+      const data = await api.login(authPhone, authPassword);
+      if (data.user?.role !== "CUSTOMER") throw new Error("This account is not a customer account.");
+      await AsyncStorage.setItem("swiftdrop.customerAccessToken", data.accessToken);
       setSignedIn(true);
     } catch (error) {
       Alert.alert("Sign in failed", error instanceof Error ? error.message : "Unable to sign in");
     }
   }
 
-  const [pickup, setPickup] = React.useState("");
-  const [dropoff, setDropoff] = React.useState("");
-  const [receiver, setReceiver] = React.useState("");
-  const [phone, setPhone] = React.useState("");
-  const [email, setEmail] = React.useState("");
-  const [trackingCode, setTrackingCode] = React.useState("");
-  const [quote, setQuote] = React.useState<{ totalMinor: number; distanceMeters: number; durationSeconds: number } | null>(null);
-  const [createdCode, setCreatedCode] = React.useState("");
-  const [delivery, setDelivery] = React.useState<ApiDelivery | null>(null);
-  const [location, setLocation] = React.useState<ApiDelivery["latestLocation"]>(null);
-  const socketRef = React.useRef<WebSocket | null>(null);
-
-  async function createDelivery() {
+  async function registerCustomer() {
     try {
-      api.setAccessToken(await getCustomerToken());
-      // Temporary address-to-coordinate adapter for the development flow.
-      // Production will replace this with real geocoding/map selection.
-      const pickupPoint = { latitude: 6.5244, longitude: 3.3792 };
-      const dropoffPoint = { latitude: 6.6018, longitude: 3.3515 };
-      const calculated = await api.quote({ pickup: pickupPoint, dropoff: dropoffPoint });
-      setQuote(calculated);
-      const result = await api.createDelivery({
-        senderId: CUSTOMER_ID,
-        receiverName: receiver,
-        receiverPhone: phone,
-        pickup: { label: "Pickup", formattedAddress: pickup, ...pickupPoint },
-        dropoff: { label: "Drop-off", formattedAddress: dropoff, ...dropoffPoint },
-        quote: calculated
+      const data = await api.register({
+        fullName: authName,
+        phone: authPhone,
+        email: authEmail || undefined,
+        password: authPassword,
+        role: "CUSTOMER"
       });
-      setCreatedCode(result.trackingCode);
-      setTrackingCode(result.trackingCode);
-      setDelivery(result);
-      if (!email.trim()) throw new Error("Enter your payment email before creating a delivery.");
-      const payment = await api.initializePayment(result.id, email.trim());
-      const checkout = await WebBrowser.openAuthSessionAsync(
-        payment.authorizationUrl,
-        Linking.createURL("payment/callback")
-      );
-      if (checkout.type === "cancel" || checkout.type === "dismiss") {
-        Alert.alert("Payment", "Checkout was closed. You can return to this delivery and check payment status.");
-      }
-      let verified = false;
-      for (let attempt = 0; attempt < 10; attempt += 1) {
-        const status = await api.paymentStatus(result.id);
-        if (status.payment.status === "HELD" || status.payment.status === "AUTHORIZED") {
-          verified = true;
-          break;
-        }
-        if (status.payment.status === "FAILED" || status.payment.status === "REFUNDED") break;
-        await new Promise(resolve => setTimeout(resolve, 1500));
-      }
-      if (verified) {
-        Alert.alert("Payment verified", "Your delivery is now available for driver matching.");
-      } else {
-        Alert.alert("Payment pending", "We have not received payment confirmation yet. You can check again shortly.");
-      }
-      await loadTracking(result.trackingCode);
+      await AsyncStorage.setItem("swiftdrop.customerAccessToken", data.accessToken);
+      setSignedIn(true);
     } catch (error) {
-      Alert.alert("SwiftDrop", error instanceof Error ? error.message : "The API is not reachable yet.");
+      Alert.alert("Registration failed", error instanceof Error ? error.message : "Unable to register");
     }
   }
-
-  async function loadTracking(code: string) {
-    const result = await api.track(code.trim());
-    setDelivery(result);
-    setLocation(result.latestLocation ?? null);
-    socketRef.current?.close();
-    const session = await api.createTrackingSession(result.trackingCode);
-    socketRef.current = api.connectToTracking(result.id, session.trackingToken, next => {
-      setLocation(next ?? null);
-      setDelivery(current => current ? { ...current, latestLocation: next } : current);
-    }, updated => {
-      setDelivery(current => current ? { ...current, ...updated } : current);
-      if (updated?.status === "IN_TRANSIT") {
-        Alert.alert("SwiftDrop", "Your parcel is now in transit.");
-      }
-      if (updated?.status === "DELIVERED") {
-        Alert.alert("SwiftDrop", "Your parcel has been delivered and the receiver PIN was verified.");
-      }
-    });
-  }
-
-  async function track() {
-    try {
-      await loadTracking(trackingCode);
-    } catch (error) {
-      Alert.alert("SwiftDrop", error instanceof Error ? error.message : "Tracking code not found.");
-    }
-  }
-
-  React.useEffect(() => () => socketRef.current?.close(), []);
 
   if (!signedIn) {
     return (
+      <SafeAreaView style={styles.container}>
+        <Text style={styles.title}>SwiftDrop</Text>
+        <Text style={styles.subtitle}>{authMode === "login" ? "Sign in to send and track parcels." : "Create your customer account."}</Text>
+        {authMode === "register" && <TextInput style={styles.input} placeholder="Full name" value={authName} onChangeText={setAuthName} />}
+        <TextInput style={styles.input} placeholder="Phone number" value={authPhone} onChangeText={setAuthPhone} keyboardType="phone-pad" />
+        {authMode === "register" && <TextInput style={styles.input} placeholder="Email (optional)" value={authEmail} onChangeText={setAuthEmail} keyboardType="email-address" autoCapitalize="none" />}
+        <TextInput style={styles.input} placeholder="Password" value={authPassword} onChangeText={setAuthPassword} secureTextEntry />
+        <Pressable style={styles.primary} onPress={authMode === "login" ? signIn : registerCustomer}>
+          <Text style={styles.primaryText}>{authMode === "login" ? "Sign in" : "Create account"}</Text>
+        </Pressable>
+        <Pressable onPress={() => setAuthMode(authMode === "login" ? "register" : "login")}>
+          <Text style={styles.link}>{authMode === "login" ? "Create an account" : "Already have an account? Sign in"}</Text>
+        </Pressable>
+      </SafeAreaView>
+    );
+  }
+
+  return (
       <SafeAreaView style={styles.container}>
         <Text style={styles.title}>SwiftDrop</Text>
         <Text style={styles.subtitle}>Sign in to create and track deliveries.</Text>
