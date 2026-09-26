@@ -10,7 +10,7 @@ import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus } from "./database/deliveryRepository.js";
 import { pingDatabase } from "./database/db.js";
-import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout } from "./database/deliveryRepository.js";
+import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, createDispute, findDispute, resolveDispute } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -260,6 +260,57 @@ app.get("/api/deliveries/:id/payment/status", requireAuth("CUSTOMER", "ADMIN"), 
   const payment = await findPayment(req.params.id);
   if (!payment) return res.status(404).json({ error: "Payment not found" });
   res.json({ payment });
+});
+
+app.post("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER"), async (req, res) => {
+  const userId = identity(req);
+  const delivery = databaseEnabled()
+    ? await findDeliveryForUser(req.params.id, userId, (req as any).user.role)
+    : null;
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  if (["DELIVERED", "CANCELLED"].includes(delivery.status)) {
+    return res.status(409).json({ error: "This delivery can no longer be disputed" });
+  }
+  const reason = String(req.body?.reason ?? "").trim();
+  const description = String(req.body?.description ?? "").trim();
+  if (!reason) return res.status(400).json({ error: "Dispute reason is required" });
+  const dispute = await createDispute(req.params.id, userId, reason, description);
+  if (!dispute) return res.status(409).json({ error: "A dispute already exists or database is unavailable" });
+  await recordDeliveryEvent({
+    deliveryId: req.params.id,
+    eventType: "DISPUTE_OPENED",
+    actorUserId: userId,
+    metadata: { reason }
+  });
+  res.status(201).json({ dispute });
+});
+
+app.get("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER", "ADMIN"), async (req, res) => {
+  const userId = identity(req);
+  const role = (req as any).user.role;
+  const delivery = await findDeliveryForUser(req.params.id, userId, role);
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  const dispute = await findDispute(req.params.id);
+  if (!dispute) return res.status(404).json({ error: "No dispute found" });
+  res.json({ dispute });
+});
+
+app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), async (req, res) => {
+  const status = String(req.body?.resolution ?? "");
+  if (status !== "RESOLVED_REFUND" && status !== "RESOLVED_RELEASE") {
+    return res.status(400).json({ error: "Resolution must be RESOLVED_REFUND or RESOLVED_RELEASE" });
+  }
+  const note = String(req.body?.note ?? "").trim();
+  if (!note) return res.status(400).json({ error: "Resolution note is required" });
+  const dispute = await resolveDispute(req.params.id, status, note);
+  if (!dispute) return res.status(404).json({ error: "Open dispute not found" });
+  await recordDeliveryEvent({
+    deliveryId: req.params.id,
+    eventType: "DISPUTE_RESOLVED",
+    actorUserId: identity(req),
+    metadata: { resolution: status }
+  });
+  res.json({ dispute });
 });
 
 app.get("/api/deliveries/:id/payout", requireAuth("DRIVER", "ADMIN"), async (req, res) => {
