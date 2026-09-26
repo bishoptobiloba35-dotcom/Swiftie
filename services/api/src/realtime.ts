@@ -3,16 +3,24 @@ import crypto from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 
 const subscribers = new Map<string, Set<WebSocket>>();
-const trackingTokens = new Map<string, string>();
+const trackingTokens = new Map<string, { deliveryId: string; expiresAt: number }>();
+const TRACKING_TOKEN_TTL_MS = 30 * 60 * 1000;
 
 export function issueTrackingToken(deliveryId: string): string {
   const token = crypto.randomUUID();
-  trackingTokens.set(token, deliveryId);
+  trackingTokens.set(token, { deliveryId, expiresAt: Date.now() + TRACKING_TOKEN_TTL_MS });
   return token;
 }
 
 function validTrackingToken(token: string | null, deliveryId: string): boolean {
-  return Boolean(token && trackingTokens.get(token) === deliveryId);
+  if (!token) return false;
+  const record = trackingTokens.get(token);
+  if (!record) return false;
+  if (record.expiresAt <= Date.now()) {
+    trackingTokens.delete(token);
+    return false;
+  }
+  return record.deliveryId === deliveryId;
 }
 
 export function attachRealtime(server: Server): void {
