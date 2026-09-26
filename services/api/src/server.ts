@@ -17,7 +17,16 @@ import { identity } from "./requestIdentity.js";
 
 const app = express();
 const httpServer = createServer(app);
-app.use(cors());
+const allowedOrigins = (process.env.CORS_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean);
+app.use(cors({
+  origin: process.env.NODE_ENV === "production"
+    ? (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+        return callback(new Error("Origin not allowed by CORS"));
+      }
+    : true,
+  credentials: true
+}));
 app.use(express.json({ limit: "10mb" }));
 app.use("/api/auth", authRoutes);
 app.use("/uploads", express.static("uploads"));
