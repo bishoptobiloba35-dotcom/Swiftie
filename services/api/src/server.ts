@@ -10,6 +10,7 @@ import { databaseEnabled, createPersistentDelivery, findDelivery, findByTracking
 import { pingDatabase } from "./database/db.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
+import { identity } from "./requestIdentity.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -49,11 +50,11 @@ app.post("/api/deliveries", async (req, res) => {
   const pin = String(Math.floor(100000 + Math.random() * 900000));
   try {
     if (databaseEnabled()) {
-      const created = await createPersistentDelivery({ ...parsed.data, receiverPin: pin });
+      const created = await createPersistentDelivery({ ...input, receiverPin: pin });
       return res.status(201).json(safeDelivery(created));
     }
     const now = new Date().toISOString();
-    const delivery: MemoryDelivery = { id: randomUUID(), trackingCode: trackingCode(), ...parsed.data, status: "CREATED", receiverPin: pin, createdAt: now, updatedAt: now };
+    const delivery: MemoryDelivery = { id: randomUUID(), trackingCode: trackingCode(), ...input, status: "CREATED", receiverPin: pin, createdAt: now, updatedAt: now };
     deliveries.set(delivery.id, delivery);
     return res.status(201).json(safeDelivery(delivery));
   } catch (error) {
@@ -150,7 +151,7 @@ app.post("/api/deliveries/:id/location", async (req, res) => {
   const delivery = await getOne(req.params.id);
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   const event = {
-    deliveryId: delivery.id, driverId: String(req.body?.driverId ?? ""),
+    deliveryId: delivery.id, driverId: identity(req, String(req.body?.driverId ?? "")),
     latitude: Number(req.body?.latitude), longitude: Number(req.body?.longitude),
     accuracyMeters: req.body?.accuracyMeters == null ? undefined : Number(req.body.accuracyMeters),
     recordedAt: new Date().toISOString()
