@@ -107,7 +107,6 @@ export default function App() {
     try {
       const data = await api("/api/deliveries/" + selected.id + "/accept", { driverId: DRIVER_ID });
       setJob(data);
-      await setActiveDeliveryId(data.id);
       setStatus(data.status);
       await refreshJobs();
     } catch (error) {
