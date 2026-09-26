@@ -47,6 +47,7 @@ app.get("/health", async (_req, res) => {
 app.post("/api/deliveries", async (req, res) => {
   const parsed = createDeliverySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const input = parsed.data;
   const pin = String(Math.floor(100000 + Math.random() * 900000));
   try {
     if (databaseEnabled()) {
