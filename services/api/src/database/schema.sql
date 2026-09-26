@@ -68,7 +68,9 @@ CREATE TABLE IF NOT EXISTS payments (
   provider_reference TEXT UNIQUE,
   amount_minor INTEGER NOT NULL,
   currency CHAR(3) NOT NULL DEFAULT 'NGN',
-  status TEXT NOT NULL DEFAULT 'PENDING',
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','AUTHORIZED','HELD','RELEASED','REFUNDED','FAILED')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
