@@ -310,7 +310,9 @@ export async function createEligiblePayout(deliveryId: string, driverId: string,
   const result = await pool.query(
     `INSERT INTO payouts (delivery_id, driver_id, amount_minor, status)
      VALUES ($1,$2,$3,'ELIGIBLE')
-     ON CONFLICT (delivery_id) DO UPDATE SET status='ELIGIBLE', updated_at=now()
+     ON CONFLICT (delivery_id) DO UPDATE
+      SET updated_at=now()
+      WHERE payouts.status IN ('PENDING','ELIGIBLE')
      RETURNING *`,
     [deliveryId, driverId, amountMinor]
   );
