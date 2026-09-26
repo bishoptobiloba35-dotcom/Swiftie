@@ -224,7 +224,7 @@ export async function findByTrackingCode(code: string): Promise<StoredDelivery |
 export async function listOpenJobs(): Promise<StoredDelivery[]> {
   if (!pool) return [];
   const result = await pool.query(
-    "SELECT * FROM deliveries WHERE driver_id IS NULL AND status IN ('CREATED','PAYMENT_AUTHORIZED') ORDER BY created_at ASC"
+    "SELECT * FROM deliveries WHERE driver_id IS NULL AND status = 'PAYMENT_AUTHORIZED' ORDER BY created_at ASC"
   );
   return result.rows.map(rowToDelivery);
 }
