@@ -34,6 +34,7 @@ export default function App() {
 
   async function createDelivery() {
     try {
+      api.setAccessToken(await getCustomerToken());
       const result = await api.createDelivery({
         senderId: CUSTOMER_ID,
         receiverName: receiver,
