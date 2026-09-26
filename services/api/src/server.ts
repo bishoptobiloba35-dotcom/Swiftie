@@ -66,6 +66,56 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   }
 });
 
+app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), async (req, res) => {
+  const userId = identity(req);
+  const delivery = databaseEnabled() ? await findDeliveryForUser(req.params.id, userId, "CUSTOMER") : await getOne(req.params.id);
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  if (!databaseEnabled()) return res.status(503).json({ error: "Payments require the production database" });
+
+  const amountMinor = Number(req.body?.amountMinor);
+  const email = String(req.body?.email ?? "").trim();
+  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0 || !email) {
+    return res.status(400).json({ error: "Valid amountMinor and email are required" });
+  }
+  const secret = process.env.PAYMENT_SECRET_KEY;
+  const provider = process.env.PAYMENT_PROVIDER || "paystack";
+  if (provider !== "paystack" || !secret) {
+    return res.status(503).json({ error: "Paystack payment configuration is not ready" });
+  }
+
+  const reference = "SD-" + delivery.trackingCode + "-" + Date.now();
+  const response = await fetch("https://api.paystack.co/transaction/initialize", {
+    method: "POST",
+    headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
+    body: JSON.stringify({
+      email,
+      amount: String(amountMinor),
+      currency: "NGN",
+      reference,
+      metadata: { deliveryId: delivery.id, trackingCode: delivery.trackingCode }
+    })
+  });
+  const payload = await response.json() as any;
+  if (!response.ok || !payload.status || !payload.data?.authorization_url) {
+    return res.status(502).json({ error: "Payment provider initialization failed" });
+  }
+
+  const payment = await createPayment({ deliveryId: delivery.id, provider: "paystack", amountMinor, currency: "NGN" });
+  await updatePaymentStatus(delivery.id, "PENDING", payload.data.reference ?? reference);
+  await recordDeliveryEvent({
+    deliveryId: delivery.id,
+    eventType: "PAYMENT_INITIALIZED",
+    actorUserId: userId,
+    metadata: { paymentId: payment.id, reference: payload.data.reference ?? reference, amountMinor }
+  });
+  res.status(201).json({
+    paymentId: payment.id,
+    reference: payload.data.reference ?? reference,
+    authorizationUrl: payload.data.authorization_url,
+    accessCode: payload.data.access_code
+  });
+});
+
 app.post("/api/deliveries/:id/payment", requireAuth("CUSTOMER"), async (req, res) => {
   const userId = identity(req);
   const delivery = databaseEnabled()
