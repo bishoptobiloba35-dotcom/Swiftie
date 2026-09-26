@@ -8,7 +8,7 @@ import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
-import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser } from "./database/deliveryRepository.js";
+import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents } from "./database/deliveryRepository.js";
 import { pingDatabase } from "./database/db.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
@@ -66,6 +66,15 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   }
 });
 
+app.get("/api/deliveries/:id/events", requireAuth("CUSTOMER", "DRIVER", "ADMIN"), async (req, res) => {
+  const user = (req as typeof req & { user?: { userId: string; role: "CUSTOMER" | "DRIVER" | "ADMIN" } }).user!;
+  const delivery = databaseEnabled()
+    ? await findDeliveryForUser(req.params.id, user.userId, user.role)
+    : await getOne(req.params.id);
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  res.json({ events: await listDeliveryEvents(delivery.id) });
+});
+
 app.get("/api/deliveries/:id", requireAuth("CUSTOMER", "DRIVER", "ADMIN"), async (req, res) => {
   const user = (req as typeof req & { user?: { userId: string; role: "CUSTOMER" | "DRIVER" | "ADMIN" } }).user!;
   const delivery = databaseEnabled()
@@ -118,6 +127,7 @@ app.post("/api/deliveries/:id/accept", requireAuth("DRIVER"), async (req, res) =
     const updated = await transitionDelivery(req.params.id, "CREATED", "DRIVER_ASSIGNED", driverId)
       ?? await transitionDelivery(req.params.id, "PAYMENT_AUTHORIZED", "DRIVER_ASSIGNED", driverId);
     if (!updated) return res.status(409).json({ error: "Delivery is no longer available" });
+    await recordDeliveryEvent({ deliveryId: updated.id, eventType: "DRIVER_ASSIGNED", actorUserId: identity(req), metadata: { driverId } });
     publishDeliveryUpdate(req.params.id, safeDelivery(updated));
     return res.json(safeDelivery(updated));
   }
