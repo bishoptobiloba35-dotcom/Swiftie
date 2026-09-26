@@ -229,6 +229,18 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   }
 
   await updatePaymentStatus(deliveryId, "HELD", reference);
+  const current = await findDelivery(deliveryId);
+  if (current?.status === "CREATED") {
+    const authorized = await transitionDelivery(deliveryId, "CREATED", "PAYMENT_AUTHORIZED");
+    if (authorized) {
+      await recordDeliveryEvent({
+        deliveryId,
+        eventType: "PAYMENT_AUTHORIZED",
+        metadata: { provider: "paystack", reference }
+      });
+      publishDeliveryUpdate(deliveryId, safeDelivery(authorized));
+    }
+  }
   await recordDeliveryEvent({
     deliveryId,
     eventType: "PAYMENT_HELD",
@@ -237,26 +249,15 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   return res.status(200).json({ received: true });
 });
 
-app.post("/api/deliveries/:id/payment/status", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
+app.get("/api/deliveries/:id/payment/status", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
   const userId = identity(req);
   const role = (req as typeof req & { user?: { role: "CUSTOMER" | "ADMIN" } }).user!.role;
   const delivery = databaseEnabled()
     ? await findDeliveryForUser(req.params.id, userId, role)
     : await getOne(req.params.id);
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
-
-  const status = String(req.body?.status ?? "");
-  if (!["AUTHORIZED","HELD","RELEASED","REFUNDED","FAILED"].includes(status)) {
-    return res.status(400).json({ error: "Invalid payment status" });
-  }
-  const payment = await updatePaymentStatus(req.params.id, status as any, req.body?.providerReference);
+  const payment = await findPayment(req.params.id);
   if (!payment) return res.status(404).json({ error: "Payment not found" });
-  await recordDeliveryEvent({
-    deliveryId: delivery.id,
-    eventType: "PAYMENT_STATUS_CHANGED",
-    actorUserId: userId,
-    metadata: { status, providerReference: req.body?.providerReference ?? null }
-  });
   res.json({ payment });
 });
 
