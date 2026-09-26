@@ -145,6 +145,7 @@ app.post("/api/deliveries/:id/at-pickup", requireAuth("DRIVER"), async (req, res
   if (databaseEnabled()) {
     const updated = await transitionDelivery(req.params.id, "DRIVER_ASSIGNED", "DRIVER_AT_PICKUP", driverId);
     if (!updated) return res.status(409).json({ error: "Delivery is not awaiting pickup or driver is not assigned" });
+    await recordDeliveryEvent({ deliveryId: updated.id, eventType: "DRIVER_AT_PICKUP", actorUserId: identity(req), metadata: {} });
     return res.json(safeDelivery(updated));
   }
   const delivery = deliveries.get(req.params.id);
@@ -177,6 +178,7 @@ app.post("/api/deliveries/:id/pickup", requireAuth("DRIVER"), async (req, res) =
   if (databaseEnabled()) {
     const updated = await savePickupPhoto(req.params.id, driverId, photo);
     if (!updated) return res.status(409).json({ error: "Driver must be assigned and at pickup before confirming pickup" });
+    await recordDeliveryEvent({ deliveryId: updated.id, eventType: "PICKED_UP", actorUserId: identity(req), metadata: { pickupPhotoUrl: photo } });
     return res.json(safeDelivery(updated));
   }
   const delivery = deliveries.get(req.params.id);
@@ -193,6 +195,7 @@ app.post("/api/deliveries/:id/start-trip", requireAuth("DRIVER"), async (req, re
   if (databaseEnabled()) {
     const updated = await transitionDelivery(req.params.id, "PICKED_UP", "IN_TRANSIT", driverId);
     if (!updated) return res.status(409).json({ error: "Parcel must be picked up first or driver is not assigned" });
+    await recordDeliveryEvent({ deliveryId: updated.id, eventType: "IN_TRANSIT", actorUserId: identity(req), metadata: {} });
     return res.json(safeDelivery(updated));
   }
   const delivery = deliveries.get(req.params.id);
@@ -225,6 +228,7 @@ app.post("/api/deliveries/:id/arrived", requireAuth("DRIVER"), async (req, res) 
   if (databaseEnabled()) {
     const updated = await transitionDelivery(req.params.id, "IN_TRANSIT", "ARRIVED", driverId);
     if (!updated) return res.status(409).json({ error: "Delivery is not in transit or driver is not assigned" });
+    await recordDeliveryEvent({ deliveryId: updated.id, eventType: "ARRIVED", actorUserId: identity(req), metadata: {} });
     return res.json(safeDelivery(updated));
   }
   const delivery = deliveries.get(req.params.id);
@@ -243,6 +247,7 @@ app.post("/api/deliveries/:id/complete", requireAuth("DRIVER"), async (req, res)
     if (!await verifyReceiverPin(req.params.id, pin)) return res.status(401).json({ error: "Invalid receiver PIN" });
     const updated = await completeDelivery(req.params.id, driverId);
     if (!updated) return res.status(409).json({ error: "Delivery is not ready or driver is not assigned" });
+    await recordDeliveryEvent({ deliveryId: updated.id, eventType: "DELIVERED", actorUserId: identity(req), metadata: { receiverPinVerified: true } });
     return res.json(safeDelivery(updated));
   }
   const delivery = deliveries.get(req.params.id);
