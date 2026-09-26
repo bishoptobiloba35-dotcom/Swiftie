@@ -446,6 +446,12 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
   if (!note) return res.status(400).json({ error: "Resolution note is required" });
   const dispute = await resolveDispute(req.params.id, status, note);
   if (!dispute) return res.status(404).json({ error: "Open dispute not found" });
+  if (databaseEnabled()) {
+    const payment = await findPayment(req.params.id);
+    if (payment && ["HELD", "AUTHORIZED"].includes(payment.status)) {
+      await updatePaymentStatus(req.params.id, status === "RESOLVED_REFUND" ? "REFUNDED" : "RELEASED");
+    }
+  }
   await recordDeliveryEvent({
     deliveryId: req.params.id,
     eventType: "DISPUTE_RESOLVED",
@@ -697,7 +703,8 @@ app.post("/api/deliveries/:id/complete", requireAuth("DRIVER"), async (req, res)
     const updated = await completeDelivery(req.params.id, driverId);
     if (!updated) return res.status(409).json({ error: "Delivery is not ready or driver is not assigned" });
     const payment = await findPayment(updated.id);
-    const payoutAmount = payment?.amountMinor ? Math.max(0, Math.floor(payment.amountMinor * 0.9)) : 0;
+    const payoutPercent = Math.min(100, Math.max(0, Number(process.env.DRIVER_PAYOUT_PERCENT ?? 90)));
+    const payoutAmount = payment?.amountMinor ? Math.max(0, Math.floor(payment.amountMinor * payoutPercent / 100)) : 0;
     if (payoutAmount > 0) {
       await createEligiblePayout(updated.id, driverId, payoutAmount);
       await recordDeliveryEvent({
