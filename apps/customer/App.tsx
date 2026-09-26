@@ -38,7 +38,8 @@ export default function App() {
     setDelivery(result);
     setLocation(result.latestLocation ?? null);
     socketRef.current?.close();
-    socketRef.current = api.connectToTracking(result.id, next => {
+    const session = await api.createTrackingSession(result.trackingCode);
+    socketRef.current = api.connectToTracking(result.id, session.trackingToken, next => {
       setLocation(next ?? null);
       setDelivery(current => current ? { ...current, latestLocation: next } : current);
     }, updated => {
