@@ -31,8 +31,8 @@ const deliveries = new Map<string, MemoryDelivery>();
 
 const createDeliverySchema = z.object({
   senderId: z.string().uuid(), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
-  pickup: z.object({ label: z.string(), formattedAddress: z.string() }),
-  dropoff: z.object({ label: z.string(), formattedAddress: z.string() }),
+  pickup: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
+  dropoff: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   quote: z.object({
     currency: z.literal("NGN"),
     distanceMeters: z.number().int().nonnegative(),
@@ -94,11 +94,14 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   const parsed = createDeliverySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const input = { ...parsed.data, senderId: identity(req) };
-  const quote = parsed.data.quote;
-  if (quote.currency !== "NGN") return res.status(400).json({ error: "Unsupported quote currency" });
-  if (!Number.isSafeInteger(quote.totalMinor) || quote.totalMinor <= 0) {
-    return res.status(400).json({ error: "Invalid quote total" });
+  const quote = calculateQuote(
+    { latitude: parsed.data.pickup.latitude, longitude: parsed.data.pickup.longitude },
+    { latitude: parsed.data.dropoff.latitude, longitude: parsed.data.dropoff.longitude }
+  );
+  if (quote.currency !== "NGN" || !Number.isSafeInteger(quote.totalMinor) || quote.totalMinor <= 0) {
+    return res.status(500).json({ error: "Unable to calculate delivery quote" });
   }
+  parsed.data.quote = quote;
   const pin = String(Math.floor(100000 + Math.random() * 900000));
   try {
     if (databaseEnabled()) {
