@@ -18,7 +18,7 @@ export default function App() {
   async function createDelivery() {
     try {
       const result = await api.createDelivery({
-        senderId: "demo-customer",
+        senderId: "00000000-0000-4000-8000-000000000001",
         receiverName: receiver,
         receiverPhone: phone,
         pickup: { label: "Pickup", formattedAddress: pickup },
