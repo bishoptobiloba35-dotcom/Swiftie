@@ -2,6 +2,70 @@ import { randomUUID } from "node:crypto";
 import { pool } from "./db.js";
 import { hashPin, verifyPin } from "../security.js";
 
+export type PaymentRecord = {
+  id: string;
+  deliveryId: string;
+  provider: string;
+  providerReference?: string;
+  amountMinor: number;
+  currency: string;
+  status: "PENDING" | "AUTHORIZED" | "HELD" | "RELEASED" | "REFUNDED" | "FAILED";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function findPayment(deliveryId: string): Promise<PaymentRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query("SELECT * FROM payments WHERE delivery_id=$1", [deliveryId]);
+  return result.rows[0] ? paymentFromRow(result.rows[0]) : null;
+}
+
+function paymentFromRow(row: any): PaymentRecord {
+  return {
+    id: row.id,
+    deliveryId: row.delivery_id,
+    provider: row.provider,
+    providerReference: row.provider_reference ?? undefined,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    status: row.status,
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString()
+  };
+}
+
+export async function createPayment(input: {
+  deliveryId: string;
+  provider: string;
+  amountMinor: number;
+  currency?: string;
+}): Promise<PaymentRecord> {
+  if (!pool) throw new Error("DATABASE_URL is not configured");
+  const result = await pool.query(
+    `INSERT INTO payments (delivery_id, provider, amount_minor, currency, status)
+     VALUES ($1,$2,$3,$4,'PENDING')
+     ON CONFLICT (delivery_id) DO UPDATE SET amount_minor=EXCLUDED.amount_minor,
+       currency=EXCLUDED.currency, updated_at=now()
+     RETURNING *`,
+    [input.deliveryId, input.provider, input.amountMinor, input.currency ?? "NGN"]
+  );
+  return paymentFromRow(result.rows[0]);
+}
+
+export async function updatePaymentStatus(
+  deliveryId: string,
+  status: PaymentRecord["status"],
+  providerReference?: string
+): Promise<PaymentRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `UPDATE payments SET status=$2, provider_reference=COALESCE($3, provider_reference), updated_at=now()
+     WHERE delivery_id=$1 RETURNING *`,
+    [deliveryId, status, providerReference ?? null]
+  );
+  return result.rows[0] ? paymentFromRow(result.rows[0]) : null;
+}
+
 export type StoredDelivery = {
   id: string;
   trackingCode: string;
