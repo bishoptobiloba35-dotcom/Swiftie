@@ -6,7 +6,7 @@ import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
-const DRIVER_ID = "00000000-0000-4000-8000-000000000003";\n\nconst BACKGROUND_LOCATION_TASK = "SWIFTDROP_BACKGROUND_LOCATION";
+const DRIVER_ID = "00000000-0000-4000-8000-000000000002";\n\nconst BACKGROUND_LOCATION_TASK = "SWIFTDROP_BACKGROUND_LOCATION";
 
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   if (error) return;
