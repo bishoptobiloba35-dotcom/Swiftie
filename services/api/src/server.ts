@@ -94,6 +94,22 @@ app.get("/health", async (_req, res) => {
   res.json({ ok: true, service: "swiftdrop-api", database });
 });
 
+app.post("/api/notifications/device-token", requireAuth(), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Notifications require the production database" });
+  const token = String(req.body?.token ?? "").trim();
+  const platform = String(req.body?.platform ?? "").toUpperCase();
+  if (!token || !["IOS", "ANDROID"].includes(platform)) {
+    return res.status(400).json({ error: "A valid push token and platform are required" });
+  }
+  await pool!.query(
+    `INSERT INTO device_tokens (user_id, platform, push_token)
+     VALUES ($1,$2,$3)
+     ON CONFLICT (push_token) DO UPDATE SET user_id=EXCLUDED.user_id, platform=EXCLUDED.platform, updated_at=now()`,
+    [identity(req), platform, token]
+  );
+  res.status(201).json({ registered: true });
+});
+
 app.get("/api/locations/search", requireAuth("CUSTOMER"), async (req, res) => {
   const query = String(req.query.q ?? "").trim();
   if (query.length < 3) return res.status(400).json({ error: "Search query must be at least 3 characters" });
