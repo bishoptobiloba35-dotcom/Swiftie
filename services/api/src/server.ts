@@ -9,7 +9,7 @@ import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTr
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus } from "./database/deliveryRepository.js";
-import { pingDatabase } from "./database/db.js";
+import { pool, pingDatabase } from "./database/db.js";
 import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, createDispute, findDispute, resolveDispute } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
