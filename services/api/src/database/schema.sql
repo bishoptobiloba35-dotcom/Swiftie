@@ -35,6 +35,13 @@ CREATE TABLE IF NOT EXISTS deliveries (
   status TEXT NOT NULL DEFAULT 'CREATED',
   receiver_pin_hash TEXT NOT NULL,
   pickup_photo_url TEXT,
+  quote_distance_meters INTEGER,
+  quote_duration_seconds INTEGER,
+  quote_base_fare_minor INTEGER,
+  quote_distance_fare_minor INTEGER,
+  quote_service_fee_minor INTEGER,
+  quote_total_minor INTEGER,
+  quote_currency CHAR(3) DEFAULT 'NGN',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
