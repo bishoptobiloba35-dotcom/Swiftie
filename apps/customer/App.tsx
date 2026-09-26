@@ -53,8 +53,14 @@ export default function App() {
       });
       setCreatedCode(result.trackingCode);
       setTrackingCode(result.trackingCode);
+      setDelivery(result);
+      if (!email.trim()) throw new Error("Enter your payment email before creating a delivery.");
+      const payment = await api.initializePayment(result.id, email.trim());
+      Alert.alert(
+        "Payment ready",
+        `Amount: ₦${(payment.amountMinor / 100).toLocaleString()}\\nReference: ${payment.reference}\\n\\nOpen the Paystack authorization URL to complete payment.`
+      );
       await loadTracking(result.trackingCode);
-      Alert.alert("Delivery created", result.trackingCode);
     } catch (error) {
       Alert.alert("SwiftDrop", error instanceof Error ? error.message : "The API is not reachable yet.");
     }
@@ -98,8 +104,11 @@ export default function App() {
         <TextInput style={styles.input} placeholder="Payment email" keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
         {quote ? <Text style={styles.code}>Estimated fare: ₦{(quote.totalMinor / 100).toLocaleString()} · {(quote.distanceMeters / 1000).toFixed(1)} km</Text> : null}
         <Pressable style={styles.primary} onPress={() => void createDelivery()}>
-          <Text style={styles.primaryText}>Create delivery</Text>
+          <Text style={styles.primaryText}>Create & continue to payment</Text>
         </Pressable>
+        {delivery?.status === "PAYMENT_AUTHORIZED" ? (
+          <Text style={styles.done}>✓ Payment verified — your delivery can enter driver matching.</Text>
+        ) : null}
         {!!createdCode && <Text style={styles.code}>Tracking code: {createdCode}</Text>}
 
         <View style={styles.divider} />
