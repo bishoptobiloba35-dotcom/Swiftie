@@ -10,6 +10,7 @@ import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus } from "./database/deliveryRepository.js";
 import { pingDatabase } from "./database/db.js";
+import { assignNextDeliveryToDriver } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -304,6 +305,25 @@ async function authenticatedDriverId(req: express.Request): Promise<string | nul
   const driver = await driverForUser(userId);
   return driver?.id ?? null;
 }
+
+app.post("/api/driver/auto-assign", requireAuth("DRIVER"), async (req, res) => {
+  try {
+    const driverId = await authenticatedDriverId(req);
+    if (!driverId) return res.status(403).json({ error: "Driver profile is not approved or found" });
+    if (!databaseEnabled()) return res.status(503).json({ error: "Driver assignment requires the production database" });
+    const delivery = await assignNextDeliveryToDriver(driverId);
+    if (!delivery) return res.status(204).end();
+    await recordDeliveryEvent({
+      deliveryId: delivery.id,
+      eventType: "DRIVER_ASSIGNED",
+      metadata: { driverId, assignment: "automatic" }
+    });
+    publishDeliveryUpdate(delivery.id, safeDelivery(delivery));
+    return res.json({ delivery: safeDelivery(delivery) });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to assign delivery" });
+  }
+});
 
 app.get("/api/driver/:driverId/jobs", requireAuth("DRIVER"), async (req, res) => {
   const driverId = await authenticatedDriverId(req);
