@@ -7,20 +7,10 @@ import { SwiftDropApi, type ApiDelivery } from "../../packages/shared/src/api";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 const api = new SwiftDropApi(API_URL);
-const CUSTOMER_ID = "00000000-0000-4000-8000-000000000001";
-
 async function getCustomerToken(): Promise<string> {
   const existing = await AsyncStorage.getItem("swiftdrop.customerAccessToken");
   if (existing) return existing;
-  const response = await fetch(API_URL + "/api/auth/dev-token", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ userId: CUSTOMER_ID, role: "CUSTOMER" })
-  });
-  const data = await response.json();
-  if (!response.ok || !data.accessToken) throw new Error(data.error ?? "Customer authentication failed");
-  await AsyncStorage.setItem("swiftdrop.customerAccessToken", data.accessToken);
-  return data.accessToken;
+  throw new Error("Please sign in to SwiftDrop first.");
 }
 
 export default function App() {
