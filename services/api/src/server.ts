@@ -474,9 +474,13 @@ app.post("/api/deliveries/:id/arrived", requireAuth("DRIVER"), async (req, res) 
 });
 
 app.post("/api/deliveries/:id/complete", requireAuth("DRIVER"), async (req, res) => {
-  const driverId = String(req.body?.driverId ?? "");
+  const driverId = await authenticatedDriverId(req);
   const pin = String(req.body?.receiverPin ?? "");
+  if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
   if (databaseEnabled()) {
+    const current = await findDelivery(req.params.id);
+    if (!current || current.driverId !== driverId) return res.status(403).json({ error: "Driver is not assigned to this delivery" });
+    if (!["IN_TRANSIT", "ARRIVED"].includes(current.status)) return res.status(409).json({ error: "Delivery is not ready for completion" });
     if (!await verifyReceiverPin(req.params.id, pin)) return res.status(401).json({ error: "Invalid receiver PIN" });
     const updated = await completeDelivery(req.params.id, driverId);
     if (!updated) return res.status(409).json({ error: "Delivery is not ready or driver is not assigned" });
