@@ -491,6 +491,12 @@ app.post("/api/driver/auto-assign", requireAuth("DRIVER"), async (req, res) => {
   }
 });
 
+app.get("/api/driver/me", requireAuth("DRIVER"), async (req, res) => {
+  const driver = await driverForUser(identity(req));
+  if (!driver) return res.status(404).json({ error: "Driver profile not found" });
+  res.json({ driver });
+});
+
 app.get("/api/driver/:driverId/jobs", requireAuth("DRIVER"), async (req, res) => {
   const driverId = await authenticatedDriverId(req);
   if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
