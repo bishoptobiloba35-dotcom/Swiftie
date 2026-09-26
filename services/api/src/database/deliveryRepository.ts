@@ -230,6 +230,60 @@ export async function setDriverOnline(driverId: string, online: boolean): Promis
   return result.rowCount === 1;
 }
 
+export type PayoutRecord = {
+  id: string;
+  deliveryId: string;
+  driverId: string;
+  amountMinor: number;
+  currency: string;
+  status: "PENDING" | "ELIGIBLE" | "PROCESSING" | "RELEASED" | "FAILED" | "CANCELLED";
+  provider?: string | null;
+  providerReference?: string | null;
+};
+
+function rowToPayout(row: any): PayoutRecord {
+  return {
+    id: row.id,
+    deliveryId: row.delivery_id,
+    driverId: row.driver_id,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    status: row.status,
+    provider: row.provider ?? null,
+    providerReference: row.provider_reference ?? null
+  };
+}
+
+export async function createEligiblePayout(deliveryId: string, driverId: string, amountMinor: number): Promise<PayoutRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `INSERT INTO payouts (delivery_id, driver_id, amount_minor, status)
+     VALUES ($1,$2,$3,'ELIGIBLE')
+     ON CONFLICT (delivery_id) DO UPDATE SET status='ELIGIBLE', updated_at=now()
+     RETURNING *`,
+    [deliveryId, driverId, amountMinor]
+  );
+  return result.rows[0] ? rowToPayout(result.rows[0]) : null;
+}
+
+export async function findPayout(deliveryId: string): Promise<PayoutRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query("SELECT * FROM payouts WHERE delivery_id=$1", [deliveryId]);
+  return result.rows[0] ? rowToPayout(result.rows[0]) : null;
+}
+
+export async function markPayoutReleased(deliveryId: string, providerReference: string): Promise<PayoutRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `UPDATE payouts
+     SET status='RELEASED', provider_reference=$2, updated_at=now()
+     WHERE delivery_id=$1 AND status IN ('ELIGIBLE','PROCESSING')
+     RETURNING *`,
+    [deliveryId, providerReference]
+  );
+  return result.rows[0] ? rowToPayout(result.rows[0]) : null;
+}
+
 export async function assignNextDeliveryToDriver(driverId: string): Promise<StoredDelivery | null> {
   if (!pool) return null;
   const result = await pool.query(
