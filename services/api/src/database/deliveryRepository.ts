@@ -72,8 +72,8 @@ export type StoredDelivery = {
   senderId: string;
   receiverName: string;
   receiverPhone: string;
-  pickup: { label: string; formattedAddress: string };
-  dropoff: { label: string; formattedAddress: string };
+  pickup: { label: string; formattedAddress: string; location: { latitude: number; longitude: number } };
+  dropoff: { label: string; formattedAddress: string; location: { latitude: number; longitude: number } };
   status: string;
   driverId?: string;
   pickupPhotoUrl?: string;
@@ -98,8 +98,8 @@ function rowToDelivery(row: any): StoredDelivery {
     senderId: row.sender_id,
     receiverName: row.receiver_name,
     receiverPhone: row.receiver_phone,
-    pickup: { label: "Pickup", formattedAddress: row.pickup_address },
-    dropoff: { label: "Drop-off", formattedAddress: row.dropoff_address },
+    pickup: { label: "Pickup", formattedAddress: row.pickup_address, location: { latitude: Number(row.pickup_lat), longitude: Number(row.pickup_lng), recordedAt: new Date(row.created_at).toISOString() } },
+    dropoff: { label: "Drop-off", formattedAddress: row.dropoff_address, location: { latitude: Number(row.dropoff_lat), longitude: Number(row.dropoff_lng), recordedAt: new Date(row.created_at).toISOString() } },
     status: row.status,
     driverId: row.driver_id ?? undefined,
     pickupPhotoUrl: row.pickup_photo_url ?? undefined,
@@ -172,17 +172,17 @@ export async function createPersistentDelivery(input: {
   const result = await pool.query(
     `INSERT INTO deliveries
       (id, tracking_code, sender_id, receiver_name, receiver_phone,
-       pickup_address, dropoff_address, status, receiver_pin_hash,
+       pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, status, receiver_pin_hash,
        quote_distance_meters, quote_duration_seconds, quote_base_fare_minor,
        quote_distance_fare_minor, quote_service_fee_minor, quote_total_minor, quote_currency)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,'CREATED',$8,$9,$10,$11,$12,$13,$14)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'CREATED',$11,$12,$13,$14,$15,$16,$17)
      RETURNING *`,
     [id, code, input.senderId, input.receiverName, input.receiverPhone,
-      input.pickup.formattedAddress, input.dropoff.formattedAddress, hashPin(input.receiverPin),
-      input.quote?.distanceMeters ?? null, input.quote?.durationSeconds ?? null,
+      input.pickup.formattedAddress, input.pickup.location.latitude, input.pickup.location.longitude,
+      input.dropoff.formattedAddress, input.dropoff.location.latitude, input.dropoff.location.longitude,
+      hashPin(input.receiverPin), input.quote?.distanceMeters ?? null, input.quote?.durationSeconds ?? null,
       input.quote?.baseFareMinor ?? null, input.quote?.distanceFareMinor ?? null,
-      input.quote?.serviceFeeMinor ?? null, input.quote?.totalMinor ?? null,
-      input.quote?.currency ?? "NGN"]
+      input.quote?.serviceFeeMinor ?? null, input.quote?.totalMinor ?? null, input.quote?.currency ?? "NGN"]
   );
   return rowToDelivery(result.rows[0]);
 }
