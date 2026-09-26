@@ -1,4 +1,5 @@
 import React from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SafeAreaView, View, Text, Pressable, StyleSheet, Alert, TextInput, Image } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Location from "expo-location";
@@ -25,7 +26,34 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
 });
 
 async function getActiveDeliveryId(): Promise<string | null> {
-  return null;
+  return AsyncStorage.getItem("swiftdrop.activeDeliveryId");
+}
+
+async function setActiveDeliveryId(id: string | null): Promise<void> {
+  if (id) await AsyncStorage.setItem("swiftdrop.activeDeliveryId", id);
+  else await AsyncStorage.removeItem("swiftdrop.activeDeliveryId");
+}
+
+async function startBackgroundTracking(): Promise<void> {
+  const started = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+  if (!started) {
+    await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+      accuracy: Location.Accuracy.High,
+      timeInterval: 5000,
+      distanceInterval: 10,
+      pausesUpdatesAutomatically: false,
+      showsBackgroundLocationIndicator: true,
+      foregroundService: {
+        notificationTitle: "SwiftDrop delivery tracking",
+        notificationBody: "Your active delivery is being tracked."
+      }
+    });
+  }
+}
+
+async function stopBackgroundTracking(): Promise<void> {
+  const started = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+  if (started) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
 }
 
 
@@ -79,6 +107,7 @@ export default function App() {
     try {
       const data = await api("/api/deliveries/" + selected.id + "/accept", { driverId: DRIVER_ID });
       setJob(data);
+      await setActiveDeliveryId(data.id);
       setStatus(data.status);
       await refreshJobs();
     } catch (error) {
@@ -180,7 +209,7 @@ export default function App() {
     if (!job) return;
     try {
       const data = await api("/api/deliveries/" + job.id + "/arrived", { driverId: DRIVER_ID });
-      setJob(data); setStatus(data.status); setTracking(false);
+      setJob(data); setStatus(data.status); setTracking(false);\n      await stopBackgroundTracking();\n      await setActiveDeliveryId(null);
     } catch (error) {
       Alert.alert("Arrival", error instanceof Error ? error.message : "Try again");
     }
