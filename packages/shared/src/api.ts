@@ -70,6 +70,28 @@ export class SwiftDropApi {
     };
   }
 
+  async register(input: {
+    fullName: string; phone: string; email?: string; password: string; role: "CUSTOMER" | "DRIVER";
+  }): Promise<{ accessToken: string; user: { id: string; role: string; full_name: string; phone: string; email?: string | null } }> {
+    const response = await fetch(this.baseUrl + "/api/auth/register", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input)
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Registration failed");
+    this.setAccessToken(data.accessToken);
+    return data;
+  }
+
+  async login(phone: string, password: string): Promise<{ accessToken: string; user: { id: string; role: string; full_name: string; phone: string; email?: string | null } }> {
+    const response = await fetch(this.baseUrl + "/api/auth/login", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone, password })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Login failed");
+    this.setAccessToken(data.accessToken);
+    return data;
+  }
+
   async health(): Promise<{ ok: boolean }> {
     const response = await fetch(this.baseUrl + "/health");
     if (!response.ok) throw new Error("API health check failed");
