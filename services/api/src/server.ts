@@ -95,8 +95,10 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const input = { ...parsed.data, senderId: identity(req) };
   const quote = parsed.data.quote;
-  const expectedQuote = req.body?.quote;
-  if (JSON.stringify(quote) !== JSON.stringify(expectedQuote)) return res.status(400).json({ error: "Quote is invalid" });
+  if (quote.currency !== "NGN") return res.status(400).json({ error: "Unsupported quote currency" });
+  if (!Number.isSafeInteger(quote.totalMinor) || quote.totalMinor <= 0) {
+    return res.status(400).json({ error: "Invalid quote total" });
+  }
   const pin = String(Math.floor(100000 + Math.random() * 900000));
   try {
     if (databaseEnabled()) {
@@ -118,10 +120,11 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   if (!databaseEnabled()) return res.status(503).json({ error: "Payments require the production database" });
 
-  const amountMinor = Number(req.body?.amountMinor);
   const email = String(req.body?.email ?? "").trim();
-  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0 || !email) {
-    return res.status(400).json({ error: "Valid amountMinor and email are required" });
+  if (!email) return res.status(400).json({ error: "Email is required" });
+  const amountMinor = delivery.quote?.totalMinor;
+  if (!amountMinor || !Number.isSafeInteger(amountMinor)) {
+    return res.status(409).json({ error: "Delivery does not have a valid server quote" });
   }
   const secret = process.env.PAYMENT_SECRET_KEY;
   const provider = process.env.PAYMENT_PROVIDER || "paystack";
