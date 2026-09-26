@@ -1,7 +1,19 @@
 import type { Server } from "node:http";
+import crypto from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 
 const subscribers = new Map<string, Set<WebSocket>>();
+const trackingTokens = new Map<string, string>();
+
+export function issueTrackingToken(deliveryId: string): string {
+  const token = crypto.randomUUID();
+  trackingTokens.set(token, deliveryId);
+  return token;
+}
+
+function validTrackingToken(token: string | null, deliveryId: string): boolean {
+  return Boolean(token && trackingTokens.get(token) === deliveryId);
+}
 
 export function attachRealtime(server: Server): void {
   const wss = new WebSocketServer({ server, path: "/ws" });
@@ -9,8 +21,9 @@ export function attachRealtime(server: Server): void {
   wss.on("connection", (socket, request) => {
     const url = new URL(request.url ?? "/", "http://localhost");
     const deliveryId = url.searchParams.get("deliveryId");
+    const token = url.searchParams.get("token");
 
-    if (!deliveryId) {
+    if (!deliveryId || !validTrackingToken(token, deliveryId)) {
       socket.close(1008, "deliveryId is required");
       return;
     }
