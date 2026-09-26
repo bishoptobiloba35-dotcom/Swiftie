@@ -6,6 +6,15 @@ export type ApiDelivery = {
   receiverPhone: string;
   pickup: { label: string; formattedAddress: string };
   dropoff: { label: string; formattedAddress: string };
+  quote?: {
+    currency: string;
+    distanceMeters: number;
+    durationSeconds: number;
+    baseFareMinor: number;
+    distanceFareMinor: number;
+    serviceFeeMinor: number;
+    totalMinor: number;
+  };
   status: string;
   driverId?: string;
   pickupPhotoUrl?: string;
@@ -81,6 +90,17 @@ export class SwiftDropApi {
     });
     if (!response.ok) throw new Error("Unable to calculate delivery quote");
     return response.json();
+  }
+
+  async initializePayment(deliveryId: string, email: string): Promise<{ authorizationUrl: string; reference: string; amountMinor: number }> {
+    const response = await fetch(this.baseUrl + `/api/deliveries/${deliveryId}/payment/initialize`, {
+      method: "POST",
+      headers: this.headers(true),
+      body: JSON.stringify({ email })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Payment initialization failed");
+    return data;
   }
 
   async createDelivery(input: CreateDeliveryInput): Promise<ApiDelivery> {
