@@ -38,6 +38,11 @@ type MemoryDelivery = {
   status: Status; driverId?: string; pickupPhotoUrl?: string; receiverPin: string; createdAt: string; updatedAt: string;
 };
 const deliveries = new Map<string, MemoryDelivery>();
+const notificationForDelivery = async (deliveryId: string, userId: string, title: string, body: string, type: string) => {
+  if (!databaseEnabled()) return;
+  await pool!.query("INSERT INTO notifications (user_id, delivery_id, title, body, type) VALUES ($1,$2,$3,$4,$5)", [userId, deliveryId, title, body, type]);
+};
+
 
 const createDeliverySchema = z.object({
   senderId: z.string().uuid(), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
