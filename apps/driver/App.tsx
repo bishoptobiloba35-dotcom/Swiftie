@@ -16,7 +16,6 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   for (const location of locations) {
     try {
       await api("/api/deliveries/" + activeDeliveryId + "/location", {
-        driverId: DRIVER_ID,
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
         accuracyMeters: location.coords.accuracy
