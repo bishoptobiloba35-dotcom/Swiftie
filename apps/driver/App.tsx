@@ -65,10 +65,25 @@ type Job = {
   receiverName: string; status: string;
 };
 
+async function getDriverToken(): Promise<string> {
+  const existing = await AsyncStorage.getItem("swiftdrop.driverAccessToken");
+  if (existing) return existing;
+  const response = await fetch(API_URL + "/api/auth/dev-token", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ userId: DRIVER_ID, role: "DRIVER" })
+  });
+  const data = await response.json();
+  if (!response.ok || !data.accessToken) throw new Error(data.error ?? "Driver authentication failed");
+  await AsyncStorage.setItem("swiftdrop.driverAccessToken", data.accessToken);
+  return data.accessToken;
+}
+
 async function api(path: string, body?: unknown) {
+  const token = await getDriverToken();
   const response = await fetch(API_URL + path, {
     method: body === undefined ? "GET" : "POST",
-    headers: body === undefined ? undefined : { "content-type": "application/json" },
+    headers: { authorization: "Bearer " + token, ...(body === undefined ? {} : { "content-type": "application/json" }) },
     body: body === undefined ? undefined : JSON.stringify(body)
   });
   const data = await response.json();
