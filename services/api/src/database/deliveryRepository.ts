@@ -40,6 +40,41 @@ export function databaseEnabled(): boolean {
   return Boolean(pool);
 }
 
+export async function recordDeliveryEvent(input: {
+  deliveryId: string;
+  eventType: string;
+  actorUserId?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  if (!pool) return;
+  await pool.query(
+    `INSERT INTO delivery_events (delivery_id, event_type, actor_user_id, metadata)
+     VALUES ($1,$2,$3,$4::jsonb)`,
+    [input.deliveryId, input.eventType, input.actorUserId ?? null, JSON.stringify(input.metadata ?? {})]
+  );
+}
+
+export async function listDeliveryEvents(deliveryId: string): Promise<Array<{
+  id: string;
+  eventType: string;
+  actorUserId?: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}>> {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT id, event_type AS "eventType", actor_user_id AS "actorUserId",
+      metadata, created_at AS "createdAt"
+     FROM delivery_events WHERE delivery_id=$1 ORDER BY created_at ASC`,
+    [deliveryId]
+  );
+  return result.rows.map(row => ({
+    ...row,
+    actorUserId: row.actorUserId ?? undefined,
+    createdAt: new Date(row.createdAt).toISOString()
+  }));
+}
+
 export async function createPersistentDelivery(input: {
   senderId: string;
   receiverName: string;
