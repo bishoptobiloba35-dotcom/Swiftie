@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "SwiftDrop Driver",
+    "slug": "swiftdrop-driver",
+    "version": "0.1.0",
+    "scheme": "swiftdrop-driver",
+    "orientation": "portrait",
+    "plugins": ["expo-camera", "expo-location"],
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "SwiftDrop uses the camera to capture parcel condition at pickup.",
+        "NSLocationWhenInUseUsageDescription": "SwiftDrop uses your location to provide live delivery tracking while a delivery is active."
+      }
+    },
+    "android": {}
+  }
+}
