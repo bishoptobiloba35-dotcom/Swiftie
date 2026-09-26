@@ -401,7 +401,8 @@ app.post("/api/uploads/pickup-photo", requireAuth("DRIVER"), async (req, res) =>
 });
 
 app.post("/api/deliveries/:id/pickup", requireAuth("DRIVER"), async (req, res) => {
-  const driverId = String(req.body?.driverId ?? "");
+  const driverId = await authenticatedDriverId(req);
+  if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
   const photo = String(req.body?.pickupPhotoUrl ?? "");
   if (!photo) return res.status(400).json({ error: "Pickup parcel photo is required" });
   if (databaseEnabled()) {
@@ -420,7 +421,8 @@ app.post("/api/deliveries/:id/pickup", requireAuth("DRIVER"), async (req, res) =
 });
 
 app.post("/api/deliveries/:id/start-trip", requireAuth("DRIVER"), async (req, res) => {
-  const driverId = String(req.body?.driverId ?? "");
+  const driverId = await authenticatedDriverId(req);
+  if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
   if (databaseEnabled()) {
     const updated = await transitionDelivery(req.params.id, "PICKED_UP", "IN_TRANSIT", driverId);
     if (!updated) return res.status(409).json({ error: "Parcel must be picked up first or driver is not assigned" });
@@ -439,8 +441,10 @@ app.post("/api/deliveries/:id/start-trip", requireAuth("DRIVER"), async (req, re
 app.post("/api/deliveries/:id/location", requireAuth("DRIVER"), async (req, res) => {
   const delivery = await getOne(req.params.id);
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  const driverId = await authenticatedDriverId(req);
+  if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
   const event = {
-    deliveryId: delivery.id, driverId: identity(req, String(req.body?.driverId ?? "")),
+    deliveryId: delivery.id, driverId,
     latitude: Number(req.body?.latitude), longitude: Number(req.body?.longitude),
     accuracyMeters: req.body?.accuracyMeters == null ? undefined : Number(req.body.accuracyMeters),
     recordedAt: new Date().toISOString()
