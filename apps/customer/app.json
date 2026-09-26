@@ -5,7 +5,21 @@
     "version": "0.1.0",
     "scheme": "swiftdrop",
     "orientation": "portrait",
-    "ios": { "supportsTablet": true },
-    "android": {}
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "SwiftDrop uses your location to set the pickup point when you choose your current location."
+      }
+    },
+    "android": {},
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "isAndroidBackgroundLocationEnabled": false,
+          "isIosBackgroundLocationEnabled": false
+        }
+      ]
+    ]
   }
 }
