@@ -78,6 +78,15 @@ export type StoredDelivery = {
   driverId?: string;
   pickupPhotoUrl?: string;
   receiverPinHash: string;
+  quote?: {
+    currency: string;
+    distanceMeters: number;
+    durationSeconds: number;
+    baseFareMinor: number;
+    distanceFareMinor: number;
+    serviceFeeMinor: number;
+    totalMinor: number;
+  };
   createdAt: string;
   updatedAt: string;
 };
@@ -95,6 +104,15 @@ function rowToDelivery(row: any): StoredDelivery {
     driverId: row.driver_id ?? undefined,
     pickupPhotoUrl: row.pickup_photo_url ?? undefined,
     receiverPinHash: row.receiver_pin_hash,
+    quote: row.quote_total_minor == null ? undefined : {
+      currency: row.quote_currency ?? "NGN",
+      distanceMeters: Number(row.quote_distance_meters),
+      durationSeconds: Number(row.quote_duration_seconds),
+      baseFareMinor: Number(row.quote_base_fare_minor),
+      distanceFareMinor: Number(row.quote_distance_fare_minor),
+      serviceFeeMinor: Number(row.quote_service_fee_minor),
+      totalMinor: Number(row.quote_total_minor)
+    },
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString()
   };
@@ -146,6 +164,7 @@ export async function createPersistentDelivery(input: {
   pickup: { label: string; formattedAddress: string };
   dropoff: { label: string; formattedAddress: string };
   receiverPin: string;
+  quote?: StoredDelivery["quote"];
 }): Promise<StoredDelivery> {
   if (!pool) throw new Error("DATABASE_URL is not configured");
   const id = randomUUID();
@@ -153,11 +172,17 @@ export async function createPersistentDelivery(input: {
   const result = await pool.query(
     `INSERT INTO deliveries
       (id, tracking_code, sender_id, receiver_name, receiver_phone,
-       pickup_address, dropoff_address, status, receiver_pin_hash)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,'CREATED',$8)
+       pickup_address, dropoff_address, status, receiver_pin_hash,
+       quote_distance_meters, quote_duration_seconds, quote_base_fare_minor,
+       quote_distance_fare_minor, quote_service_fee_minor, quote_total_minor, quote_currency)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'CREATED',$8,$9,$10,$11,$12,$13,$14)
      RETURNING *`,
     [id, code, input.senderId, input.receiverName, input.receiverPhone,
-      input.pickup.formattedAddress, input.dropoff.formattedAddress, hashPin(input.receiverPin)]
+      input.pickup.formattedAddress, input.dropoff.formattedAddress, hashPin(input.receiverPin),
+      input.quote?.distanceMeters ?? null, input.quote?.durationSeconds ?? null,
+      input.quote?.baseFareMinor ?? null, input.quote?.distanceFareMinor ?? null,
+      input.quote?.serviceFeeMinor ?? null, input.quote?.totalMinor ?? null,
+      input.quote?.currency ?? "NGN"]
   );
   return rowToDelivery(result.rows[0]);
 }
