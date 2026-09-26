@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
@@ -128,6 +130,20 @@ app.post("/api/deliveries/:id/at-pickup", requireAuth("DRIVER"), async (req, res
   delivery.status = "DRIVER_AT_PICKUP"; delivery.updatedAt = new Date().toISOString();
   publishDeliveryUpdate(delivery.id, safeDelivery(delivery));
   res.json(safeDelivery(delivery));
+});
+
+app.post("/api/uploads/pickup-photo", requireAuth("DRIVER"), async (req, res) => {
+  const dataUrl = String(req.body?.image ?? "");
+  const match = dataUrl.match(/^data:image\\/(jpeg|jpg|png);base64,(.+)$/);
+  if (!match) return res.status(400).json({ error: "A JPEG or PNG data URL is required" });
+  const extension = match[1] === "png" ? "png" : "jpg";
+  const buffer = Buffer.from(match[2], "base64");
+  if (buffer.length > 8 * 1024 * 1024) return res.status(413).json({ error: "Image is too large" });
+  const filename = randomUUID() + "." + extension;
+  const directory = path.resolve("uploads/pickups");
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, filename), buffer);
+  res.status(201).json({ url: "/uploads/pickups/" + filename });
 });
 
 app.post("/api/deliveries/:id/pickup", requireAuth("DRIVER"), async (req, res) => {
