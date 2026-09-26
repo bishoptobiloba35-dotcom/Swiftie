@@ -14,6 +14,20 @@ async function getCustomerToken(): Promise<string> {
 }
 
 export default function App() {
+  const [signedIn, setSignedIn] = React.useState(false);
+  const [authPhone, setAuthPhone] = React.useState("");
+  const [authPassword, setAuthPassword] = React.useState("");
+
+  async function signIn() {
+    try {
+      const result = await api.login(authPhone, authPassword);
+      await AsyncStorage.setItem("swiftdrop.customerAccessToken", result.accessToken);
+      setSignedIn(true);
+    } catch (error) {
+      Alert.alert("Sign in failed", error instanceof Error ? error.message : "Unable to sign in");
+    }
+  }
+
   const [pickup, setPickup] = React.useState("");
   const [dropoff, setDropoff] = React.useState("");
   const [receiver, setReceiver] = React.useState("");
@@ -105,6 +119,18 @@ export default function App() {
   }
 
   React.useEffect(() => () => socketRef.current?.close(), []);
+
+  if (!signedIn) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Text style={styles.title}>SwiftDrop</Text>
+        <Text style={styles.subtitle}>Sign in to create and track deliveries.</Text>
+        <TextInput style={styles.input} placeholder="Phone number" value={authPhone} onChangeText={setAuthPhone} keyboardType="phone-pad" />
+        <TextInput style={styles.input} placeholder="Password" value={authPassword} onChangeText={setAuthPassword} secureTextEntry />
+        <Pressable style={styles.button} onPress={signIn}><Text style={styles.buttonText}>Sign in</Text></Pressable>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
