@@ -55,6 +55,16 @@ export class SwiftDropApi {
     return response.json() as Promise<ApiDelivery>;
   }
 
+  async createTrackingSession(trackingCode: string): Promise<{ deliveryId: string; trackingToken: string }> {
+    const response = await fetch(this.baseUrl + "/api/track/session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ trackingCode })
+    });
+    if (!response.ok) throw new Error("Unable to start tracking session");
+    return response.json() as Promise<{ deliveryId: string; trackingToken: string }>;
+  }
+
   async track(trackingCode: string): Promise<ApiDelivery> {
     const response = await fetch(
       this.baseUrl + "/api/track/" + encodeURIComponent(trackingCode)
@@ -65,12 +75,13 @@ export class SwiftDropApi {
 
   connectToTracking(
     deliveryId: string,
+    trackingToken: string,
     onLocation: (location: ApiDelivery["latestLocation"]) => void,
     onDeliveryUpdate?: (delivery: Partial<ApiDelivery>) => void
   ): WebSocket {
     const wsBase = this.baseUrl.replace(/^http/, "ws");
     const socket = new WebSocket(
-      wsBase + "/ws?deliveryId=" + encodeURIComponent(deliveryId)
+      wsBase + "/ws?deliveryId=" + encodeURIComponent(deliveryId) + "&token=" + encodeURIComponent(trackingToken)
     );
     socket.onmessage = event => {
       const message = JSON.parse(event.data) as {
