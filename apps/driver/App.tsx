@@ -113,9 +113,30 @@ export default function App() {
   };
 
   const goOnline = async () => {
-    setOnline(true);
-    setStatus("ONLINE");
-    await refreshJobs();
+    try {
+      await api("/api/driver/availability", { online: true });
+      setOnline(true);
+      setStatus("ONLINE");
+      const assignment = await api("/api/driver/auto-assign", {});
+      if (assignment?.delivery) {
+        setJob(assignment.delivery);
+        setStatus(assignment.delivery.status);
+        await setActiveDeliveryId(assignment.delivery.id);
+      }
+      await refreshJobs();
+    } catch (error) {
+      setOnline(false);
+      Alert.alert("SwiftDrop", error instanceof Error ? error.message : "Could not go online");
+    }
+  };
+
+  const goOffline = async () => {
+    try {
+      await api("/api/driver/availability", { online: false });
+    } finally {
+      setOnline(false);
+      setStatus("OFFLINE");
+    }
   };
 
   const acceptJob = async (selected: Job) => {
