@@ -175,7 +175,7 @@ export async function createPersistentDelivery(input: {
        pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, status, receiver_pin_hash,
        quote_distance_meters, quote_duration_seconds, quote_base_fare_minor,
        quote_distance_fare_minor, quote_service_fee_minor, quote_total_minor, quote_currency)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'CREATED',$11,$12,$13,$14,$15,$16,$17)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'CREATED',$12,$13,$14,$15,$16,$17,$18,$19)
      RETURNING *`,
     [id, code, input.senderId, input.receiverName, input.receiverPhone,
       input.pickup.formattedAddress, input.pickup.location.latitude, input.pickup.location.longitude,
