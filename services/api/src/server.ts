@@ -8,7 +8,7 @@ import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
-import { databaseEnabled, createPersistentDelivery, findDelivery, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation } from "./database/deliveryRepository.js";
+import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser } from "./database/deliveryRepository.js";
 import { pingDatabase } from "./database/db.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
@@ -66,8 +66,11 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   }
 });
 
-app.get("/api/deliveries/:id", async (req, res) => {
-  const delivery = await getOne(req.params.id);
+app.get("/api/deliveries/:id", requireAuth("CUSTOMER", "DRIVER", "ADMIN"), async (req, res) => {
+  const user = (req as typeof req & { user?: { userId: string; role: "CUSTOMER" | "DRIVER" | "ADMIN" } }).user!;
+  const delivery = databaseEnabled()
+    ? await findDeliveryForUser(req.params.id, user.userId, user.role)
+    : await getOne(req.params.id);
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   res.json(safeDelivery(delivery));
 });
