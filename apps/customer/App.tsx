@@ -19,6 +19,8 @@ export default function App() {
   const [dropoff, setDropoff] = React.useState("");
   const [pickupLat, setPickupLat] = React.useState("");
   const [pickupLng, setPickupLng] = React.useState("");
+  const [pickupResults, setPickupResults] = React.useState<Array<{ formattedAddress?: string; latitude: number; longitude: number }>>([]);
+  const [dropoffResults, setDropoffResults] = React.useState<Array<{ formattedAddress?: string; latitude: number; longitude: number }>>([]);
   const [dropoffLat, setDropoffLat] = React.useState("");
   const [dropoffLng, setDropoffLng] = React.useState("");
   const [receiver, setReceiver] = React.useState("");
@@ -64,6 +66,26 @@ export default function App() {
       setSignedIn(true);
     } catch (error) {
       Alert.alert("Registration failed", error instanceof Error ? error.message : "Unable to register");
+    }
+  }
+
+  async function searchAddress(query: string, target: "pickup" | "dropoff") {
+    try {
+      if (query.trim().length < 3) {
+        target === "pickup" ? setPickupResults([]) : setDropoffResults([]);
+        return;
+      }
+      const results = await api.searchLocations(query);
+      target === "pickup" ? setPickupResults(results) : setDropoffResults(results);
+    } catch {}
+  }
+
+  function chooseAddress(result: { formattedAddress?: string; latitude: number; longitude: number }, target: "pickup" | "dropoff") {
+    const address = result.formattedAddress ?? "";
+    if (target === "pickup") {
+      setPickup(address); setPickupLat(String(result.latitude)); setPickupLng(String(result.longitude)); setPickupResults([]);
+    } else {
+      setDropoff(address); setDropoffLat(String(result.latitude)); setDropoffLng(String(result.longitude)); setDropoffResults([]);
     }
   }
 
@@ -158,8 +180,10 @@ export default function App() {
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.container}>
     <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.subtitle}>Send it. Track it. Receive it.</Text></View><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View>
     <Text style={styles.heading}>Create a delivery</Text>
-    <TextInput style={styles.input} placeholder="Pickup address" value={pickup} onChangeText={setPickup} />
-    <TextInput style={styles.input} placeholder="Drop-off address" value={dropoff} onChangeText={setDropoff} />
+    <TextInput style={styles.input} placeholder="Pickup address" value={pickup} onChangeText={value => { setPickup(value); void searchAddress(value, "pickup"); }} />
+    {pickupResults.map((result, index) => <Pressable key={"pickup-" + index} style={styles.suggestion} onPress={() => chooseAddress(result, "pickup")}><Text>{result.formattedAddress}</Text></Pressable>)}
+    <TextInput style={styles.input} placeholder="Drop-off address" value={dropoff} onChangeText={value => { setDropoff(value); void searchAddress(value, "dropoff"); }} />
+    {dropoffResults.map((result, index) => <Pressable key={"dropoff-" + index} style={styles.suggestion} onPress={() => chooseAddress(result, "dropoff")}><Text>{result.formattedAddress}</Text></Pressable>)}
     <Text style={styles.hint}>Choose your current location for pickup, or enter coordinates from a map/address search.</Text>
     <Pressable style={styles.secondary} onPress={() => void useCurrentPickupLocation()}><Text style={styles.secondaryText}>Use my current location for pickup</Text></Pressable>
     <View style={styles.row}><TextInput style={styles.half} placeholder="Pickup latitude" value={pickupLat} onChangeText={setPickupLat} keyboardType="decimal-pad" /><TextInput style={styles.half} placeholder="Pickup longitude" value={pickupLng} onChangeText={setPickupLng} keyboardType="decimal-pad" /></View>
@@ -197,6 +221,7 @@ const styles = StyleSheet.create({
   subtitle: { color: "#666", marginBottom: 12 },
   heading: { fontSize: 20, fontWeight: "700", marginTop: 8 },
   input: { borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 14, fontSize: 16 },
+  suggestion: { borderWidth: 1, borderColor: "#eee", borderRadius: 10, padding: 12, backgroundColor: "#fafafa" },
   row: { flexDirection: "row", gap: 10 },
   half: { flex: 1, borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 14, fontSize: 14 },
   hint: { color: "#777", fontSize: 12, lineHeight: 18 },
