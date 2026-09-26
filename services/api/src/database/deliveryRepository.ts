@@ -221,6 +221,28 @@ export async function findByTrackingCode(code: string): Promise<StoredDelivery |
   return result.rows[0] ? rowToDelivery(result.rows[0]) : null;
 }
 
+export async function assignNextDeliveryToDriver(driverId: string): Promise<StoredDelivery | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `WITH candidate AS (
+       SELECT id
+       FROM deliveries
+       WHERE driver_id IS NULL
+         AND status = 'PAYMENT_AUTHORIZED'
+       ORDER BY created_at ASC
+       FOR UPDATE SKIP LOCKED
+       LIMIT 1
+     )
+     UPDATE deliveries d
+     SET driver_id=$1, status='DRIVER_ASSIGNED', updated_at=now()
+     FROM candidate
+     WHERE d.id=candidate.id
+     RETURNING d.*`,
+    [driverId]
+  );
+  return result.rows[0] ? rowToDelivery(result.rows[0]) : null;
+}
+
 export async function listOpenJobs(): Promise<StoredDelivery[]> {
   if (!pool) return [];
   const result = await pool.query(
