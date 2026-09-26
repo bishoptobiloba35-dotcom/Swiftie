@@ -254,6 +254,57 @@ function rowToPayout(row: any): PayoutRecord {
   };
 }
 
+export type DisputeRecord = {
+  id: string;
+  deliveryId: string;
+  openedBy: string;
+  reason: string;
+  description?: string | null;
+  status: "OPEN" | "UNDER_REVIEW" | "RESOLVED_REFUND" | "RESOLVED_RELEASE" | "CLOSED";
+  resolutionNote?: string | null;
+};
+
+function rowToDispute(row: any): DisputeRecord {
+  return {
+    id: row.id,
+    deliveryId: row.delivery_id,
+    openedBy: row.opened_by,
+    reason: row.reason,
+    description: row.description ?? null,
+    status: row.status,
+    resolutionNote: row.resolution_note ?? null
+  };
+}
+
+export async function createDispute(deliveryId: string, openedBy: string, reason: string, description?: string): Promise<DisputeRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `INSERT INTO disputes (delivery_id, opened_by, reason, description)
+     VALUES ($1,$2,$3,$4)
+     ON CONFLICT (delivery_id) DO NOTHING
+     RETURNING *`,
+    [deliveryId, openedBy, reason, description ?? null]
+  );
+  return result.rows[0] ? rowToDispute(result.rows[0]) : null;
+}
+
+export async function findDispute(deliveryId: string): Promise<DisputeRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query("SELECT * FROM disputes WHERE delivery_id=$1", [deliveryId]);
+  return result.rows[0] ? rowToDispute(result.rows[0]) : null;
+}
+
+export async function resolveDispute(deliveryId: string, status: "RESOLVED_REFUND" | "RESOLVED_RELEASE", note: string): Promise<DisputeRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `UPDATE disputes SET status=$2, resolution_note=$3, updated_at=now()
+     WHERE delivery_id=$1 AND status IN ('OPEN','UNDER_REVIEW')
+     RETURNING *`,
+    [deliveryId, status, note]
+  );
+  return result.rows[0] ? rowToDispute(result.rows[0]) : null;
+}
+
 export async function createEligiblePayout(deliveryId: string, driverId: string, amountMinor: number): Promise<PayoutRecord | null> {
   if (!pool) return null;
   const result = await pool.query(
