@@ -155,7 +155,7 @@ export default function App() {
   const atPickup = async () => {
     if (!job) return;
     try {
-      const data = await api("/api/deliveries/" + job.id + "/at-pickup", { driverId: DRIVER_ID });
+      const data = await api("/api/deliveries/" + job.id + "/at-pickup", {});
       setJob(data); setStatus(data.status);
     } catch (error) {
       Alert.alert("Pickup", error instanceof Error ? error.message : "Try again");
@@ -202,7 +202,7 @@ export default function App() {
   const startTrip = async () => {
     if (!job) return;
     try {
-      const data = await api("/api/deliveries/" + job.id + "/start-trip", { driverId: DRIVER_ID });
+      const data = await api("/api/deliveries/" + job.id + "/start-trip", {});
       setJob(data); setStatus(data.status);
       await setActiveDeliveryId(data.id);
       const foreground = await Location.requestForegroundPermissionsAsync();
@@ -238,7 +238,6 @@ export default function App() {
           if (cancelled) return;
           try {
             const data = await api("/api/deliveries/" + job.id + "/location", {
-              driverId: DRIVER_ID,
               latitude: location.coords.latitude,
               longitude: location.coords.longitude,
               accuracyMeters: location.coords.accuracy
@@ -286,7 +285,7 @@ export default function App() {
   const markArrived = async () => {
     if (!job) return;
     try {
-      const data = await api("/api/deliveries/" + job.id + "/arrived", { driverId: DRIVER_ID });
+      const data = await api("/api/deliveries/" + job.id + "/arrived", {});
       setJob(data); setStatus(data.status); setTracking(false);\n      await stopBackgroundTracking();\n      await setActiveDeliveryId(null);
     } catch (error) {
       Alert.alert("Arrival", error instanceof Error ? error.message : "Try again");
