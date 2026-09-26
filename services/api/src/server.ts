@@ -641,6 +641,7 @@ app.post("/api/deliveries/:id/accept", requireAuth("DRIVER"), async (req, res) =
       ?? await transitionDelivery(req.params.id, "PAYMENT_AUTHORIZED", "DRIVER_ASSIGNED", driverId);
     if (!updated) return res.status(409).json({ error: "Delivery is no longer available" });
     await recordDeliveryEvent({ deliveryId: updated.id, eventType: "DRIVER_ASSIGNED", actorUserId: identity(req), metadata: { driverId } });
+    await notificationForDelivery(updated.id, updated.senderId, "Driver assigned", "A driver has accepted your SwiftDrop delivery.", "DRIVER_ASSIGNED");
     publishDeliveryUpdate(req.params.id, safeDelivery(updated));
     return res.json(safeDelivery(updated));
   }
