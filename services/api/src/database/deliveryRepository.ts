@@ -63,6 +63,28 @@ export async function createPersistentDelivery(input: {
   return rowToDelivery(result.rows[0]);
 }
 
+export async function findDeliveryForUser(id: string, userId: string, role: "CUSTOMER" | "DRIVER" | "ADMIN"): Promise<StoredDelivery | null> {
+  if (!pool) return null;
+  const result = role === "CUSTOMER"
+    ? await pool.query("SELECT * FROM deliveries WHERE id=$1 AND sender_id=$2", [id, userId])
+    : role === "DRIVER"
+      ? await pool.query(
+          "SELECT d.* FROM deliveries d JOIN drivers dr ON dr.id=d.driver_id WHERE d.id=$1 AND dr.user_id=$2",
+          [id, userId]
+        )
+      : await pool.query("SELECT * FROM deliveries WHERE id=$1", [id]);
+  return result.rows[0] ? rowToDelivery(result.rows[0]) : null;
+}
+
+export async function driverForUser(userId: string): Promise<{ id: string; userId: string; status: string; online: boolean } | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    "SELECT id, user_id AS \"userId\", status, online FROM drivers WHERE user_id=$1",
+    [userId]
+  );
+  return result.rows[0] ?? null;
+}
+
 export async function findDelivery(id: string): Promise<StoredDelivery | null> {
   if (!pool) return null;
   const result = await pool.query("SELECT * FROM deliveries WHERE id=$1", [id]);
