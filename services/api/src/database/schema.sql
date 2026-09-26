@@ -114,3 +114,18 @@ CREATE TABLE IF NOT EXISTS disputes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_disputes_status ON disputes(status);
+
+
+CREATE TABLE IF NOT EXISTS driver_documents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  driver_id UUID NOT NULL REFERENCES drivers(id),
+  document_type TEXT NOT NULL,
+  document_url TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'PENDING'
+    CHECK (status IN ('PENDING','APPROVED','REJECTED')),
+  review_note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_driver_documents_driver ON driver_documents(driver_id);
