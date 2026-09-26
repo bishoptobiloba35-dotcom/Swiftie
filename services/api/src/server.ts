@@ -393,6 +393,14 @@ app.get("/api/admin/drivers", requireAuth("ADMIN"), async (_req, res) => {
 
 app.post("/api/admin/drivers/:driverId/approve", requireAuth("ADMIN"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const documents = await pool!.query(
+    "SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status='APPROVED')::int AS approved FROM driver_documents WHERE driver_id=$1",
+    [req.params.driverId]
+  );
+  const documentSummary = documents.rows[0];
+  if (!documentSummary || documentSummary.total < 1 || documentSummary.approved < 1) {
+    return res.status(409).json({ error: "At least one approved KYC document is required before driver approval" });
+  }
   const result = await pool!.query(
     "UPDATE drivers SET status='APPROVED' WHERE id=$1 AND status='PENDING' RETURNING id, user_id, status",
     [req.params.driverId]
