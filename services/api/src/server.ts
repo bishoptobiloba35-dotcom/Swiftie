@@ -295,6 +295,60 @@ app.get("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER", "ADMIN"
   res.json({ dispute });
 });
 
+app.post("/api/driver/documents", requireAuth("DRIVER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const userId = identity(req);
+  const driver = await driverForUser(userId);
+  if (!driver) return res.status(404).json({ error: "Driver profile not found" });
+  const documentType = String(req.body?.documentType ?? "").trim();
+  const documentUrl = String(req.body?.documentUrl ?? "").trim();
+  if (!documentType || !documentUrl) return res.status(400).json({ error: "Document type and document URL are required" });
+  const result = await pool!.query(
+    "INSERT INTO driver_documents (driver_id, document_type, document_url) VALUES ($1,$2,$3) RETURNING id, document_type, status, created_at",
+    [driver.id, documentType, documentUrl]
+  );
+  res.status(201).json({ document: result.rows[0] });
+});
+
+app.get("/api/driver/documents", requireAuth("DRIVER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const driver = await driverForUser(identity(req));
+  if (!driver) return res.status(404).json({ error: "Driver profile not found" });
+  const result = await pool!.query(
+    "SELECT id, document_type, document_url, status, review_note, created_at, updated_at FROM driver_documents WHERE driver_id=$1 ORDER BY created_at DESC",
+    [driver.id]
+  );
+  res.json({ documents: result.rows });
+});
+
+app.get("/api/admin/drivers", requireAuth("ADMIN"), async (_req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool!.query(
+    "SELECT d.id, d.user_id, d.status, d.online, d.vehicle_type, d.vehicle_registration, u.full_name, u.phone, u.email, d.created_at FROM drivers d JOIN users u ON u.id=d.user_id ORDER BY d.created_at DESC LIMIT 200"
+  );
+  res.json({ drivers: result.rows });
+});
+
+app.post("/api/admin/drivers/:driverId/approve", requireAuth("ADMIN"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool!.query(
+    "UPDATE drivers SET status='APPROVED' WHERE id=$1 AND status='PENDING' RETURNING id, user_id, status",
+    [req.params.driverId]
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: "Pending driver not found" });
+  res.json({ driver: result.rows[0] });
+});
+
+app.post("/api/admin/drivers/:driverId/suspend", requireAuth("ADMIN"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool!.query(
+    "UPDATE drivers SET status='SUSPENDED', online=false WHERE id=$1 AND status <> 'SUSPENDED' RETURNING id, user_id, status",
+    [req.params.driverId]
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: "Driver not found" });
+  res.json({ driver: result.rows[0] });
+});
+
 app.get("/api/admin/operations", requireAuth("ADMIN"), async (_req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool!.query(
