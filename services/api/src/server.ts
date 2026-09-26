@@ -295,6 +295,41 @@ app.get("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER", "ADMIN"
   res.json({ dispute });
 });
 
+app.get("/api/admin/operations", requireAuth("ADMIN"), async (_req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool!.query(
+    "SELECT (SELECT count(*) FROM users WHERE role='CUSTOMER')::int AS customers, (SELECT count(*) FROM drivers)::int AS drivers, (SELECT count(*) FROM drivers WHERE status='APPROVED' AND online=true)::int AS online_drivers, (SELECT count(*) FROM deliveries)::int AS deliveries, (SELECT count(*) FROM deliveries WHERE status NOT IN ('DELIVERED','CANCELLED','DISPUTED'))::int AS active_deliveries, (SELECT count(*) FROM disputes WHERE status IN ('OPEN','UNDER_REVIEW'))::int AS open_disputes, (SELECT count(*) FROM payouts WHERE status IN ('ELIGIBLE','PROCESSING'))::int AS pending_payouts"
+  );
+  res.json({ metrics: result.rows[0] });
+});
+
+app.get("/api/admin/deliveries", requireAuth("ADMIN"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const status = typeof req.query.status === "string" ? req.query.status : null;
+  const limit = Math.min(Math.max(Number(req.query.limit ?? 50), 1), 100);
+  const params: unknown[] = [];
+  const whereClause = status ? "WHERE d.status=$1" : "";
+  if (status) params.push(status);
+  params.push(limit);
+  const result = await pool!.query(
+    "SELECT d.id, d.tracking_code, d.sender_id, d.driver_id, d.receiver_name, d.status, d.quote_total_minor, d.quote_currency, d.created_at, d.updated_at FROM deliveries d " + whereClause + " ORDER BY d.updated_at DESC LIMIT $" + params.length,
+    params
+  );
+  res.json({ deliveries: result.rows });
+});
+
+app.get("/api/admin/disputes", requireAuth("ADMIN"), async (_req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool!.query("SELECT id, delivery_id, opened_by, reason, description, status, resolution_note, created_at, updated_at FROM disputes ORDER BY updated_at DESC LIMIT 100");
+  res.json({ disputes: result.rows });
+});
+
+app.get("/api/admin/payouts", requireAuth("ADMIN"), async (_req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool!.query("SELECT id, delivery_id, driver_id, amount_minor, currency, status, provider, provider_reference, created_at, updated_at FROM payouts ORDER BY updated_at DESC LIMIT 100");
+  res.json({ payouts: result.rows });
+});
+
 app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), async (req, res) => {
   const status = String(req.body?.resolution ?? "");
   if (status !== "RESOLVED_REFUND" && status !== "RESOLVED_RELEASE") {
