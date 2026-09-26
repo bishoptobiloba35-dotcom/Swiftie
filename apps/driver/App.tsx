@@ -1,5 +1,6 @@
 import React from "react";
-import { SafeAreaView, View, Text, Pressable, StyleSheet, Alert, TextInput } from "react-native";
+import { SafeAreaView, View, Text, Pressable, StyleSheet, Alert, TextInput, Image } from "react-native";
+import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Location from "expo-location";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -29,6 +30,9 @@ export default function App() {
   const [job, setJob] = React.useState<Job | null>(null);
   const [status, setStatus] = React.useState("OFFLINE");
   const [photoUrl, setPhotoUrl] = React.useState("");
+  const [cameraOpen, setCameraOpen] = React.useState(false);
+  const [cameraRef, setCameraRef] = React.useState<CameraView | null>(null);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [pin, setPin] = React.useState("");
   const [tracking, setTracking] = React.useState(false);
 
@@ -66,6 +70,28 @@ export default function App() {
     } catch (error) {
       Alert.alert("Pickup", error instanceof Error ? error.message : "Try again");
     }
+  };
+
+  const openCamera = async () => {
+    if (!cameraPermission?.granted) {
+      const permission = await requestCameraPermission();
+      if (!permission.granted) {
+        Alert.alert("Camera permission", "SwiftDrop needs camera access to record the parcel condition.");
+        return;
+      }
+    }
+    setCameraOpen(true);
+  };
+
+  const capturePhoto = async () => {
+    if (!cameraRef) return;
+    const photo = await cameraRef.takePictureAsync({ base64: true, quality: 0.7 });
+    if (!photo.base64) {
+      Alert.alert("Camera", "Could not capture the parcel photo.");
+      return;
+    }
+    setPhotoUrl("data:image/jpeg;base64," + photo.base64);
+    setCameraOpen(false);
   };
 
   const confirmPickup = async () => {
@@ -180,6 +206,14 @@ export default function App() {
           </View>
         ) : null}
 
+        {cameraOpen ? (
+          <View style={styles.cameraCard}>
+            <CameraView ref={setCameraRef} style={styles.camera} facing="back" />
+            <Pressable style={styles.primary} onPress={() => void capturePhoto()}><Text style={styles.primaryText}>Capture photo</Text></Pressable>
+            <Pressable style={styles.secondary} onPress={() => setCameraOpen(false)}><Text>Cancel</Text></Pressable>
+          </View>
+        ) : null}
+
         {job ? (
           <View style={styles.card}>
             <Text style={styles.title}>Delivery {job.trackingCode}</Text>
@@ -195,7 +229,8 @@ export default function App() {
             {job.status === "DRIVER_AT_PICKUP" ? (
               <>
                 <Text style={styles.muted}>Parcel photo is mandatory before pickup confirmation.</Text>
-                <TextInput value={photoUrl} onChangeText={setPhotoUrl} placeholder="Parcel photo URL (temporary)" style={styles.input} />
+                {photoUrl ? <Image source={{ uri: photoUrl }} style={styles.preview} /> : null}
+                <Pressable style={styles.secondary} onPress={() => void openCamera()}><Text>{photoUrl ? "Retake parcel photo" : "Take parcel photo"}</Text></Pressable>
                 <Pressable style={styles.primary} onPress={() => void confirmPickup()}>
                   <Text style={styles.primaryText}>Confirm parcel pickup</Text>
                 </Pressable>
@@ -246,5 +281,8 @@ const styles = StyleSheet.create({
   primaryText: { color: "#fff", fontWeight: "700" },
   secondary: { borderWidth: 1, borderColor: "#ccc", padding: 13, borderRadius: 10, alignItems: "center" },
   input: { borderWidth: 1, borderColor: "#ccc", borderRadius: 10, padding: 13 },
-  done: { fontSize: 18, fontWeight: "800" }
+  done: { fontSize: 18, fontWeight: "800" },
+  preview: { width: "100%", height: 220, borderRadius: 12 },
+  cameraCard: { flex: 1, gap: 12 },
+  camera: { flex: 1, minHeight: 420, borderRadius: 16, overflow: "hidden" }
 });
