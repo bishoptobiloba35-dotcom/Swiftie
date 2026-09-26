@@ -97,6 +97,12 @@ export default function App() {
       setDelivery(current => current ? { ...current, latestLocation: next } : current);
     }, updated => {
       setDelivery(current => current ? { ...current, ...updated } : current);
+      if (updated?.status === "IN_TRANSIT") {
+        Alert.alert("SwiftDrop", "Your parcel is now in transit.");
+      }
+      if (updated?.status === "DELIVERED") {
+        Alert.alert("SwiftDrop", "Your parcel has been delivered and the receiver PIN was verified.");
+      }
     });
   }
 
