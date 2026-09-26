@@ -10,7 +10,7 @@ import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus } from "./database/deliveryRepository.js";
 import { pingDatabase } from "./database/db.js";
-import { assignNextDeliveryToDriver, setDriverOnline } from "./database/deliveryRepository.js";
+import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -262,6 +262,18 @@ app.get("/api/deliveries/:id/payment/status", requireAuth("CUSTOMER", "ADMIN"), 
   res.json({ payment });
 });
 
+app.get("/api/deliveries/:id/payout", requireAuth("DRIVER", "ADMIN"), async (req, res) => {
+  const userId = identity(req);
+  const role = (req as typeof req & { user?: { role: "DRIVER" | "ADMIN" } }).user!.role;
+  const delivery = databaseEnabled()
+    ? await findDeliveryForUser(req.params.id, userId, role)
+    : await getOne(req.params.id);
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  const payout = await findPayout(req.params.id);
+  if (!payout) return res.status(404).json({ error: "Payout has not been created" });
+  res.json({ payout });
+});
+
 app.get("/api/deliveries/:id/events", requireAuth("CUSTOMER", "DRIVER", "ADMIN"), async (req, res) => {
   const user = (req as typeof req & { user?: { userId: string; role: "CUSTOMER" | "DRIVER" | "ADMIN" } }).user!;
   const delivery = databaseEnabled()
@@ -484,6 +496,17 @@ app.post("/api/deliveries/:id/complete", requireAuth("DRIVER"), async (req, res)
     if (!await verifyReceiverPin(req.params.id, pin)) return res.status(401).json({ error: "Invalid receiver PIN" });
     const updated = await completeDelivery(req.params.id, driverId);
     if (!updated) return res.status(409).json({ error: "Delivery is not ready or driver is not assigned" });
+    const payment = await findPayment(updated.id);
+    const payoutAmount = payment?.amountMinor ? Math.max(0, Math.floor(payment.amountMinor * 0.9)) : 0;
+    if (payoutAmount > 0) {
+      await createEligiblePayout(updated.id, driverId, payoutAmount);
+      await recordDeliveryEvent({
+        deliveryId: updated.id,
+        eventType: "PAYOUT_ELIGIBLE",
+        actorUserId: identity(req),
+        metadata: { amountMinor: payoutAmount, currency: payment?.currency ?? "NGN" }
+      });
+    }
     await recordDeliveryEvent({ deliveryId: updated.id, eventType: "DELIVERED", actorUserId: identity(req), metadata: { receiverPinVerified: true } });
     return res.json(safeDelivery(updated));
   }
