@@ -360,6 +360,28 @@ export async function findPayout(deliveryId: string): Promise<PayoutRecord | nul
   return result.rows[0] ? rowToPayout(result.rows[0]) : null;
 }
 
+export async function findPayoutByProviderReference(providerReference: string): Promise<PayoutRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query("SELECT * FROM payouts WHERE provider_reference=$1", [providerReference]);
+  return result.rows[0] ? rowToPayout(result.rows[0]) : null;
+}
+
+export async function claimPaystackWebhookEvent(input: {
+  payloadHash: string;
+  eventType: string;
+  providerReference?: string | null;
+}): Promise<boolean> {
+  if (!pool) return false;
+  const result = await pool.query(
+    `INSERT INTO paystack_webhook_events (payload_hash, event_type, provider_reference)
+     VALUES ($1,$2,$3)
+     ON CONFLICT (payload_hash) DO NOTHING
+     RETURNING id`,
+    [input.payloadHash, input.eventType, input.providerReference ?? null]
+  );
+  return Boolean(result.rowCount);
+}
+
 export async function markPayoutReleased(deliveryId: string, providerReference: string): Promise<PayoutRecord | null> {
   if (!pool) return null;
   const result = await pool.query(
