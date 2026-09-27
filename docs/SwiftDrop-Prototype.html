@@ -1,0 +1,1660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SwiftDrop — Send. Track. Receive.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --g-900: #0B3B22;
+    --g-700: #0E7A3D;
+    --g-600: #129449;
+    --g-100: #E4F5EA;
+    --g-50:  #F3FAF5;
+    --ink:   #142019;
+    --muted: #667169;
+    --line:  #DCE7DF;
+    --white: #FFFFFF;
+    --red:   #C4432E;
+    --red-soft: #FBE4DE;
+    --paper: #EEF1EB;
+  }
+  html[data-theme="dark"] {
+    --g-900: #06170D;
+    --g-700: #17A85B;
+    --g-600: #1BBF67;
+    --g-100: #103621;
+    --g-50:  #12261A;
+    --ink:   #EAF3ED;
+    --muted: #93A69B;
+    --line:  #22352A;
+    --white: #16211B;
+    --red:   #E2604A;
+    --red-soft: #3A2018;
+    --paper: #0B120E;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--paper); }
+  body {
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    display: flex; justify-content: center;
+    padding: 22px 12px 50px;
+    transition: background .2s, color .2s;
+  }
+
+  /* ---- Settings launcher + modal ---- */
+  .topRow { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .topRow .rolebar { margin-bottom: 0; flex: 1; }
+  .gearbtn { width: 42px; height: 42px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--white); color: var(--ink); display: grid; place-items: center; cursor: pointer; flex: none; }
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(6,20,12,.55); z-index: 50; align-items: center; justify-content: center; padding: 16px; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--white); color: var(--ink); border-radius: 22px; width: 100%; max-width: 360px; max-height: 88vh; overflow-y: auto; padding: 20px; }
+  .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .modal-head h2 { font-size: 18px; }
+  .modal .closeX { width: 34px; height: 34px; border-radius: 50%; border: 1.5px solid var(--line); background: transparent; color: var(--ink); display: grid; place-items: center; cursor: pointer; }
+  .seg { display: flex; background: var(--paper); border-radius: 999px; padding: 4px; margin-top: 8px; }
+  .seg button { flex: 1; border: 0; background: transparent; color: var(--muted); font: 600 13px 'Instrument Sans', sans-serif; padding: 10px 6px; border-radius: 999px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .seg button[aria-pressed="true"] { background: var(--g-700); color: #fff; }
+  .modal .note { text-align: left; margin-top: 6px; }
+  .ic { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  h1 { font: 800 25px/1.12 'Bricolage Grotesque', sans-serif; letter-spacing: -0.01em; }
+  h2 { font: 700 16px 'Bricolage Grotesque', sans-serif; }
+  .lead { color: var(--muted); font-size: 14px; line-height: 1.45; margin-top: 5px; }
+
+  .stage { width: 100%; max-width: 400px; }
+
+  /* role switch above the phone */
+  .rolebar { display: flex; background: var(--g-900); border-radius: 999px; padding: 4px; margin-bottom: 14px; }
+  .rolebar button {
+    flex: 1; border: 0; background: transparent; color: #AFC8B8; font: 600 13px 'Instrument Sans', sans-serif;
+    padding: 10px 6px; border-radius: 999px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  .rolebar button[aria-selected="true"] { background: var(--white); color: var(--g-900); }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid var(--g-600); outline-offset: 2px; }
+
+  .phone {
+    background: var(--white); border-radius: 30px; overflow: hidden; position: relative; min-height: 640px;
+    box-shadow: 0 26px 54px -22px rgba(11,59,34,.45), 0 0 0 7px var(--g-900);
+    display: flex; flex-direction: column;
+  }
+  .app { display: none; flex-direction: column; flex: 1; min-height: 640px; }
+  .app.active { display: flex; }
+
+  .scr { display: none; flex-direction: column; flex: 1; }
+  .scr.active { display: flex; }
+
+  /* top bar for pushed screens */
+  .topbar { display: flex; align-items: center; gap: 10px; padding: 16px 16px 8px; }
+  .backbtn { width: 34px; height: 34px; border-radius: 50%; border: 1.5px solid var(--line); background: var(--white); display: grid; place-items: center; cursor: pointer; flex: none; }
+  .topbar .ttl { font: 700 15px 'Bricolage Grotesque', sans-serif; }
+  .step { margin-left: auto; font-size: 12px; color: var(--muted); }
+
+  .scroll { flex: 1; overflow-y: auto; padding: 4px 20px 18px; }
+  .foot { padding: 12px 20px 22px; }
+  .btn { border: 0; cursor: pointer; font: 700 15px 'Instrument Sans', sans-serif; padding: 15px 16px; border-radius: 13px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .btn-green { background: var(--g-700); color: #fff; }
+  .btn-dark { background: var(--g-900); color: #fff; }
+  .btn-ghost { background: transparent; color: var(--g-900); border: 1.5px solid var(--line); }
+  .btn[disabled] { opacity: .4; cursor: not-allowed; }
+  .link { background: none; border: 0; color: var(--g-700); font: 600 14px 'Instrument Sans', sans-serif; cursor: pointer; text-decoration: underline; }
+  .note { color: var(--muted); font-size: 12px; text-align: center; margin-top: 8px; line-height: 1.4; }
+
+  /* ---- Splash ---- */
+  .splash { flex: 1; background: var(--g-700); color: #fff; display: flex; flex-direction: column; justify-content: space-between; padding: 40px 26px 30px; text-align: center; }
+  .splash .mark { width: 84px; height: 84px; margin: 0 auto 18px; }
+  .splash h1 { font-size: 30px; color: #fff; }
+  .splash .tag { color: #C9E8D5; font-size: 15px; margin-top: 6px; }
+  .splash .btn-white { background: #fff; color: var(--g-900); }
+  .splash .sub { color: #CFEAD9; font-size: 13px; margin-top: 12px; }
+
+  /* ---- Form fields ---- */
+  .field { margin-top: 14px; }
+  .field label { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+  .field label .ic { width: 16px; height: 16px; color: var(--g-700); }
+  .field input, .field select, .field textarea { width: 100%; font: 400 15px 'Instrument Sans', sans-serif; padding: 13px; border: 1.5px solid var(--line); border-radius: 12px; background: var(--g-50); color: var(--ink); }
+  .field textarea { resize: vertical; min-height: 70px; font-family: 'Instrument Sans', sans-serif; }
+  .pair { display: flex; gap: 10px; } .pair .field { flex: 1; min-width: 0; }
+
+  /* ---- Home ---- */
+  .hello { font: 700 18px 'Bricolage Grotesque', sans-serif; padding: 18px 20px 0; }
+  .hello span { color: var(--muted); font: 400 13px 'Instrument Sans', sans-serif; display: block; margin-top: 2px; }
+  .quick { display: flex; gap: 12px; padding: 14px 20px 0; }
+  .qbtn { flex: 1; background: var(--g-50); border: 1.5px solid var(--g-100); border-radius: 16px; padding: 16px 10px; text-align: center; cursor: pointer; }
+  .qbtn .ic { width: 26px; height: 26px; color: var(--g-700); margin: 0 auto 8px; }
+  .qbtn b { font-size: 13px; }
+  .banner { margin: 16px 20px 0; background: var(--g-900); color: #fff; border-radius: 16px; padding: 16px; display: flex; align-items: center; gap: 12px; }
+  .banner b { font: 700 14px 'Bricolage Grotesque', sans-serif; display: block; }
+  .banner span { color: #BFDECB; font-size: 12px; }
+  .sectiontitle { padding: 18px 20px 6px; font: 700 14px 'Bricolage Grotesque', sans-serif; }
+  .recent { margin: 0 20px 8px; background: var(--white); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; }
+  .recent .ic { color: var(--g-700); }
+  .recent .r1 { flex: 1; } .recent .r1 b { display: block; font-size: 14px; } .recent .r1 span { font-size: 12px; color: var(--muted); }
+  .tagdone { background: var(--g-100); color: var(--g-900); font: 600 11px 'Instrument Sans', sans-serif; padding: 4px 8px; border-radius: 6px; }
+  .tabbar { display: flex; border-top: 1px solid var(--line); padding: 8px 8px calc(10px + env(safe-area-inset-bottom,0px)); }
+  .tabbar button { flex: 1; background: none; border: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; color: var(--muted); font-size: 11px; padding: 6px 0; cursor: pointer; }
+  .tabbar button.on { color: var(--g-700); }
+
+  /* ---- Package type grid ---- */
+  .grid3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 9px; margin-top: 10px; }
+  .pkg { background: var(--white); border: 1.5px solid var(--line); border-radius: 12px; padding: 12px 6px; text-align: center; cursor: pointer; }
+  .pkg .ic { width: 20px; height: 20px; color: var(--g-700); margin: 0 auto 6px; }
+  .pkg span { font-size: 12px; font-weight: 600; }
+  .pkg[aria-pressed="true"] { border-color: var(--g-700); background: var(--g-50); }
+
+  /* ---- Quote / vehicle tiers ---- */
+  .routechip { display: flex; align-items: center; gap: 8px; background: var(--g-50); border-radius: 12px; padding: 11px 14px; margin-top: 10px; font-size: 13px; }
+  .routechip b { font-weight: 700; }
+  .routechip .arrow { color: var(--g-700); }
+  .tier { display: flex; align-items: center; gap: 12px; background: var(--white); border: 1.5px solid var(--line); border-radius: 14px; padding: 13px 14px; margin-top: 10px; cursor: pointer; }
+  .tier[aria-pressed="true"] { border-color: var(--g-700); box-shadow: 0 0 0 1.5px var(--g-700) inset; }
+  .tier .ic { width: 26px; height: 26px; color: var(--g-700); }
+  .tier .t1 { flex: 1; } .tier .t1 b { display: block; font-size: 14px; } .tier .t1 span { font-size: 12px; color: var(--muted); }
+  .tier .price { font: 700 15px 'Bricolage Grotesque', sans-serif; }
+  .etabox { margin-top: 14px; background: var(--g-900); color: #fff; border-radius: 14px; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; }
+  .etabox small { color: #BFDECB; font-size: 12px; display: block; } .etabox b { font: 700 16px 'Bricolage Grotesque', sans-serif; }
+
+  /* ---- Map (shared look) ---- */
+  .map { position: relative; background: #E4EEE6; }
+  .map svg { width: 100%; height: auto; display: block; }
+  .map-badge { position: absolute; top: 12px; left: 12px; background: var(--g-900); color: #fff; border-radius: 999px; padding: 7px 12px 7px 10px; display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; }
+  .map-badge.recv { top: 12px; left: auto; right: 12px; }
+  .map-badge i { width: 9px; height: 9px; border-radius: 50%; background: #3DDC84; animation: ping 1.8s infinite; }
+  @keyframes ping { 0% { box-shadow: 0 0 0 0 rgba(61,220,132,.6);} 70% { box-shadow: 0 0 0 9px rgba(61,220,132,0);} 100% { box-shadow: 0 0 0 0 rgba(61,220,132,0);} }
+  .sheet { background: var(--white); margin-top: -20px; border-radius: 22px 22px 0 0; padding: 16px 18px 4px; position: relative; flex: 1; overflow-y: auto; }
+  .sheet::before { content:""; display:block; width:38px; height:4px; border-radius:2px; background:#D8E1DA; margin:-4px auto 12px; }
+  .status-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .chip { background: var(--g-100); color: var(--g-900); font: 700 12px 'Instrument Sans', sans-serif; padding: 5px 10px; border-radius: 6px; white-space: nowrap; }
+  .chip.done { background: var(--g-700); color: #fff; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 14px; }
+  .stat { background: var(--g-50); border-radius: 12px; padding: 11px 13px; }
+  .stat small { color: var(--muted); font-size: 12px; display: block; }
+  .stat b { font: 800 19px 'Bricolage Grotesque', sans-serif; display: block; }
+  .timeline { margin-top: 16px; position: relative; padding-left: 28px; }
+  .timeline::before { content:""; position:absolute; left:8px; top:6px; bottom:6px; width:3px; background:var(--line); border-radius:2px; }
+  .tl { position: relative; padding-bottom: 15px; }
+  .tl:last-child { padding-bottom: 0; }
+  .tl .d { position: absolute; left: -28px; top: 1px; width: 19px; height: 19px; border-radius: 50%; background: var(--white); border: 3px solid var(--line); display: grid; place-items: center; }
+  .tl.done .d { background: var(--g-700); border-color: var(--g-700); }
+  .tl.done .d::after { content:""; width:5px; height:9px; border:solid #fff; border-width:0 2px 2px 0; transform:rotate(45deg) translate(-1px,-1px); }
+  .tl.now .d { background: var(--white); border-color: var(--g-700); box-shadow: 0 0 0 3px var(--g-100); }
+  .tl b { font-size: 14px; display: block; } .tl span { color: var(--muted); font-size: 12.5px; }
+  .tl.todo b { color: #9AA69D; font-weight: 500; }
+
+  .card { background: var(--white); border: 1px solid var(--line); border-radius: 15px; padding: 13px; margin-top: 11px; }
+  .person { display: flex; gap: 11px; align-items: center; }
+  .avatar { width: 44px; height: 44px; border-radius: 50%; background: var(--g-900); color: #fff; display: grid; place-items: center; font: 800 15px 'Bricolage Grotesque', sans-serif; flex: none; }
+  .person .who { flex: 1; min-width: 0; } .person .who b { display: block; font-size: 14.5px; } .person .who span { font-size: 12.5px; color: var(--muted); }
+  .iconbtn { width: 40px; height: 40px; border-radius: 50%; border: 0; background: var(--g-700); color: #fff; display: grid; place-items: center; cursor: pointer; flex: none; }
+  .plate { display: inline-block; margin-top: 6px; background: var(--g-100); border-radius: 6px; padding: 2px 8px; font: 700 12px 'Bricolage Grotesque', sans-serif; }
+
+  .pincard { background: var(--g-900); color: #fff; border-radius: 15px; padding: 15px; margin-top: 11px; }
+  .pincard small { color: #BFDECB; font-size: 12.5px; }
+  .digits { display: flex; gap: 7px; margin: 9px 0; }
+  .digits span { flex: 1; text-align: center; background: #fff; color: var(--ink); border-radius: 9px; padding: 9px 0; font: 800 24px 'Bricolage Grotesque', sans-serif; }
+  .pincard p { font-size: 12.5px; color: #BFDECB; line-height: 1.4; }
+
+  .protoBtn { background: transparent; border: 1.5px dashed #B7C2BA; color: #556459; font: 600 12.5px 'Instrument Sans', sans-serif; padding: 10px; border-radius: 10px; width: 100%; cursor: pointer; }
+
+  /* ---- Completed ---- */
+  .completed { text-align: center; padding: 36px 24px 8px; }
+  .doneburst { width: 68px; height: 68px; border-radius: 50%; background: var(--g-100); display: grid; place-items: center; margin: 0 auto 14px; }
+  .doneburst .ic { width: 32px; height: 32px; color: var(--g-700); }
+  .proof { margin: 16px 20px 0; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); }
+  .proof svg { width: 100%; display: block; }
+  .stars { display: flex; gap: 8px; justify-content: center; margin: 14px 0 2px; }
+  .stars .ic { width: 26px; height: 26px; color: #E7C23B; }
+
+  /* ---- Driver ---- */
+  .dtop { background: var(--g-900); color: #fff; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; }
+  .dtop .who { font: 700 16px 'Bricolage Grotesque', sans-serif; } .dtop .who small { display:block; font:400 12px 'Instrument Sans',sans-serif; color:#AFC8B8; margin-top:2px; }
+  .online { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #AFC8B8; }
+  .statusDot { width: 9px; height: 9px; border-radius: 50%; background: #5C6E63; flex: none; }
+  .statusDot.on { background: #3DDC84; animation: ping 1.8s infinite; }
+  .earn { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 16px 20px 0; }
+  .earn .stat b { color: var(--g-700); }
+  .empty { margin: 18px 20px 0; padding: 30px 18px; text-align: center; background: var(--g-50); border: 2px dashed var(--g-100); border-radius: 16px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+  .empty .ic { width: 32px; height: 32px; color: #9CB8A6; margin: 0 auto 8px; }
+  .job { margin: 16px 20px 0; background: var(--white); border: 1.5px solid var(--g-900); border-radius: 16px; overflow: hidden; }
+  .job-top { padding: 13px 15px 4px; display: flex; justify-content: space-between; align-items: center; }
+  .job-top .pay { font: 800 27px 'Bricolage Grotesque', sans-serif; color: var(--g-700); }
+  .legs { padding: 6px 15px 12px; }
+  .leg { display: flex; gap: 11px; padding: 6px 0; }
+  .leg .mk { width: 13px; height: 13px; border-radius: 50%; border: 3px solid var(--g-900); margin-top: 3px; flex: none; background: var(--white); }
+  .leg .mk.end { background: var(--g-900); }
+  .leg b { display: block; font-size: 14.5px; } .leg span { font-size: 12.5px; color: var(--muted); }
+  .facts { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); }
+  .facts div { padding: 9px 15px; font-size: 13.5px; } .facts div + div { border-left: 1px solid var(--line); }
+  .facts small { color: var(--muted); display: block; font-size: 11.5px; }
+  .jobact { display: flex; gap: 9px; padding: 13px 15px; border-top: 1px solid var(--line); }
+
+  .check { display: flex; gap: 11px; align-items: flex-start; background: var(--white); border: 2px solid var(--line); border-radius: 13px; padding: 13px; margin-top: 9px; cursor: pointer; width: 100%; text-align: left; font: inherit; color: inherit; }
+  .check .box { width: 24px; height: 24px; border-radius: 7px; border: 2px solid var(--g-900); flex: none; display: grid; place-items: center; color: transparent; }
+  .check .box .ic { width: 15px; height: 15px; stroke-width: 3; }
+  .check[aria-pressed="true"] { border-color: var(--g-700); background: var(--g-50); }
+  .check[aria-pressed="true"] .box { background: var(--g-700); border-color: var(--g-700); color: #fff; }
+  .check b { display: block; font-size: 14.5px; } .check .s { color: var(--muted); font-size: 12.5px; line-height: 1.4; display: block; margin-top: 2px; }
+
+  .nowcard { background: var(--g-900); color: #fff; border-radius: 15px; padding: 15px; }
+  .nowcard small { color: #AFC8B8; font-size: 12.5px; }
+  .nowcard .place { font: 800 24px/1.1 'Bricolage Grotesque', sans-serif; margin-top: 3px; }
+  .nowcard .next { margin-top: 7px; font-size: 13.5px; color: #AFC8B8; } .nowcard .next b { color: #fff; font-weight: 700; }
+  .track { height: 7px; background: #24462F; border-radius: 4px; margin-top: 13px; overflow: hidden; }
+  .track i { display: block; height: 100%; background: var(--g-600); width: 0; transition: width .6s ease; }
+  .sharing { margin-top: 11px; background: var(--g-50); border-radius: 12px; padding: 11px 13px; font-size: 12.5px; line-height: 1.45; color: #24583A; display: flex; gap: 9px; }
+  .sharing i { width: 9px; height: 9px; border-radius: 50%; background: var(--g-700); margin-top: 4px; flex: none; animation: ping 1.8s infinite; }
+  .problem { background: none; border: 0; color: var(--red); font: 600 13.5px 'Instrument Sans', sans-serif; cursor: pointer; padding: 9px; text-decoration: underline; width: 100%; margin-top: 6px; }
+
+  .codein { display: flex; gap: 8px; margin-top: 6px; }
+  .codein input { flex: 1; min-width: 0; text-align: center; font: 800 30px 'Bricolage Grotesque', sans-serif; padding: 13px 0; border: 2px solid var(--g-900); border-radius: 11px; background: var(--white); }
+  .codein.bad input { border-color: var(--red); background: var(--red-soft); }
+  .msg { font-size: 13.5px; min-height: 18px; margin-top: 8px; }
+  .msg.bad { color: var(--red); font-weight: 600; }
+  .donebox { background: var(--g-700); color: #fff; border-radius: 18px; padding: 22px; text-align: center; margin-top: 14px; }
+  .donebox .big { font: 800 40px 'Bricolage Grotesque', sans-serif; margin: 4px 0; }
+  .donebox p { font-size: 13.5px; color: #D7F0E0; }
+
+  /* ---- Pickup photo shared with sender/receiver, and receiver's compare-and-confirm ---- */
+  .photoShareCard { background: var(--white); border: 1.5px solid var(--line); border-radius: 15px; padding: 13px; margin-top: 11px; }
+  .photoShareCard small { color: var(--muted); font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
+  .photoShareCard img { display: block; width: 100%; max-height: 160px; object-fit: cover; border-radius: 11px; margin: 7px 0 8px; background: var(--paper); }
+  .photoShareCard p { font-size: 12.5px; color: var(--muted); line-height: 1.4; }
+  .matchCard { background: var(--g-50); border: 1.5px solid var(--g-100); border-radius: 15px; padding: 14px; margin-top: 11px; }
+  .matchCard h3 { font-size: 14.5px; margin-bottom: 3px; }
+  .matchCard p { font-size: 12.5px; color: var(--muted); line-height: 1.45; margin-bottom: 10px; }
+  .matchCard.confirmed { background: var(--g-100); border-color: var(--g-700); text-align: center; }
+  .matchCard.confirmed .ic { width: 26px; height: 26px; color: var(--g-700); margin: 0 auto 6px; }
+
+  /* ---- Interactive star rating ---- */
+  .rateGroup { margin-top: 16px; }
+  .rateGroup > b { display: block; font-size: 14px; margin-bottom: 8px; }
+  .rateRow { display: flex; gap: 8px; }
+  .rateRow button { background: none; border: 0; padding: 2px; cursor: pointer; line-height: 0; }
+  .rateRow .ic { width: 28px; height: 28px; color: var(--line); transition: color .15s; }
+  .rateRow button[aria-pressed="true"] .ic, .rateRow button.lit .ic { color: #E7C23B; }
+
+  /* ---- Receiver entry ---- */
+  .entrywrap { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 24px 22px; }
+  .entrywrap .mark { width: 54px; height: 54px; color: var(--g-700); margin-bottom: 14px; }
+  .qrbox { margin-top: 18px; text-align: center; }
+  .qrbox svg { width: 96px; height: 96px; }
+  .qrbox span { display: block; color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+
+  /* ---- Registration stepper + doc upload ---- */
+  .stepper { display: flex; gap: 6px; margin: 14px 0 4px; }
+  .stepper span { flex: 1; height: 4px; border-radius: 2px; background: var(--line); }
+  .stepper span.on { background: var(--g-700); }
+  .uprow { display: flex; align-items: center; gap: 12px; background: var(--white); border: 1px solid var(--line); border-radius: 13px; padding: 12px 14px; margin-top: 9px; cursor: pointer; width: 100%; text-align: left; font: inherit; color: inherit; }
+  .uprow .ic { color: var(--g-700); }
+  .uprow .u1 { flex: 1; } .uprow .u1 b { display: block; font-size: 14px; } .uprow .u1 span { font-size: 12px; color: var(--muted); }
+  .uprow .stat2 { font: 600 11.5px 'Instrument Sans', sans-serif; padding: 4px 9px; border-radius: 6px; background: var(--paper); color: var(--muted); }
+  .uprow[aria-pressed="true"] .stat2 { background: var(--g-100); color: var(--g-900); }
+
+  /* ---- Profile ---- */
+  .profhead { text-align: center; padding: 26px 20px 10px; }
+  .profhead .av { width: 76px; height: 76px; border-radius: 50%; background: var(--g-900); color: #fff; display: grid; place-items: center; font: 800 24px 'Bricolage Grotesque', sans-serif; margin: 0 auto 12px; }
+  .profhead .rate { display: inline-flex; align-items: center; gap: 5px; background: var(--g-100); color: var(--g-900); font: 700 12.5px 'Instrument Sans', sans-serif; padding: 4px 10px; border-radius: 999px; margin-top: 6px; }
+  .profhead .rate .ic { width: 13px; height: 13px; color: #E7C23B; }
+  .prow { display: flex; align-items: center; gap: 12px; background: var(--white); border: 1px solid var(--line); border-radius: 13px; padding: 13px 14px; margin-top: 9px; }
+  .prow .ic { color: var(--g-700); }
+  .prow .p1 { flex: 1; } .prow .p1 b { display: block; font-size: 14px; } .prow .p1 span { font-size: 12px; color: var(--muted); }
+
+  /* ---- KYC badge + order board ---- */
+  .kycbar { display: flex; align-items: center; gap: 9px; background: var(--g-100); border-radius: 12px; padding: 11px 13px; margin: 4px 0 2px; }
+  .kycbar .ic { color: var(--g-700); }
+  .kycbar b { font-size: 13.5px; display: block; } .kycbar span { font-size: 12px; color: #2C5A3E; }
+  .kycbar.locked { background: var(--red-soft); }
+  .kycbar.locked .ic { color: var(--red); }
+  .orow2 { background: var(--white); border: 1.5px solid var(--line); border-radius: 15px; padding: 13px 14px; margin-top: 11px; }
+  .orow2 .otop { display: flex; justify-content: space-between; align-items: center; }
+  .orow2 .otop .pay { font: 800 21px 'Bricolage Grotesque', sans-serif; color: var(--g-700); }
+  .orow2 .odist { font-size: 12px; color: var(--muted); background: var(--paper); padding: 3px 8px; border-radius: 6px; }
+  .orow2 .oroute { margin-top: 8px; font-size: 13.5px; line-height: 1.5; }
+  .orow2 .oroute b { font-weight: 600; }
+  .orow2 .oroute .arrow { color: var(--g-700); margin: 0 4px; }
+  .orow2 .ometa { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .orow2 .accept { margin-top: 10px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .track i { transition: none; }
+    .map-badge i, .sharing i, .statusDot { animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-7 8-7s8 3 8 7"/></symbol>
+    <symbol id="i-truck" viewBox="0 0 24 24"><path d="M2 6h11v10H2zM13 10h4l4 3v3h-8"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 22s7-6.5 7-12a7 7 0 10-14 0c0 5.5 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 005 5L15 13l5 2v4a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></symbol>
+    <symbol id="i-scale" viewBox="0 0 24 24"><path d="M6 8h12l2 12H4L6 8z"/><circle cx="12" cy="5" r="2"/></symbol>
+    <symbol id="i-cam" viewBox="0 0 24 24"><path d="M3 8h4l2-3h6l2 3h4v11H3z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+    <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M6 12a6 6 0 016-6M3 12a9 9 0 019-9M18 12a6 6 0 01-6 6M21 12a9 9 0 01-9 9"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><path d="M3 5h18v14H3z"/><path d="M3 6l9 7 9-7"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/></symbol>
+    <symbol id="i-food" viewBox="0 0 24 24"><path d="M4 3v9a4 4 0 004 4V3M4 8h4M18 3v18M14 8a4 4 0 014-5v10"/></symbol>
+    <symbol id="i-shirt" viewBox="0 0 24 24"><path d="M8 3l4 2 4-2 4 4-3 3v11H7V10L4 7z"/></symbol>
+    <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></symbol>
+    <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></symbol>
+    <symbol id="i-bike" viewBox="0 0 24 24"><circle cx="6" cy="17" r="3.2"/><circle cx="18" cy="17" r="3.2"/><path d="M6 17l4-9h4l3 6M10 8H8M13 17H9l3-6"/></symbol>
+    <symbol id="i-car" viewBox="0 0 24 24"><path d="M3 16V11l2-5h10l3 5v5"/><circle cx="7.5" cy="16.5" r="1.6"/><circle cx="16.5" cy="16.5" r="1.6"/><path d="M3 11h16"/></symbol>
+    <symbol id="i-van" viewBox="0 0 24 24"><path d="M2 7h13v9H2zM15 11h4l3 2.5V16h-7"/><circle cx="6.5" cy="17.5" r="1.8"/><circle cx="17.5" cy="17.5" r="1.8"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2l3 7 7 .6-5.3 4.6L18.2 22 12 18l-6.2 4 1.5-7.8L2 9.6 9 9z"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+    <symbol id="i-wallet" viewBox="0 0 24 24"><path d="M3 7h15a3 3 0 013 3v8H3z"/><path d="M3 7V5a2 2 0 012-2h11"/><circle cx="16" cy="14" r="1.5"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 13a7.6 7.6 0 000-2l2-1.5-2-3.4-2.3.9a7.6 7.6 0 00-1.7-1L15 3h-4l-.4 2.4a7.6 7.6 0 00-1.7 1l-2.3-.9-2 3.4L6.6 11a7.6 7.6 0 000 2l-2 1.5 2 3.4 2.3-.9a7.6 7.6 0 001.7 1L11 21h4l.4-2.4a7.6 7.6 0 001.7-1l2.3.9 2-3.4-2-1.5z"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 010 18 14 14 0 010-18z"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1110 3.5a7 7 0 0010 11z"/></symbol>
+  </defs>
+</svg>
+
+<div class="stage">
+  <div class="topRow">
+    <div class="rolebar" role="tablist" aria-label="Choose who you are">
+      <button role="tab" aria-selected="true" data-role="customer"><svg class="ic"><use href="#i-box"/></svg><span data-i18n="tab_customer">Customer</span></button>
+      <button role="tab" aria-selected="false" data-role="driver"><svg class="ic"><use href="#i-truck"/></svg><span data-i18n="tab_driver">Driver</span></button>
+      <button role="tab" aria-selected="false" data-role="receiver"><svg class="ic"><use href="#i-user"/></svg><span data-i18n="tab_receiver">Receiver</span></button>
+    </div>
+    <button class="gearbtn" id="openSettings" aria-label="Settings: state, language and appearance"><svg class="ic"><use href="#i-gear"/></svg></button>
+  </div>
+
+  <div class="phone">
+
+    <!-- ===================== CUSTOMER APP ===================== -->
+    <div class="app active" id="app-customer">
+
+      <!-- 1. Splash -->
+      <section class="scr active" id="c-splash">
+        <div class="splash">
+          <div>
+            <svg class="mark" viewBox="0 0 24 24" fill="#fff" stroke="none"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z" opacity=".35"/><path d="M3 8l9 5 9-5" stroke="#fff" stroke-width="1.6" fill="none"/><path d="M12 13v8" stroke="#fff" stroke-width="1.6" fill="none"/></svg>
+            <h1>SwiftDrop</h1>
+            <div class="tag" data-i18n="tag_customer">Send. Track. Receive.</div>
+          </div>
+          <div>
+            <button class="btn btn-white" id="toSignup" data-i18n="btn_get_started">Get started</button>
+            <div class="sub"><button class="link" style="color:#fff" id="toHomeFromSplash" data-i18n="link_already_account">Already have an account? Log in</button></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. Sign up -->
+      <section class="scr" id="c-signup">
+        <div class="topbar"><button class="backbtn" data-back><svg class="ic"><use href="#i-back"/></svg></button><span class="ttl">Create account</span></div>
+        <div class="scroll">
+          <p class="lead">Sign up to start sending and receiving your goods.</p>
+          <div class="field"><label><svg class="ic"><use href="#i-user"/></svg>Full name</label><input value="Ada Obi"></div>
+          <div class="field"><label><svg class="ic"><use href="#i-phone"/></svg>Phone number</label><input value="0803 221 9087"></div>
+          <div class="field"><label><svg class="ic"><use href="#i-mail"/></svg>Email address</label><input value="ada@adastores.com"></div>
+          <div class="field"><label><svg class="ic"><use href="#i-lock"/></svg>Password</label><input type="password" value="••••••••"></div>
+        </div>
+        <div class="foot">
+          <button class="btn btn-green" id="signupBtn"><svg class="ic"><use href="#i-check"/></svg>Sign up</button>
+          <p class="note">Already have an account? <button class="link" data-go="c-home">Log in</button></p>
+        </div>
+      </section>
+
+      <!-- 2b. Choose your state (required once at signup) -->
+      <section class="scr" id="c-state-select">
+        <div class="topbar"><button class="backbtn" data-back><svg class="ic"><use href="#i-back"/></svg></button><span class="ttl">Where are you sending from?</span></div>
+        <div class="scroll">
+          <p class="lead">This decides which same-city and interstate delivery options you see.</p>
+          <div class="field"><label><svg class="ic"><use href="#i-pin"/></svg>Your state</label>
+            <select id="onboardStateCustomer">
+        <option>Abia</option><option>Adamawa</option><option>Akwa Ibom</option><option>Anambra</option><option>Bauchi</option><option>Bayelsa</option><option>Benue</option><option>Borno</option><option>Cross River</option><option>Delta</option><option>Ebonyi</option><option>Edo</option><option>Ekiti</option><option>Enugu</option><option>FCT (Abuja)</option><option>Gombe</option><option>Imo</option><option>Jigawa</option><option>Kaduna</option><option>Kano</option><option>Katsina</option><option>Kebbi</option><option>Kogi</option><option>Kwara</option><option selected>Lagos</option><option>Nasarawa</option><option>Niger</option><option>Ogun</option><option>Ondo</option><option>Osun</option><option>Oyo</option><option>Plateau</option><option>Rivers</option><option>Sokoto</option><option>Taraba</option><option>Yobe</option><option>Zamfara</option>
+            </select>
+          </div>
+        </div>
+        <div class="foot"><button class="btn btn-green" id="confirmCustomerState">Continue</button></div>
+      </section>
+
+      <!-- 3. Home -->
+      <section class="scr" id="c-home">
+        <div class="hello">Good morning, Ada<span>What would you like to do?</span></div>
+        <div class="quick">
+          <div class="qbtn" data-go="c-create"><svg class="ic"><use href="#i-box"/></svg><b>Send a package</b></div>
+          <div class="qbtn" data-role-jump="receiver"><svg class="ic"><use href="#i-user"/></svg><b>Receive a package</b></div>
+        </div>
+        <div class="banner"><svg class="ic" style="color:#fff"><use href="#i-truck"/></svg><div><b>Fast, safe, reliable</b><span>Same city in hours. Interstate, nationwide.</span></div></div>
+        <div class="sectiontitle">Recent deliveries</div>
+        <div class="recent"><svg class="ic"><use href="#i-chip"/></svg><div class="r1"><b>Electronics</b><span>LIB-20475 · Yesterday</span></div><span class="tagdone">Delivered</span></div>
+        <div class="recent"><svg class="ic"><use href="#i-shirt"/></svg><div class="r1"><b>Clothing bundle</b><span>LIB-20441 · 4 days ago</span></div><span class="tagdone">Delivered</span></div>
+        <div style="flex:1"></div>
+        <div class="tabbar">
+          <button class="on" data-tab="c-home"><svg class="ic"><use href="#i-home"/></svg>Home</button>
+          <button data-tab="c-deliveries"><svg class="ic"><use href="#i-list"/></svg>Deliveries</button>
+          <button data-tab="c-wallet"><svg class="ic"><use href="#i-wallet"/></svg>Wallet</button>
+          <button data-tab="c-profile"><svg class="ic"><use href="#i-user"/></svg>Profile</button>
+        </div>
+      </section>
+
+      <!-- 3b. Deliveries tab -->
+      <section class="scr" id="c-deliveries">
+        <div class="hello" style="padding-top:20px">Your deliveries<span>Everything you have sent</span></div>
+        <div class="scroll" style="padding-top:6px">
+          <div class="recent"><svg class="ic"><use href="#i-box"/></svg><div class="r1"><b>LIB-20481</b><span>Lekki → Bodija, Ibadan</span></div><span class="chip">In transit</span></div>
+          <div class="recent"><svg class="ic"><use href="#i-chip"/></svg><div class="r1"><b>LIB-20475</b><span>Ikeja → Ring Road, Ibadan</span></div><span class="tagdone">Delivered</span></div>
+          <div class="recent"><svg class="ic"><use href="#i-shirt"/></svg><div class="r1"><b>LIB-20441</b><span>Yaba → Dugbe, Ibadan</span></div><span class="tagdone">Delivered</span></div>
+          <div class="recent"><svg class="ic"><use href="#i-doc"/></svg><div class="r1"><b>LIB-20402</b><span>Surulere → Mokola, Ibadan</span></div><span class="tagdone">Delivered</span></div>
+        </div>
+        <div class="tabbar">
+          <button data-tab="c-home"><svg class="ic"><use href="#i-home"/></svg>Home</button>
+          <button class="on" data-tab="c-deliveries"><svg class="ic"><use href="#i-list"/></svg>Deliveries</button>
+          <button data-tab="c-wallet"><svg class="ic"><use href="#i-wallet"/></svg>Wallet</button>
+          <button data-tab="c-profile"><svg class="ic"><use href="#i-user"/></svg>Profile</button>
+        </div>
+      </section>
+
+      <!-- 3c. Wallet tab -->
+      <section class="scr" id="c-wallet">
+        <div class="hello" style="padding-top:20px">Wallet<span>Balance and payment history</span></div>
+        <div class="scroll" style="padding-top:6px">
+          <div class="etabox" style="background:var(--g-900)"><div><small>Available balance</small><b style="font-size:22px">₦12,400</b></div><button class="btn btn-white" style="width:auto;padding:9px 16px;background:#fff;color:var(--g-900)">Top up</button></div>
+          <div class="sectiontitle" style="padding-left:0">Recent payments</div>
+          <div class="recent"><svg class="ic"><use href="#i-box"/></svg><div class="r1"><b>Delivery LIB-20481</b><span>Paid by transfer · Today</span></div><span class="tagdone">− ₦2,500</span></div>
+          <div class="recent"><svg class="ic"><use href="#i-box"/></svg><div class="r1"><b>Delivery LIB-20475</b><span>Paid by card · 3 days ago</span></div><span class="tagdone">− ₦4,000</span></div>
+        </div>
+        <div class="tabbar">
+          <button data-tab="c-home"><svg class="ic"><use href="#i-home"/></svg>Home</button>
+          <button data-tab="c-deliveries"><svg class="ic"><use href="#i-list"/></svg>Deliveries</button>
+          <button class="on" data-tab="c-wallet"><svg class="ic"><use href="#i-wallet"/></svg>Wallet</button>
+          <button data-tab="c-profile"><svg class="ic"><use href="#i-user"/></svg>Profile</button>
+        </div>
+      </section>
+
+      <!-- 3d. Profile tab -->
+      <section class="scr" id="c-profile">
+        <div class="scroll" style="padding-top:0">
+          <div class="profhead"><div class="av">AO</div><h2>Ada Obi</h2><p class="lead">ada@adastores.com</p></div>
+          <div class="prow"><svg class="ic"><use href="#i-phone"/></svg><div class="p1"><b>Phone number</b><span>0803 221 9087</span></div></div>
+          <div class="prow"><svg class="ic"><use href="#i-pin"/></svg><div class="p1"><b>Saved address</b><span>Lekki Phase 1, Lagos</span></div></div>
+          <div class="prow"><svg class="ic"><use href="#i-globe"/></svg><div class="p1"><b>State</b><span class="stateLabel">Lagos</span></div><button class="link" id="editStateFromCustomer" style="margin-left:auto">Change</button></div>
+          <div class="prow"><svg class="ic"><use href="#i-lock"/></svg><div class="p1"><b>Password</b><span>Last changed 2 months ago</span></div></div>
+        </div>
+        <div class="foot" style="padding-top:0"><button class="btn btn-ghost" data-go="c-splash">Log out</button></div>
+        <div class="tabbar">
+          <button data-tab="c-home"><svg class="ic"><use href="#i-home"/></svg>Home</button>
+          <button data-tab="c-deliveries"><svg class="ic"><use href="#i-list"/></svg>Deliveries</button>
+          <button data-tab="c-wallet"><svg class="ic"><use href="#i-wallet"/></svg>Wallet</button>
+          <button class="on" data-tab="c-profile"><svg class="ic"><use href="#i-user"/></svg>Profile</button>
+        </div>
+      </section>
+
+      <!-- 4. Create delivery -->
+      <section class="scr" id="c-create">
+        <div class="topbar"><button class="backbtn" data-back><svg class="ic"><use href="#i-back"/></svg></button><span class="ttl">Create delivery</span></div>
+        <div class="scroll">
+          <div class="field"><label><svg class="ic"><use href="#i-pin"/></svg>Pickup location</label><input id="pickupInput" value="Lekki Phase 1, Lagos"></div>
+
+          <div class="field">
+            <label>Delivery range</label>
+            <div class="seg" role="tablist" aria-label="Delivery range">
+              <button type="button" role="tab" data-dtype="city" aria-pressed="true"><svg class="ic" style="width:15px;height:15px"><use href="#i-pin"/></svg>Same city</button>
+              <button type="button" role="tab" data-dtype="interstate" aria-pressed="false"><svg class="ic" style="width:15px;height:15px"><use href="#i-truck"/></svg>Interstate</button>
+            </div>
+          </div>
+
+          <div class="field"><label><svg class="ic"><use href="#i-pin"/></svg>Drop-off location</label><select id="dropSelect"></select></div>
+          <p class="note" id="rangeNote" style="margin-top:-6px">Delivered within Lagos, usually inside a few hours.</p>
+
+          <h2 style="margin-top:16px">What are you sending?</h2>
+          <div class="grid3">
+            <div class="pkg" aria-pressed="true" data-pkg="600"><svg class="ic"><use href="#i-box"/></svg><span>Parcel</span></div>
+            <div class="pkg" aria-pressed="false" data-pkg="500"><svg class="ic"><use href="#i-doc"/></svg><span>Documents</span></div>
+            <div class="pkg" aria-pressed="false" data-pkg="700"><svg class="ic"><use href="#i-food"/></svg><span>Food</span></div>
+            <div class="pkg" aria-pressed="false" data-pkg="600"><svg class="ic"><use href="#i-shirt"/></svg><span>Clothing</span></div>
+            <div class="pkg" aria-pressed="false" data-pkg="1200"><svg class="ic"><use href="#i-chip"/></svg><span>Electronics</span></div>
+            <div class="pkg" aria-pressed="false" data-pkg="900"><svg class="ic"><use href="#i-dots"/></svg><span>Other</span></div>
+          </div>
+        </div>
+        <div class="foot"><button class="btn btn-green" id="getQuoteBtn">Get quote</button></div>
+      </section>
+
+      <!-- 5. Delivery quote -->
+      <section class="scr" id="c-quote">
+        <div class="topbar"><button class="backbtn" data-back><svg class="ic"><use href="#i-back"/></svg></button><span class="ttl">Delivery quote</span></div>
+        <div class="scroll">
+          <div class="routechip"><svg class="ic" style="width:16px;height:16px"><use href="#i-pin"/></svg><b id="quotePickup">Lekki Phase 1</b><span class="arrow">→</span><b id="quoteDrop">Bodija, Ibadan</b></div>
+          <p class="lead" style="margin-bottom:4px">Available couriers near your pickup point — book one straight away.</p>
+          <div class="orow2 courierCard" data-tier-base="bike">
+            <div class="otop"><span style="display:flex;align-items:center;gap:8px"><svg class="ic"><use href="#i-bike"/></svg><b>Yusuf Bello</b></span><span class="odist">10 mins to pickup</span></div>
+            <div class="ometa">Suzuki AX100 · KJA 118 XZ · <svg class="ic" style="width:12px;height:12px;vertical-align:-2px"><use href="#i-star"/></svg> 4.7 rating</div>
+            <div class="otop" style="margin-top:8px;align-items:flex-end"><span class="pricebreak" style="font-size:11.5px;color:var(--muted);max-width:60%">Base + per-km + bike rate</span><span class="pay tprice" data-tier-base="bike">₦2,500</span></div>
+            <div class="accept"><button class="btn btn-green book-courier" data-tier-base="bike" data-courier="Yusuf Bello">Book Yusuf</button></div>
+          </div>
+          <div class="orow2 courierCard" data-tier-base="car">
+            <div class="otop"><span style="display:flex;align-items:center;gap:8px"><svg class="ic"><use href="#i-car"/></svg><b>Ngozi Adeyemi</b></span><span class="odist">16 mins to pickup</span></div>
+            <div class="ometa">Toyota Corolla · ABJ 334 KD · <svg class="ic" style="width:12px;height:12px;vertical-align:-2px"><use href="#i-star"/></svg> 4.9 rating</div>
+            <div class="otop" style="margin-top:8px;align-items:flex-end"><span class="pricebreak" style="font-size:11.5px;color:var(--muted);max-width:60%">Bike rate × 1.6 (medium vehicle)</span><span class="pay tprice" data-tier-base="car">₦4,000</span></div>
+            <div class="accept"><button class="btn btn-green book-courier" data-tier-base="car" data-courier="Ngozi Adeyemi">Book Ngozi</button></div>
+          </div>
+          <div class="orow2 courierCard" data-tier-base="van">
+            <div class="otop"><span style="display:flex;align-items:center;gap:8px"><svg class="ic"><use href="#i-van"/></svg><b>Emeka Okafor</b></span><span class="odist">22 mins to pickup</span></div>
+            <div class="ometa">Toyota Hiace · LSD 482 XA · <svg class="ic" style="width:12px;height:12px;vertical-align:-2px"><use href="#i-star"/></svg> 4.9 rating</div>
+            <div class="otop" style="margin-top:8px;align-items:flex-end"><span class="pricebreak" style="font-size:11.5px;color:var(--muted);max-width:60%">Bike rate × 2.5 (large vehicle)</span><span class="pay tprice" data-tier-base="van">₦6,500</span></div>
+            <div class="accept"><button class="btn btn-green book-courier" data-tier-base="van" data-courier="Emeka Okafor">Book Emeka</button></div>
+          </div>
+          <div class="etabox"><div><small>Estimated delivery</small><b id="quoteEta">Today, 6:40 pm</b></div><div style="text-align:right"><small>Distance</small><b id="quoteDistance">92 km</b></div></div>
+        </div>
+      </section>
+
+      <!-- 6. Live tracking (customer view) -->
+      <section class="scr" id="c-track">
+        <div class="topbar" style="position:absolute;z-index:2"><button class="backbtn" data-back style="background:#fff"><svg class="ic"><use href="#i-back"/></svg></button></div>
+        <div class="map" id="mapWrap-c"><div id="mapSvgSlot-c"></div><div class="map-badge"><i></i><span class="mapBadgeTxt">Live</span></div></div>
+        <div class="sheet">
+          <div class="status-row"><div><h1 class="tHead">Your parcel is on the way</h1><p class="lead tSub">Delivery #LIB-20481, to Tunde Bello.</p></div><span class="chip tChip">In transit</span></div>
+          <div class="stats"><div class="stat"><small>Arrives around</small><b class="eta">3:40 pm</b></div><div class="stat"><small>Distance left</small><b class="km">92 km</b></div></div>
+          <div class="timeline timelineC"></div>
+          <div class="card"><div class="person"><div class="avatar trackDriverAvatar">EO</div><div class="who"><b class="trackDriverName">Emeka Okafor</b><span class="trackDriverMeta">Your driver, 4.9 rating</span><br><span class="plate trackDriverPlate">LSD 482 XA</span></div><button class="iconbtn callBtn" aria-label="Call driver"><svg class="ic"><use href="#i-phone"/></svg></button></div></div>
+          <div class="recent" id="escrowCard"><svg class="ic"><use href="#i-lock"/></svg><div class="r1"><b>Payment held in escrow</b><span>Released to your driver once the receiver confirms with their code</span></div></div>
+          <div class="photoShareCard" hidden><small>Photo taken at pickup</small><img class="pickupPhotoShared" alt="Parcel photo taken at pickup"><p>Your driver photographed the parcel before leaving. This is what it looked like at pickup.</p></div>
+          <div class="matchCard" id="cDoneCard" hidden style="text-align:center">
+            <h3>Parcel delivered</h3>
+            <p>Your parcel reached <span class="doneRecvC">Tunde Bello</span>. Let us know how it went.</p>
+            <p class="note" style="margin-bottom:10px">✅ Payment released to your driver</p>
+            <button class="btn btn-green" id="goReviewFromTrack" style="width:100%">Leave a review</button>
+          </div>
+          <div class="foot" style="padding:14px 0 4px"><button class="protoBtn simBtnC">Move parcel to next stop</button><p class="note">Prototype control. In the real app, the driver's GPS moves this.</p></div>
+        </div>
+      </section>
+
+      <!-- 7. Delivered -->
+      <section class="scr" id="c-done">
+        <div class="scroll" style="padding-top:0">
+          <div class="completed">
+            <div class="doneburst"><svg class="ic"><use href="#i-check"/></svg></div>
+            <h1>Delivered</h1>
+            <p class="lead">Your parcel reached Tunde Bello in Bodija, Ibadan.</p>
+          </div>
+          <div class="proof">
+            <svg viewBox="0 0 360 160"><rect width="360" height="160" fill="#E4F5EA"/><rect x="120" y="45" width="120" height="80" rx="8" fill="#0E7A3D"/><rect x="130" y="55" width="100" height="10" fill="#fff" opacity=".5"/><rect x="130" y="70" width="70" height="8" fill="#fff" opacity=".35"/><path d="M0 130h360v30H0z" fill="#0B3B22" opacity=".08"/></svg>
+          </div>
+          <div class="card">
+            <div class="facts" style="grid-template-columns:1fr 1fr;border-top:0">
+              <div style="padding-left:0"><small>Delivered</small><b>3:38 pm</b></div>
+              <div><small>Delivery code</small><b>✓ Verified by receiver</b></div>
+            </div>
+          </div>
+          <div class="matchCard" id="cReviewCard">
+            <h3>Rate this delivery</h3>
+            <p>Tell us how Emeka did and how the app worked for you.</p>
+            <button class="btn btn-green" id="openCustomerReview" style="width:100%">Rate now</button>
+          </div>
+        </div>
+        <div class="foot"><button class="btn btn-green" data-go="c-home">Done</button></div>
+      </section>
+    </div>
+
+    <!-- ===================== DRIVER APP ===================== -->
+    <div class="app" id="app-driver">
+      <div class="dtop" id="dtopBar" style="display:none">
+        <div class="who">Emeka Okafor<small>Toyota Hiace, LSD 482 XA</small></div>
+        <div class="online">
+          <button class="iconbtn" id="profileBtn" style="width:34px;height:34px;background:transparent;border:1.5px solid #2B4B3A" aria-label="View your driver profile"><svg class="ic" style="width:17px;height:17px"><use href="#i-user"/></svg></button>
+          <i class="statusDot on" id="statusDot" aria-hidden="true"></i><span id="onlineLabel">Online</span>
+        </div>
+      </div>
+
+      <!-- 0. Driver splash -->
+      <section class="scr active" id="d-splash">
+        <div class="splash">
+          <div>
+            <svg class="mark" viewBox="0 0 24 24" fill="#fff" stroke="none"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z" opacity=".35"/><path d="M3 8l9 5 9-5" stroke="#fff" stroke-width="1.6" fill="none"/><path d="M12 13v8" stroke="#fff" stroke-width="1.6" fill="none"/></svg>
+            <h1>SwiftDrop Driver</h1>
+            <div class="tag" data-i18n="tag_driver">Drive. Deliver. Earn.</div>
+          </div>
+          <div>
+            <button class="btn btn-white" id="toRegister" data-i18n="btn_get_started">Get started</button>
+            <div class="sub"><button class="link" style="color:#fff" id="toLogin" data-i18n="link_already_driver">Already a driver? Log in</button></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 0z. Driver login -->
+      <section class="scr" id="d-login">
+        <div class="topbar"><button class="backbtn" data-back><svg class="ic"><use href="#i-back"/></svg></button><span class="ttl">Log in</span></div>
+        <div class="scroll">
+          <p class="lead">Log in to see your profile and pick up deliveries.</p>
+          <div class="field"><label><svg class="ic"><use href="#i-phone"/></svg>Phone number</label><input value="0812 345 6789"></div>
+          <div class="field"><label><svg class="ic"><use href="#i-lock"/></svg>Password</label><input type="password" value="••••••••"></div>
+        </div>
+        <div class="foot"><button class="btn btn-green" id="loginBtn">Log in</button><p class="note">Not registered yet? <button class="link" data-go="d-register">Sign up as a driver</button></p></div>
+      </section>
+
+      <!-- 0b. Driver registration -->
+      <section class="scr" id="d-register">
+        <div class="topbar"><button class="backbtn" data-back><svg class="ic"><use href="#i-back"/></svg></button><span class="ttl">Driver registration</span><span class="step">Step 1 of 2</span></div>
+        <div class="scroll">
+          <div class="stepper"><span class="on"></span><span class="on"></span><span></span><span></span></div>
+          <h2>Personal information</h2>
+          <div class="field"><label><svg class="ic"><use href="#i-user"/></svg>Full name</label><input value="Emeka Okafor"></div>
+          <div class="field"><label><svg class="ic"><use href="#i-phone"/></svg>Phone number</label><input value="0812 345 6789"></div>
+          <div class="field"><label><svg class="ic"><use href="#i-mail"/></svg>Email address</label><input value="emeka@example.com"></div>
+          <h2 style="margin-top:18px">Upload documents</h2>
+          <button class="uprow" data-up><svg class="ic"><use href="#i-doc"/></svg><div class="u1"><b>Government ID</b><span>Front and back</span></div><span class="stat2">Upload</span></button>
+          <button class="uprow" data-up><svg class="ic"><use href="#i-doc"/></svg><div class="u1"><b>Driver's licence</b><span>Clear photo</span></div><span class="stat2">Upload</span></button>
+          <button class="uprow" data-up><svg class="ic"><use href="#i-truck"/></svg><div class="u1"><b>Vehicle documents</b><span>Registration papers</span></div><span class="stat2">Upload</span></button>
+          <button class="uprow" data-up><svg class="ic"><use href="#i-cam"/></svg><div class="u1"><b>Vehicle photos</b><span>3 angles</span></div><span class="stat2">Upload</span></button>
+        </div>
+        <div class="foot"><button class="btn btn-green" id="submitAppBtn">Submit application</button></div>
+      </section>
+
+      <!-- 0c. Application submitted -->
+      <section class="scr" id="d-submitted">
+        <div class="scroll" style="padding-top:0">
+          <div class="completed">
+            <div class="doneburst"><svg class="ic"><use href="#i-check"/></svg></div>
+            <h1>You're verified</h1>
+            <p class="lead">Your documents check out. Your KYC is complete, so you can pick up available orders right away.</p>
+          </div>
+        </div>
+        <div class="foot"><button class="btn btn-green" id="toProfileFromSubmit">View your profile</button></div>
+      </section>
+
+      <!-- 0c2. Choose your state (required once, right after verification) -->
+      <section class="scr" id="d-state-select">
+        <div class="topbar"><button class="backbtn" data-back><svg class="ic"><use href="#i-back"/></svg></button><span class="ttl">Which state do you drive in?</span></div>
+        <div class="scroll">
+          <p class="lead">You'll only see available orders that start in this state. You can change this anytime in Settings.</p>
+          <div class="field"><label><svg class="ic"><use href="#i-pin"/></svg>Your state</label>
+            <select id="onboardStateDriver">
+        <option>Abia</option><option>Adamawa</option><option>Akwa Ibom</option><option>Anambra</option><option>Bauchi</option><option>Bayelsa</option><option>Benue</option><option>Borno</option><option>Cross River</option><option>Delta</option><option>Ebonyi</option><option>Edo</option><option>Ekiti</option><option>Enugu</option><option>FCT (Abuja)</option><option>Gombe</option><option>Imo</option><option>Jigawa</option><option>Kaduna</option><option>Kano</option><option>Katsina</option><option>Kebbi</option><option>Kogi</option><option>Kwara</option><option selected>Lagos</option><option>Nasarawa</option><option>Niger</option><option>Ogun</option><option>Ondo</option><option>Osun</option><option>Oyo</option><option>Plateau</option><option>Rivers</option><option>Sokoto</option><option>Taraba</option><option>Yobe</option><option>Zamfara</option>
+            </select>
+          </div>
+        </div>
+        <div class="foot"><button class="btn btn-green" id="confirmDriverState">Continue</button></div>
+      </section>
+
+      <!-- 0d. Driver profile -->
+      <section class="scr" id="d-profile">
+        <div class="topbar"><button class="backbtn" data-back><svg class="ic"><use href="#i-back"/></svg></button><span class="ttl">Your profile</span></div>
+        <div class="scroll">
+          <div class="profhead"><div class="av">EO</div><h2>Emeka Okafor</h2><p class="lead">Driver since March 2026</p><span class="rate"><svg class="ic"><use href="#i-star"/></svg>4.9 rating · 214 deliveries</span></div>
+          <div class="kycbar"><svg class="ic"><use href="#i-check"/></svg><div><b>KYC verified</b><span>You're eligible to accept any available order</span></div></div>
+          <div class="prow"><svg class="ic"><use href="#i-phone"/></svg><div class="p1"><b>Phone number</b><span>0812 345 6789</span></div></div>
+          <div class="prow"><svg class="ic"><use href="#i-truck"/></svg><div class="p1"><b>Vehicle</b><span>Toyota Hiace, LSD 482 XA</span></div></div>
+          <div class="prow"><svg class="ic"><use href="#i-doc"/></svg><div class="p1"><b>Documents</b><span>All verified</span></div></div>
+          <div class="prow"><svg class="ic"><use href="#i-globe"/></svg><div class="p1"><b>State you drive in</b><span class="stateLabel">Lagos</span></div></div>
+          <div class="prow"><svg class="ic"><use href="#i-wallet"/></svg><div class="p1"><b>Payout account</b><span>GTBank ••••4821</span></div></div>
+        </div>
+        <div class="foot"><button class="btn btn-green" id="toDashFromProfile">Go to dashboard</button><button class="btn btn-ghost" id="driverLogoutBtn" style="margin-top:10px">Log out</button></div>
+      </section>
+
+      <section class="scr" id="d-home">
+        <div class="scroll" style="padding-top:14px">
+          <h1 id="dHead">You are offline</h1>
+          <p class="lead" id="dLead">Go online to see and accept available orders.</p>
+          <div class="earn"><div class="stat"><small>Today</small><b id="today">₦0</b></div><div class="stat"><small>This week</small><b id="week">₦46,500</b></div></div>
+          <div class="recent" style="margin-top:8px"><svg class="ic"><use href="#i-wallet"/></svg><div class="r1"><b>Available to withdraw</b><span id="availBal">₦0</span></div><button class="btn btn-green" style="width:auto;padding:0 16px;height:38px" id="withdrawBtnHome">Withdraw</button></div>
+          <div class="kycbar"><svg class="ic"><use href="#i-check"/></svg><div><b>KYC verified</b><span>You can accept any order once online</span></div></div>
+          <div class="empty" id="emptyBox"><svg class="ic"><use href="#i-radar"/></svg><span id="emptyTxt">Turn the switch above to online, then check the Orders tab.</span></div>
+          <div class="job" id="offer" hidden data-otype="interstate" data-pay="2700" data-recv="Tunde Bello" data-sender="Ade Stores" data-pickup="12 Allen Avenue, Ikeja" data-deliver="5 Bodija Market Road, Ibadan" data-parcel="1 sealed bag, under 2 kg">
+            <div class="job-top"><span>New job nearby</span><span class="pay">₦2,700</span></div>
+            <div class="legs">
+              <div class="leg"><span class="mk"></span><div><b>Pickup: 12 Allen Avenue, Ikeja</b><span>1 sealed bag, under 2 kg</span></div></div>
+              <div class="leg"><span class="mk end"></span><div><b>Deliver: 5 Bodija Market Road, Ibadan</b><span>Receiver: Tunde Bello</span></div></div>
+            </div>
+            <div class="facts"><div><small>Distance</small>1.8 km away</div><div><small>Est. time</small>55 mins to Ibadan</div></div>
+            <div class="jobact"><button class="btn btn-ghost" id="declineBtn" style="flex:1">Decline</button><button class="btn btn-green" id="acceptBtn" style="flex:1">Accept</button></div>
+          </div>
+          <div id="onlineCta" hidden style="margin-top:14px"><button class="btn btn-green" data-dtab="d-orders"><svg class="ic"><use href="#i-list"/></svg>See available orders</button></div>
+        </div>
+        <div class="tabbar">
+          <button class="on" data-dtab="d-home"><svg class="ic"><use href="#i-home"/></svg>Dashboard</button>
+          <button data-dtab="d-orders"><svg class="ic"><use href="#i-list"/></svg>Orders</button>
+          <button data-dtab="d-earnings"><svg class="ic"><use href="#i-wallet"/></svg>Earnings</button>
+          <button data-dtab="d-profile2"><svg class="ic"><use href="#i-user"/></svg>Profile</button>
+        </div>
+      </section>
+
+      <!-- Available orders board -->
+      <section class="scr" id="d-orders">
+        <div class="scroll" style="padding-top:14px">
+          <h1>Available orders</h1>
+          <p class="lead">Any KYC-verified driver can pick these up. First to accept gets it.</p>
+          <div class="kycbar" id="orderGate"><svg class="ic"><use href="#i-check"/></svg><div><b>KYC verified</b><span>You're eligible to accept orders below</span></div></div>
+          <div id="orderGateBlocked" hidden style="text-align:center;padding:40px 20px"><svg class="ic" style="width:40px;height:40px;color:var(--muted)"><use href="#i-doc"/></svg><h3 style="margin-top:12px">Verification pending</h3><p class="note">Only KYC-verified drivers can see and accept orders. We'll notify you the moment your documents are approved.</p></div>
+          <div id="orderListWrap">
+
+          <div class="seg" role="tablist" aria-label="Filter orders by range" style="margin-bottom:4px">
+            <button type="button" role="tab" data-ofilter="all" aria-pressed="true">All</button>
+            <button type="button" role="tab" data-ofilter="city" aria-pressed="false">Same city</button>
+            <button type="button" role="tab" data-ofilter="interstate" aria-pressed="false">Interstate</button>
+          </div>
+
+          <div class="orow2" data-otype="city" data-pstate="Lagos">
+            <div class="otop"><span class="pay">₦1,200</span><span class="odist">0.6 km away</span></div>
+            <div class="oroute"><b>Pickup:</b> Ikeja City Mall, Ikeja<br><b>Deliver:</b> Herbert Macaulay Way, Yaba <i>(same city)</i></div>
+            <div class="ometa">1 nylon bag, food package · Sender: Zara Foods · Receiver: Ngozi Eze</div>
+            <div class="accept"><button class="btn btn-green order-accept" data-otype="city" data-pay="1200" data-recv="Ngozi Eze" data-sender="Zara Foods" data-pickup="Ikeja City Mall, Ikeja" data-deliver="Herbert Macaulay Way, Yaba" data-parcel="1 nylon bag, food package">Accept order</button></div>
+          </div>
+
+          <div class="orow2" data-otype="city" data-pstate="Lagos">
+            <div class="otop"><span class="pay">₦1,500</span><span class="odist">1.3 km away</span></div>
+            <div class="oroute"><b>Pickup:</b> Lekki Phase 1, Lagos<br><b>Deliver:</b> Adeniran Ogunsanya, Surulere <i>(same city)</i></div>
+            <div class="ometa">1 envelope, documents · Sender: Femi Prints · Receiver: Uche Obi</div>
+            <div class="accept"><button class="btn btn-green order-accept" data-otype="city" data-pay="1500" data-recv="Uche Obi" data-sender="Femi Prints" data-pickup="Lekki Phase 1, Lagos" data-deliver="Adeniran Ogunsanya, Surulere" data-parcel="1 envelope, documents">Accept order</button></div>
+          </div>
+
+          <div class="orow2" data-otype="interstate" data-pstate="Lagos">
+            <div class="otop"><span class="pay">₦2,700</span><span class="odist">1.8 km away</span></div>
+            <div class="oroute"><b>Pickup:</b> 12 Allen Avenue, Ikeja<br><b>Deliver:</b> 5 Bodija Market Road, Ibadan <i>(Oyo State)</i></div>
+            <div class="ometa">1 bag, under 2 kg · Sender: Ade Stores · Receiver: Tunde Bello</div>
+            <div class="accept"><button class="btn btn-green order-accept" data-otype="interstate" data-pay="2700" data-recv="Tunde Bello" data-sender="Ade Stores" data-pickup="12 Allen Avenue, Ikeja" data-deliver="5 Bodija Market Road, Ibadan" data-parcel="1 sealed bag, under 2 kg">Accept order</button></div>
+          </div>
+
+          <div class="orow2" data-otype="interstate" data-pstate="Lagos">
+            <div class="otop"><span class="pay">₦3,300</span><span class="odist">3.2 km away</span></div>
+            <div class="oroute"><b>Pickup:</b> 4 Adeola Odeku, Victoria Island<br><b>Deliver:</b> 18 Ring Road, Ibadan <i>(Oyo State)</i></div>
+            <div class="ometa">1 box, 3 to 5 kg · Sender: Chika Fashions · Receiver: Bisi Adeyemi</div>
+            <div class="accept"><button class="btn btn-green order-accept" data-otype="interstate" data-pay="3300" data-recv="Bisi Adeyemi" data-sender="Chika Fashions" data-pickup="4 Adeola Odeku, Victoria Island" data-deliver="18 Ring Road, Ibadan" data-parcel="1 box, 3 to 5 kg">Accept order</button></div>
+          </div>
+
+          <div class="orow2" data-otype="interstate" data-pstate="Lagos">
+            <div class="otop"><span class="pay">₦7,600</span><span class="odist">0.9 km away</span></div>
+            <div class="oroute"><b>Pickup:</b> 9 Herbert Macaulay Way, Yaba<br><b>Deliver:</b> GRA Phase 2, Port Harcourt <i>(Rivers State)</i></div>
+            <div class="ometa">Documents envelope · Sender: Femi Legal · Receiver: Chuka Nnamdi</div>
+            <div class="accept"><button class="btn btn-green order-accept" data-otype="interstate" data-pay="7600" data-recv="Chuka Nnamdi" data-sender="Femi Legal" data-pickup="9 Herbert Macaulay Way, Yaba" data-deliver="GRA Phase 2, Port Harcourt" data-parcel="1 documents envelope">Accept order</button></div>
+          </div>
+
+          <div class="orow2" data-otype="interstate" data-pstate="Lagos">
+            <div class="otop"><span class="pay">₦9,800</span><span class="odist">2.4 km away</span></div>
+            <div class="oroute"><b>Pickup:</b> Herbert Macaulay Way, Yaba<br><b>Deliver:</b> Wuse 2, Abuja <i>(FCT)</i></div>
+            <div class="ometa">1 laptop box · Sender: Chidinma Tech · Receiver: Aliyu Bello</div>
+            <div class="accept"><button class="btn btn-green order-accept" data-otype="interstate" data-pay="9800" data-recv="Aliyu Bello" data-sender="Chidinma Tech" data-pickup="Herbert Macaulay Way, Yaba" data-deliver="Wuse 2, Abuja" data-parcel="1 laptop box">Accept order</button></div>
+          </div>
+
+          <div class="orow2" data-otype="city" data-pstate="Kano">
+            <div class="otop"><span class="pay">₦1,400</span><span class="odist">1.1 km away</span></div>
+            <div class="oroute"><b>Pickup:</b> Sabon Gari, Kano<br><b>Deliver:</b> Nassarawa GRA, Kano <i>(same city)</i></div>
+            <div class="ometa">1 carton, fabric · Sender: Amina Textiles · Receiver: Yusuf Garba</div>
+            <div class="accept"><button class="btn btn-green order-accept" data-otype="city" data-pay="1400" data-recv="Yusuf Garba" data-sender="Amina Textiles" data-pickup="Sabon Gari, Kano" data-deliver="Nassarawa GRA, Kano" data-parcel="1 carton, fabric">Accept order</button></div>
+          </div>
+
+          <div class="orow2" data-otype="interstate" data-pstate="FCT (Abuja)">
+            <div class="otop"><span class="pay">₦3,900</span><span class="odist">2.0 km away</span></div>
+            <div class="oroute"><b>Pickup:</b> Wuse, Abuja<br><b>Deliver:</b> Lafia, Nasarawa <i>(Nasarawa State)</i></div>
+            <div class="ometa">1 envelope, documents · Sender: Bello & Co · Receiver: Grace Danjuma</div>
+            <div class="accept"><button class="btn btn-green order-accept" data-otype="interstate" data-pay="3900" data-recv="Grace Danjuma" data-sender="Bello & Co" data-pickup="Wuse, Abuja" data-deliver="Lafia, Nasarawa" data-parcel="1 envelope, documents">Accept order</button></div>
+          </div>
+
+          <p class="note" id="noOrdersNote" hidden>No orders in this range right now — check back shortly.</p>
+          </div>
+        </div>
+        <div class="tabbar">
+          <button data-dtab="d-home"><svg class="ic"><use href="#i-home"/></svg>Dashboard</button>
+          <button class="on" data-dtab="d-orders"><svg class="ic"><use href="#i-list"/></svg>Orders</button>
+          <button data-dtab="d-earnings"><svg class="ic"><use href="#i-wallet"/></svg>Earnings</button>
+          <button data-dtab="d-profile2"><svg class="ic"><use href="#i-user"/></svg>Profile</button>
+        </div>
+      </section>
+
+      <!-- Earnings tab -->
+      <section class="scr" id="d-earnings">
+        <div class="scroll" style="padding-top:14px">
+          <h1>Earnings</h1>
+          <p class="lead">Funds are released to your balance the moment a delivery is confirmed — withdraw to your bank account anytime, no waiting for payday.</p>
+          <div class="earn"><div class="stat"><small>Today</small><b id="today2">₦0</b></div><div class="stat"><small>This week</small><b id="week2">₦46,500</b></div></div>
+          <div class="recent" style="margin-top:8px"><svg class="ic"><use href="#i-wallet"/></svg><div class="r1"><b>Available to withdraw</b><span id="availBal2">₦0</span></div><button class="btn btn-green" style="width:auto;padding:0 16px;height:38px" id="withdrawBtnEarnings">Withdraw</button></div>
+          <div class="sectiontitle" style="padding-left:0">Recent withdrawals</div>
+          <div class="recent"><svg class="ic"><use href="#i-box"/></svg><div class="r1"><b>Delivery LIB-20475</b><span>Withdrawn instantly</span></div><span class="tagdone">₦2,700</span></div>
+          <div class="recent"><svg class="ic"><use href="#i-box"/></svg><div class="r1"><b>Delivery LIB-20460</b><span>Withdrawn instantly</span></div><span class="tagdone">₦3,100</span></div>
+          <div class="recent"><svg class="ic"><use href="#i-box"/></svg><div class="r1"><b>Delivery LIB-20441</b><span>Withdrawn instantly</span></div><span class="tagdone">₦2,400</span></div>
+        </div>
+        <div class="tabbar">
+          <button data-dtab="d-home"><svg class="ic"><use href="#i-home"/></svg>Dashboard</button>
+          <button data-dtab="d-orders"><svg class="ic"><use href="#i-list"/></svg>Orders</button>
+          <button class="on" data-dtab="d-earnings"><svg class="ic"><use href="#i-wallet"/></svg>Earnings</button>
+          <button data-dtab="d-profile2"><svg class="ic"><use href="#i-user"/></svg>Profile</button>
+        </div>
+      </section>
+
+      <!-- Profile reached via tab bar (mirrors d-profile, adds tab bar instead of a back arrow) -->
+      <section class="scr" id="d-profile2">
+        <div class="scroll" style="padding-top:0">
+          <div class="profhead"><div class="av">EO</div><h2>Emeka Okafor</h2><p class="lead">Driver since March 2026</p><span class="rate"><svg class="ic"><use href="#i-star"/></svg>4.9 rating · 214 deliveries</span></div>
+          <div class="kycbar"><svg class="ic"><use href="#i-check"/></svg><div><b>KYC verified</b><span>You're eligible to accept any available order</span></div></div>
+          <div class="prow"><svg class="ic"><use href="#i-phone"/></svg><div class="p1"><b>Phone number</b><span>0812 345 6789</span></div></div>
+          <div class="prow"><svg class="ic"><use href="#i-truck"/></svg><div class="p1"><b>Vehicle</b><span>Toyota Hiace, LSD 482 XA</span></div></div>
+          <div class="prow"><svg class="ic"><use href="#i-doc"/></svg><div class="p1"><b>Documents</b><span>All verified</span></div></div>
+          <div class="prow"><svg class="ic"><use href="#i-globe"/></svg><div class="p1"><b>State you drive in</b><span class="stateLabel">Lagos</span></div></div>
+          <div class="prow"><svg class="ic"><use href="#i-wallet"/></svg><div class="p1"><b>Payout account</b><span>GTBank ••••4821</span></div></div>
+          <div class="foot" style="padding:14px 0"><button class="btn btn-ghost" id="driverLogoutBtn2">Log out</button></div>
+        </div>
+        <div class="tabbar">
+          <button data-dtab="d-home"><svg class="ic"><use href="#i-home"/></svg>Dashboard</button>
+          <button data-dtab="d-orders"><svg class="ic"><use href="#i-list"/></svg>Orders</button>
+          <button data-dtab="d-earnings"><svg class="ic"><use href="#i-wallet"/></svg>Earnings</button>
+          <button class="on" data-dtab="d-profile2"><svg class="ic"><use href="#i-user"/></svg>Profile</button>
+        </div>
+      </section>
+
+      <section class="scr" id="d-pickup">
+        <div class="topbar"><span class="ttl">Pick up the parcel</span></div>
+        <div class="scroll">
+          <p class="lead"><span id="pickupAddr">12 Allen Avenue, Ikeja</span>. Complete all three checks before you leave.</p>
+          <button class="check" aria-pressed="false"><span class="box"><svg class="ic"><use href="#i-check"/></svg></span><div><b>Parcel matches the booking</b><span class="s" id="pickupParcel">1 sealed bag, under 2 kg. Sender: Ade Stores.</span></div></button>
+          <div class="check" id="photoCheck" aria-pressed="false">
+            <span class="box" id="photoBox"><svg class="ic"><use href="#i-cam"/></svg></span>
+            <div style="flex:1">
+              <b>Take a photo of the parcel</b>
+              <span class="s">This becomes proof of condition at pickup, visible to the sender and receiver as soon as you confirm.</span>
+              <img id="pickupPhotoPreview" alt="Parcel photo preview" style="display:none;margin-top:8px;width:64px;height:64px;object-fit:cover;border-radius:10px;border:1.5px solid var(--line)">
+            </div>
+            <button type="button" class="stat2" id="uploadPhotoBtn" style="border:0;cursor:pointer">Upload</button>
+            <input type="file" accept="image/*" capture="environment" id="pickupPhotoInput" style="display:none">
+          </div>
+          <button class="check" aria-pressed="false"><span class="box"><svg class="ic"><use href="#i-check"/></svg></span><div><b>Sender saw the photo</b><span class="s">Show it to the sender on your screen. Live tracking starts the moment you tap start.</span></div></button>
+        </div>
+        <div class="foot"><button class="btn btn-green" id="startBtn" disabled>Start trip to Ibadan</button></div>
+      </section>
+
+      <section class="scr" id="d-trip">
+        <div class="scroll" style="padding-top:14px">
+          <h1>Trip in progress</h1>
+          <p class="lead">Keep this screen open — your progress updates automatically as you drive. No need to tap anything at each stop.</p>
+          <div class="nowcard" style="margin-top:14px"><small>Current stop</small><div class="place" id="place">Ikeja</div><div class="next" id="nextLine">Next: <b>Ojota Motor Park</b></div><div class="track"><i id="bar"></i></div></div>
+          <div class="sharing"><i></i><div><b>Sharing your location.</b> Ade Stores and Tunde can see your progress right now.</div></div>
+        </div>
+        <div class="foot"><button class="protoBtn" id="arriveBtn">Skip to next stop (prototype)</button><button class="problem" id="problemBtn">Report a problem</button></div>
+      </section>
+
+      <section class="scr" id="d-deliver">
+        <div class="scroll" style="padding-top:14px">
+          <h1>Hand over the parcel</h1>
+          <p class="lead">Ask <span id="deliverRecv">Tunde</span> for their 4-digit code. Do not give the parcel until they say it.</p>
+          <div class="codein" id="codeRow">
+            <input inputmode="numeric" maxlength="1" aria-label="Digit 1"><input inputmode="numeric" maxlength="1" aria-label="Digit 2"><input inputmode="numeric" maxlength="1" aria-label="Digit 3"><input inputmode="numeric" maxlength="1" aria-label="Digit 4">
+          </div>
+          <div class="msg" id="codeMsg" role="status"></div>
+        </div>
+        <div class="foot"><button class="btn btn-green" id="confirmBtn">Confirm delivery</button><p class="note">Prototype: the correct code is 4729.</p></div>
+      </section>
+
+      <section class="scr" id="d-done">
+        <div class="scroll" style="padding-top:14px">
+          <h1>Delivery complete</h1>
+          <p class="lead"><span id="doneRecv">Tunde</span> and <span id="doneSender">Ade Stores</span> have been notified.</p>
+          <div class="donebox"><p>You earned</p><div class="big" id="doneEarn">₦2,700</div><p>Released to your available balance now — withdraw anytime.</p></div>
+        </div>
+        <div class="foot"><button class="btn btn-dark" id="againBtn">Look for the next job</button></div>
+      </section>
+    </div>
+
+    <!-- ===================== RECEIVER APP ===================== -->
+    <div class="app" id="app-receiver">
+      <section class="scr active" id="r-entry">
+        <div class="entrywrap">
+          <svg class="mark" viewBox="0 0 24 24" fill="none" stroke="#0E7A3D" stroke-width="1.6"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>
+          <h1 data-i18n="recv_title">Track your delivery</h1>
+          <p class="lead" data-i18n="recv_lead">Enter the tracking code from the SwiftDrop app or your email notification.</p>
+          <div class="field" style="margin-top:18px"><input id="trackCode" value="LIB20481" style="text-align:center;letter-spacing:2px;font-weight:700"></div>
+          <button class="btn btn-green" id="trackBtn" style="margin-top:12px"><svg class="ic"><use href="#i-check"/></svg><span data-i18n="btn_track">Track</span></button>
+          <div class="qrbox"><svg viewBox="0 0 100 100"><rect width="100" height="100" fill="#fff"/><g fill="#0B3B22"><rect x="6" y="6" width="24" height="24"/><rect x="70" y="6" width="24" height="24"/><rect x="6" y="70" width="24" height="24"/><rect x="12" y="12" width="12" height="12" fill="#fff"/><rect x="76" y="12" width="12" height="12" fill="#fff"/><rect x="12" y="76" width="12" height="12" fill="#fff"/><rect x="38" y="6" width="6" height="6"/><rect x="50" y="6" width="6" height="6"/><rect x="38" y="20" width="6" height="6"/><rect x="60" y="20" width="6" height="6"/><rect x="38" y="38" width="24" height="24"/><rect x="70" y="44" width="6" height="6"/><rect x="82" y="44" width="6" height="6"/><rect x="70" y="58" width="6" height="6"/><rect x="44" y="70" width="6" height="6"/><rect x="56" y="82" width="6" height="6"/><rect x="70" y="76" width="24" height="6"/><rect x="70" y="88" width="24" height="6"/></g></svg><span>Or scan the QR code on your delivery slip</span></div>
+        </div>
+      </section>
+
+      <section class="scr" id="r-track">
+        <div class="topbar" style="position:absolute;z-index:2"><button class="backbtn" data-back style="background:#fff"><svg class="ic"><use href="#i-back"/></svg></button></div>
+        <div class="map" id="mapWrap-r"><div id="mapSvgSlot-r"></div><div class="map-badge recv"><i></i><span class="mapBadgeTxt">Live</span></div></div>
+        <div class="sheet">
+          <div class="status-row"><div><h1 class="tHead">Your parcel is coming</h1><p class="lead tSub">Ade Stores is sending you a parcel from Lagos.</p></div><span class="chip tChip">In transit</span></div>
+          <div class="stats"><div class="stat"><small>Arrives around</small><b class="eta">3:40 pm</b></div><div class="stat"><small>Distance left</small><b class="km">92 km</b></div></div>
+          <div class="timeline timelineC"></div>
+          <div class="card"><div class="person"><div class="avatar trackDriverAvatar">EO</div><div class="who"><b class="trackDriverName">Emeka Okafor</b><span class="trackDriverMeta">Your driver, 4.9 rating</span><br><span class="plate trackDriverPlate">LSD 482 XA</span></div><button class="iconbtn callBtn" aria-label="Call driver"><svg class="ic"><use href="#i-phone"/></svg></button></div></div>
+          <div class="photoShareCard" hidden><small>Photo taken at pickup</small><img class="pickupPhotoShared" alt="Parcel photo taken at pickup"><p>Your driver photographed the parcel before leaving. Check it looks the same when it arrives.</p></div>
+          <div class="pincard" id="pincardBox"><small>Your delivery code</small><div class="digits" aria-label="Delivery code 4 7 2 9"><span>4</span><span>7</span><span>2</span><span>9</span></div><p>Give this code to the driver only when the parcel is in your hands.</p></div>
+          <div class="matchCard" id="matchCard" hidden>
+            <h3>Check it matches, then confirm</h3>
+            <p>Compare the parcel in your hands with the pickup photo above. Once you're happy, mark it received.</p>
+            <button class="btn btn-green" id="markCompleteBtn" style="width:100%">Mark as received</button>
+          </div>
+          <div class="foot" style="padding:14px 0 4px"><button class="protoBtn simBtnC">Move parcel to next stop</button><p class="note">Prototype control. In the real app, the driver's GPS moves this.</p></div>
+        </div>
+      </section>
+    </div>
+
+  </div>
+</div>
+
+<div class="modal-overlay" id="withdrawOverlay" role="dialog" aria-modal="true" aria-labelledby="withdrawTitle">
+  <div class="modal">
+    <div class="modal-head"><h2 id="withdrawTitle">Withdraw earnings</h2><button class="closeX" id="closeWithdraw" aria-label="Close withdraw"><svg class="ic" style="width:16px;height:16px"><use href="#i-back"/></svg></button></div>
+    <p class="lead">Funds are released to your balance the moment a delivery is confirmed by the receiver's code — no waiting for a scheduled payday.</p>
+    <div class="earn" style="margin:14px 0"><div class="stat"><small>Available to withdraw</small><b id="withdrawAmount">₦0</b></div></div>
+    <div class="prow"><svg class="ic"><use href="#i-wallet"/></svg><div class="p1"><b>Payout account</b><span>GTBank ••••4821</span></div></div>
+    <p class="note" id="withdrawNote"></p>
+    <div class="foot" style="padding:16px 0 0"><button class="btn btn-green" id="confirmWithdraw">Withdraw now</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="settingsOverlay" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <div class="modal">
+    <div class="modal-head"><h2 id="settingsTitle" data-i18n="settings_title">Settings</h2><button class="closeX" id="closeSettings" aria-label="Close settings"><svg class="ic" style="width:16px;height:16px"><use href="#i-back"/></svg></button></div>
+    <p class="lead" data-i18n="settings_lead">These apply across the customer, driver and receiver apps.</p>
+
+    <div class="field">
+      <label><svg class="ic"><use href="#i-pin"/></svg><span data-i18n="settings_state">Your state</span></label>
+      <select id="stateSelect">
+        <option>Abia</option><option>Adamawa</option><option>Akwa Ibom</option><option>Anambra</option><option>Bauchi</option><option>Bayelsa</option><option>Benue</option><option>Borno</option><option>Cross River</option><option>Delta</option><option>Ebonyi</option><option>Edo</option><option>Ekiti</option><option>Enugu</option><option>FCT (Abuja)</option><option>Gombe</option><option>Imo</option><option>Jigawa</option><option>Kaduna</option><option>Kano</option><option>Katsina</option><option>Kebbi</option><option>Kogi</option><option>Kwara</option><option selected>Lagos</option><option>Nasarawa</option><option>Niger</option><option>Ogun</option><option>Ondo</option><option>Osun</option><option>Oyo</option><option>Plateau</option><option>Rivers</option><option>Sokoto</option><option>Taraba</option><option>Yobe</option><option>Zamfara</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label><svg class="ic"><use href="#i-globe"/></svg><span data-i18n="settings_language">Language</span></label>
+      <select id="langSelect">
+        <option value="en">English</option>
+        <option value="pcm">Pidgin</option>
+        <option value="yo">Yorùbá</option>
+        <option value="ha">Hausa (coming soon)</option>
+        <option value="ig">Igbo (coming soon)</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label><span data-i18n="settings_appearance">Appearance</span></label>
+      <div class="seg" role="tablist" aria-label="Appearance">
+        <button type="button" role="tab" data-theme-choice="light" aria-pressed="true"><svg class="ic" style="width:15px;height:15px"><use href="#i-sun"/></svg><span data-i18n="settings_light">Light</span></button>
+        <button type="button" role="tab" data-theme-choice="dark" aria-pressed="false"><svg class="ic" style="width:15px;height:15px"><use href="#i-moon"/></svg><span data-i18n="settings_dark">Dark</span></button>
+      </div>
+    </div>
+    <p class="note" id="settingsSummary"></p>
+    <div class="foot" style="padding:16px 0 0"><button class="btn btn-green" id="saveSettings" data-i18n="settings_save">Save</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="reviewOverlay" role="dialog" aria-modal="true" aria-labelledby="reviewTitle">
+  <div class="modal">
+    <div class="modal-head"><h2 id="reviewTitle">Rate your delivery</h2><button class="closeX" id="closeReview" aria-label="Close"><svg class="ic" style="width:16px;height:16px"><use href="#i-back"/></svg></button></div>
+    <p class="lead">Your parcel is marked as received. How did it go?</p>
+
+    <div class="rateGroup">
+      <b>Rate your driver, Emeka Okafor</b>
+      <div class="rateRow" data-group="driver" data-value="0">
+        <button type="button" data-star="1"><svg class="ic"><use href="#i-star"/></svg></button>
+        <button type="button" data-star="2"><svg class="ic"><use href="#i-star"/></svg></button>
+        <button type="button" data-star="3"><svg class="ic"><use href="#i-star"/></svg></button>
+        <button type="button" data-star="4"><svg class="ic"><use href="#i-star"/></svg></button>
+        <button type="button" data-star="5"><svg class="ic"><use href="#i-star"/></svg></button>
+      </div>
+    </div>
+
+    <div class="rateGroup">
+      <b>Rate the SwiftDrop app</b>
+      <div class="rateRow" data-group="app" data-value="0">
+        <button type="button" data-star="1"><svg class="ic"><use href="#i-star"/></svg></button>
+        <button type="button" data-star="2"><svg class="ic"><use href="#i-star"/></svg></button>
+        <button type="button" data-star="3"><svg class="ic"><use href="#i-star"/></svg></button>
+        <button type="button" data-star="4"><svg class="ic"><use href="#i-star"/></svg></button>
+        <button type="button" data-star="5"><svg class="ic"><use href="#i-star"/></svg></button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Add a comment (optional)</label>
+      <textarea id="reviewComment" placeholder="Tell us more about the delivery..."></textarea>
+    </div>
+
+    <div class="foot" style="padding:16px 0 0"><button class="btn btn-green" id="submitReview" disabled style="width:100%">Submit review</button></div>
+  </div>
+</div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const naira = n => '₦' + n.toLocaleString('en-NG');
+  const prefs = { state: 'Lagos', lang: 'en', theme: 'light' };
+
+  /* ================= Role bar ================= */
+  const roleBtns = document.querySelectorAll('.rolebar button');
+  const apps = ['customer','driver','receiver'];
+  function showRole(role) {
+    roleBtns.forEach(b => b.setAttribute('aria-selected', String(b.dataset.role === role)));
+    apps.forEach(a => $('app-'+a).classList.toggle('active', a === role));
+  }
+  roleBtns.forEach(b => b.addEventListener('click', () => showRole(b.dataset.role)));
+  document.querySelectorAll('[data-role-jump]').forEach(el => el.addEventListener('click', () => showRole(el.dataset.roleJump)));
+
+  /* ================= Generic screen-stack navigation per app ================= */
+  const stacks = { customer: ['c-splash'], driver: ['d-splash'], receiver: ['r-entry'] };
+  function appOf(screenId) { return screenId.startsWith('c-') ? 'customer' : screenId.startsWith('d-') ? 'driver' : 'receiver'; }
+  function showScreen(id) {
+    const app = appOf(id);
+    document.querySelectorAll('#app-' + app + ' .scr').forEach(s => s.classList.remove('active'));
+    $(id).classList.add('active');
+  }
+  function goTo(id, push = true) {
+    const app = appOf(id);
+    if (push) stacks[app].push(id);
+    showScreen(id);
+  }
+  function goBack(fromId) {
+    const app = appOf(fromId);
+    if (stacks[app].length > 1) stacks[app].pop();
+    showScreen(stacks[app][stacks[app].length - 1]);
+  }
+  document.querySelectorAll('[data-go]').forEach(el => el.addEventListener('click', () => goTo(el.dataset.go)));
+  document.querySelectorAll('[data-back]').forEach(el => el.addEventListener('click', () => {
+    const active = document.querySelector('.scr.active');
+    goBack(active.id);
+  }));
+  $('toSignup').addEventListener('click', () => goTo('c-signup'));
+  $('toHomeFromSplash').addEventListener('click', () => goTo('c-home'));
+  $('signupBtn').addEventListener('click', () => goTo('c-state-select'));
+  $('confirmCustomerState').addEventListener('click', () => { applyStateEverywhere($('onboardStateCustomer').value); goTo('c-home'); });
+
+  /* Bottom tab bar: these are sibling tabs, not a push/back stack */
+  document.querySelectorAll('[data-tab]').forEach(btn => btn.addEventListener('click', () => {
+    showScreen(btn.dataset.tab);
+    stacks.customer = [btn.dataset.tab];
+  }));
+  /* Driver app's own bottom tab bar (Dashboard / Orders / Earnings / Profile) */
+  function refreshOrderGate() {
+    if (!$('orderGate')) return;
+    $('orderGate').hidden = !driverVerified;
+    $('orderGateBlocked').hidden = driverVerified;
+    $('orderListWrap').hidden = !driverVerified;
+  }
+  document.querySelectorAll('[data-dtab]').forEach(btn => btn.addEventListener('click', () => {
+    showScreen(btn.dataset.dtab);
+    stacks.driver = [btn.dataset.dtab];
+    if (btn.dataset.dtab === 'd-orders') refreshOrderGate();
+  }));
+
+  /* ================= Customer: package + quote selection ================= */
+  document.querySelectorAll('.pkg').forEach(p => p.addEventListener('click', () => {
+    document.querySelectorAll('.pkg').forEach(x => x.setAttribute('aria-pressed','false'));
+    p.setAttribute('aria-pressed','true');
+  }));
+  /* ================= Nationwide location system: every state maps to its hub city ================= */
+  const NG_STATE_CITY = {
+    'Abia':{city:'Umuahia',lat:5.5257,lng:7.4951}, 'Adamawa':{city:'Yola',lat:9.2035,lng:12.4954},
+    'Akwa Ibom':{city:'Uyo',lat:5.0377,lng:7.9128}, 'Anambra':{city:'Awka',lat:6.2120,lng:7.0743},
+    'Bauchi':{city:'Bauchi',lat:10.3158,lng:9.8442}, 'Bayelsa':{city:'Yenagoa',lat:4.9247,lng:6.2642},
+    'Benue':{city:'Makurdi',lat:7.7322,lng:8.5391}, 'Borno':{city:'Maiduguri',lat:11.8333,lng:13.1500},
+    'Cross River':{city:'Calabar',lat:4.9757,lng:8.3417}, 'Delta':{city:'Asaba',lat:6.2059,lng:6.7391},
+    'Ebonyi':{city:'Abakaliki',lat:6.3249,lng:8.1137}, 'Edo':{city:'Benin City',lat:6.3350,lng:5.6037},
+    'Ekiti':{city:'Ado-Ekiti',lat:7.6167,lng:5.2210}, 'Enugu':{city:'Enugu',lat:6.5244,lng:7.5086},
+    'FCT (Abuja)':{city:'Abuja',lat:9.0765,lng:7.3986}, 'Gombe':{city:'Gombe',lat:10.2897,lng:11.1673},
+    'Imo':{city:'Owerri',lat:5.4840,lng:7.0351}, 'Jigawa':{city:'Dutse',lat:11.7231,lng:9.3389},
+    'Kaduna':{city:'Kaduna',lat:10.5222,lng:7.4383}, 'Kano':{city:'Kano',lat:12.0022,lng:8.5920},
+    'Katsina':{city:'Katsina',lat:12.9908,lng:7.6018}, 'Kebbi':{city:'Birnin Kebbi',lat:12.4536,lng:4.1975},
+    'Kogi':{city:'Lokoja',lat:7.8023,lng:6.7337}, 'Kwara':{city:'Ilorin',lat:8.4966,lng:4.5426},
+    'Lagos':{city:'Lagos',lat:6.5244,lng:3.3792}, 'Nasarawa':{city:'Lafia',lat:8.4939,lng:8.5157},
+    'Niger':{city:'Minna',lat:9.6139,lng:6.5569}, 'Ogun':{city:'Abeokuta',lat:7.1475,lng:3.3619},
+    'Ondo':{city:'Akure',lat:7.2571,lng:5.2058}, 'Osun':{city:'Osogbo',lat:7.7719,lng:4.5561},
+    'Oyo':{city:'Ibadan',lat:7.3775,lng:3.9470}, 'Plateau':{city:'Jos',lat:9.8965,lng:8.8583},
+    'Rivers':{city:'Port Harcourt',lat:4.8156,lng:7.0498}, 'Sokoto':{city:'Sokoto',lat:13.0059,lng:5.2476},
+    'Taraba':{city:'Jalingo',lat:8.8833,lng:11.3667}, 'Yobe':{city:'Damaturu',lat:11.7469,lng:11.9609},
+    'Zamfara':{city:'Gusau',lat:12.1704,lng:6.6641},
+  };
+  // Real neighborhoods for the biggest hub cities; smaller state capitals fall back to a generic
+  // area template (City Centre / GRA / New Layout etc.) labeled with the real city name.
+  const CITY_AREAS = {
+    'Lagos': [{label:'Ikeja',km:18},{label:'Victoria Island',km:22},{label:'Yaba',km:14},{label:'Surulere',km:12},{label:'Ajah',km:27},{label:'Apapa',km:24}],
+    'Ibadan': [{label:'Bodija',km:10},{label:'Dugbe',km:14},{label:'Ring Road',km:16},{label:'Mokola',km:12},{label:'Iwo Road',km:20}],
+    'Abuja': [{label:'Wuse',km:10},{label:'Garki',km:8},{label:'Maitama',km:14},{label:'Gwarinpa',km:18},{label:'Jabi',km:16},{label:'Nyanya',km:22}],
+    'Kano': [{label:'Sabon Gari',km:8},{label:'Nassarawa GRA',km:10},{label:'Fagge',km:12},{label:'Bompai',km:9}],
+    'Port Harcourt': [{label:'GRA Phase 2',km:6},{label:'Trans Amadi',km:9},{label:'Rumuola',km:7},{label:'D-Line',km:5},{label:'Eliozu',km:13}],
+    'Benin City': [{label:'GRA',km:6},{label:'Ring Road',km:8},{label:'Ugbowo',km:10},{label:'Sapele Road',km:12}],
+    'Abeokuta': [{label:'Oke Ilewo',km:5},{label:'Ake',km:7},{label:'Kuto',km:9},{label:'Ibara',km:6}],
+    'Ilorin': [{label:'Tanke',km:8},{label:'GRA',km:6},{label:'Fate',km:10},{label:'Sango',km:7}],
+    'Enugu': [{label:'Independence Layout',km:6},{label:'New Haven',km:8},{label:'GRA',km:7},{label:'Achara Layout',km:10}],
+    'Kaduna': [{label:'Barnawa',km:7},{label:'Sabon Gari',km:9},{label:'Malali',km:6},{label:'Ungwan Rimi',km:8}],
+    'Jos': [{label:'Rayfield',km:6},{label:'Bukuru',km:10},{label:'Tudun Wada',km:8},{label:'Jos GRA',km:5}],
+    'Owerri': [{label:'New Owerri',km:5},{label:'World Bank',km:7},{label:'Ikenegbu',km:6}],
+    'Uyo': [{label:'Ewet Housing',km:5},{label:'Shelter Afrique',km:7},{label:'Itam',km:10}],
+    'Calabar': [{label:'State Housing',km:6},{label:'Marian',km:8},{label:'Ikot Ansa',km:10}],
+    'Awka': [{label:'Amawbia',km:6},{label:'Aroma',km:7},{label:'Unizik area',km:9}],
+  };
+  function genericAreas(city) {
+    return [{label:'City Centre',km:5},{label:'GRA',km:8},{label:'New Layout',km:11},{label:'Old Township',km:14},{label:'Airport Road area',km:17}].map(a => ({label:a.label+', '+city, km:a.km}));
+  }
+  function areasFor(city) {
+    return CITY_AREAS[city] ? CITY_AREAS[city].map(a => ({label:a.label+', '+city, km:a.km})) : genericAreas(city);
+  }
+  function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371, toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+  function etaFromKm(km) {
+    if (km < 100) return 'Today by 4:00 pm';
+    if (km < 350) return 'Today by 7:00 pm';
+    if (km < 650) return 'Tomorrow by 11:00 am';
+    if (km < 850) return 'Tomorrow by 2:00 pm';
+    return 'In 2 days';
+  }
+  function getSameCityStops(stateName) {
+    const home = NG_STATE_CITY[stateName] || NG_STATE_CITY['Lagos'];
+    return areasFor(home.city).map(a => ({ label: a.label, km: a.km, eta: a.km <= 15 ? 'Today, within 2 hours' : 'Today, within 3 hours' }));
+  }
+  function getInterstateStops(stateName) {
+    const home = NG_STATE_CITY[stateName] || NG_STATE_CITY['Lagos'];
+    return Object.keys(NG_STATE_CITY).filter(s => s !== stateName).map(s => {
+      const dest = NG_STATE_CITY[s];
+      // Straight-line distance undershoots real road distance in Nigeria's road network;
+      // 1.35x brings it close to real reference figures (verified against known routes).
+      const km = Math.round(haversine(home.lat, home.lng, dest.lat, dest.lng) * 1.35);
+      const label = areasFor(dest.city)[0].label;
+      return { label, state: s.replace(' (Abuja)',''), km, eta: etaFromKm(km) };
+    }).sort((a,b) => a.km - b.km);
+  }
+  function priceFor(km) {
+    const base = 700, perKm = 13;
+    const bike = Math.max(1200, Math.round((base + km * perKm) / 50) * 50);
+    const car = Math.round(bike * 1.6 / 50) * 50;
+    const van = Math.round(bike * 2.5 / 50) * 50;
+    const kmR = Math.round(km);
+    return {
+      bike, car, van,
+      breakdown: {
+        bike: `₦${base} base + ₦${perKm}/km × ${kmR}km`,
+        car: `Bike rate × 1.6 for a medium vehicle`,
+        van: `Bike rate × 2.5 for a large vehicle`,
+      }
+    };
+  }
+  function populateDropSelect(type) {
+    const list = type === 'city' ? getSameCityStops(prefs.state) : getInterstateStops(prefs.state);
+    $('dropSelect').innerHTML = list.map(s => `<option value="${s.label}" data-km="${s.km}" data-eta="${s.eta}">${s.label}${s.state ? ' (' + s.state + ')' : ''}</option>`).join('');
+    $('rangeNote').textContent = type === 'city'
+      ? `Delivered within ${NG_STATE_CITY[prefs.state].city}, usually inside a few hours.`
+      : 'Delivered to another state — same day for nearby states, next day for far ones.';
+  }
+  function updatePickupDefault() {
+    const home = NG_STATE_CITY[prefs.state] || NG_STATE_CITY['Lagos'];
+    const areas = areasFor(home.city);
+    if ($('pickupInput')) $('pickupInput').value = areas[0].label;
+  }
+  function refreshOrderVisibility() {
+    const activeBtn = document.querySelector('[data-ofilter][aria-pressed="true"]') || document.querySelector('[data-ofilter="all"]');
+    const f = activeBtn ? activeBtn.dataset.ofilter : 'all';
+    let visible = 0;
+    document.querySelectorAll('.orow2').forEach(row => {
+      const typeOk = f === 'all' || row.dataset.otype === f;
+      const stateOk = !row.dataset.pstate || row.dataset.pstate === prefs.state;
+      const show = typeOk && stateOk;
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    if ($('noOrdersNote')) $('noOrdersNote').hidden = visible > 0;
+  }
+  function applyStateEverywhere(newState) {
+    prefs.state = newState;
+    applyState(newState);
+    updatePickupDefault();
+    const activeDtype = document.querySelector('[data-dtype][aria-pressed="true"]');
+    if (activeDtype && $('dropSelect')) populateDropSelect(activeDtype.dataset.dtype);
+    refreshOrderVisibility();
+    if ($('stateSelect')) $('stateSelect').value = newState;
+  }
+  document.querySelectorAll('[data-dtype]').forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-dtype]').forEach(b => b.setAttribute('aria-pressed', 'false'));
+    btn.setAttribute('aria-pressed', 'true');
+    populateDropSelect(btn.dataset.dtype);
+  }));
+  populateDropSelect('city');
+
+  const COURIER_INFO = {
+    bike: { name: 'Yusuf Bello', initials: 'YB', vehicle: 'Suzuki AX100', plate: 'KJA 118 XZ', rating: '4.7' },
+    car:  { name: 'Ngozi Adeyemi', initials: 'NA', vehicle: 'Toyota Corolla', plate: 'ABJ 334 KD', rating: '4.9' },
+    van:  { name: 'Emeka Okafor', initials: 'EO', vehicle: 'Toyota Hiace', plate: 'LSD 482 XA', rating: '4.9' },
+  };
+  let quoteKm = 0;
+  $('getQuoteBtn').addEventListener('click', () => {
+    const opt = $('dropSelect').selectedOptions[0];
+    const km = Number(opt.dataset.km);
+    quoteKm = km;
+    const prices = priceFor(km);
+    $('quotePickup').textContent = $('pickupInput').value;
+    $('quoteDrop').textContent = opt.value;
+    $('quoteEta').textContent = opt.dataset.eta;
+    $('quoteDistance').textContent = Math.round(km) + ' km';
+    document.querySelectorAll('.courierCard').forEach(card => {
+      const base = card.dataset.tierBase;
+      card.querySelector('.tprice').textContent = naira(prices[base]);
+      card.querySelector('.pricebreak').textContent = prices.breakdown[base];
+    });
+    goTo('c-quote');
+  });
+  document.querySelectorAll('.book-courier').forEach(btn => btn.addEventListener('click', () => {
+    const base = btn.dataset.tierBase;
+    const info = COURIER_INFO[base];
+    document.querySelectorAll('.trackDriverAvatar').forEach(el => el.textContent = info.initials);
+    document.querySelectorAll('.trackDriverName').forEach(el => el.textContent = info.name);
+    document.querySelectorAll('.trackDriverMeta').forEach(el => el.textContent = 'Your driver, ' + info.rating + ' rating');
+    document.querySelectorAll('.trackDriverPlate').forEach(el => el.textContent = info.vehicle + ' · ' + info.plate);
+    idx = 2; customerReviewed = false;
+    $('cReviewCard').classList.remove('confirmed');
+    $('cReviewCard').innerHTML = cReviewDefaultHTML;
+    goTo('c-track'); renderAllTrackers();
+  }));
+
+  /* ================= Shared route map (built once, cloned into customer + receiver slots) ================= */
+  function buildMapSVG() {
+    return `<svg viewBox="0 0 400 260" preserveAspectRatio="xMidYMid slice" aria-label="Map of the route from Lagos to Ibadan">
+      <defs><pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M24 0H0V24" fill="none" stroke="#D7E3DA" stroke-width="1"/></pattern></defs>
+      <rect width="400" height="260" fill="#E4EEE6"/><rect width="400" height="260" fill="url(#grid)"/>
+      <path d="M0 190 C60 182 110 206 170 216 C230 226 300 230 400 226 L400 260 L0 260Z" fill="#BFDDE6"/>
+      <path d="M230 24 C290 16 350 40 380 78 C360 112 300 100 262 80 C236 68 218 46 230 24Z" fill="#CFE6D2"/>
+      <path d="M20 78 C70 60 120 72 150 102 C120 130 60 130 24 112Z" fill="#D2E8D5"/>
+      <path class="rp" d="M64 196 C96 168 118 150 150 142 C186 132 206 116 236 98 C270 78 306 56 340 38" fill="none" stroke="#fff" stroke-width="11" stroke-linecap="round"/>
+      <path d="M64 196 C96 168 118 150 150 142 C186 132 206 116 236 98 C270 78 306 56 340 38" fill="none" stroke="#C4CDBF" stroke-width="6.5" stroke-linecap="round"/>
+      <path class="rd" d="M64 196 C96 168 118 150 150 142 C186 132 206 116 236 98 C270 78 306 56 340 38" fill="none" stroke="#0E7A3D" stroke-width="6.5" stroke-linecap="round" stroke-dasharray="0 1000"/>
+      <g class="dots"></g>
+      <text x="30" y="216" font-family="Bricolage Grotesque, sans-serif" font-weight="800" font-size="14" fill="#142019">Lagos</text>
+      <text class="mapDestLabel" x="312" y="30" font-family="Bricolage Grotesque, sans-serif" font-weight="800" font-size="14" fill="#142019">Ibadan</text>
+      <g class="van" transform="translate(64 196)">
+        <circle r="19" fill="#0E7A3D" opacity=".22"><animate attributeName="r" values="15;24;15" dur="2s" repeatCount="indefinite"/></circle>
+        <circle r="14" fill="#0B3B22"/>
+        <g transform="translate(-8 -7) scale(.7)" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6h11v10H2zM13 10h4l4 3v3h-8"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></g>
+      </g>
+    </svg>`;
+  }
+  $('mapSvgSlot-c').innerHTML = buildMapSVG();
+  $('mapSvgSlot-r').innerHTML = buildMapSVG();
+
+  const stops = [
+    { name: 'Picked up in Ikeja',   sub: 'Checked and photographed', km: 118, t: 0.00 },
+    { name: 'Ojota Motor Park',     sub: 'Loaded onto the Ibadan van', km: 104, t: 0.22 },
+    { name: 'Sagamu Interchange',   sub: 'Ogun State', km: 62,  t: 0.48 },
+    { name: 'Ogere Toll',           sub: 'Ogun State', km: 38,  t: 0.70 },
+    { name: 'Ibadan Entrance',      sub: 'Oyo State', km: 12,  t: 0.90 },
+    { name: 'Delivered to Tunde',   sub: 'Bodija, Ibadan', km: 0,   t: 1.00 }
+  ];
+  let idx = 2;
+
+  function setupDots(container) {
+    try {
+      const path = container.querySelector('.rp');
+      const total = path.getTotalLength();
+      if (!total) return null;
+      const g = container.querySelector('.dots');
+      g.innerHTML = '';
+      stops.forEach((s, i) => {
+        const p = path.getPointAtLength(total * s.t);
+        const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+        c.setAttribute('cx', p.x); c.setAttribute('cy', p.y); c.setAttribute('r', 5);
+        c.setAttribute('fill', '#fff'); c.setAttribute('stroke', '#0B3B22'); c.setAttribute('stroke-width', '2.4');
+        c.dataset.i = i;
+        g.appendChild(c);
+      });
+      return { path, total };
+    } catch (e) { return null; } // screen not visible yet — try again next render, never crash the page
+  }
+  let mapState = { c: null, r: null };
+  function ensureMapState(key) {
+    if (!mapState[key]) mapState[key] = setupDots(key === 'c' ? $('mapSvgSlot-c') : $('mapSvgSlot-r'));
+    return mapState[key];
+  }
+
+  function renderMap(key) {
+    const state = ensureMapState(key);
+    if (!state) return;
+    const container = key === 'c' ? $('mapSvgSlot-c') : $('mapSvgSlot-r');
+    const s = stops[idx];
+    const len = state.total * s.t;
+    container.querySelector('.rd').setAttribute('stroke-dasharray', len + ' ' + (state.total + 10));
+    const p = state.path.getPointAtLength(len);
+    container.querySelector('.van').setAttribute('transform', `translate(${p.x} ${p.y})`);
+    container.querySelectorAll('.dots circle').forEach(c => c.setAttribute('fill', Number(c.dataset.i) <= idx ? '#0E7A3D' : '#fff'));
+  }
+
+  function renderAllTrackers() {
+    const s = stops[idx];
+    const last = idx === stops.length - 1;
+    const near = idx === stops.length - 2;
+
+    document.querySelectorAll('.tChip').forEach(el => { el.textContent = last ? 'Delivered' : near ? 'Almost there' : 'In transit'; el.className = 'chip tChip' + (last ? ' done' : ''); });
+    document.querySelectorAll('.mapBadgeTxt').forEach(el => el.textContent = last ? 'Delivered' : 'Live');
+    document.querySelectorAll('.tHead').forEach(el => el.textContent = last ? 'Parcel delivered' : near ? 'Driver is near you' : 'Your parcel is on the way');
+    document.querySelectorAll('.tSub').forEach(el => el.textContent = last ? 'Confirmed with code 4729. Ade Stores has been told.' : near ? 'Have your delivery code ready.' : 'Delivery #LIB-20481, to Tunde Bello.');
+    document.querySelectorAll('.eta').forEach(el => el.textContent = last ? '3:38 pm' : '3:40 pm');
+    document.querySelectorAll('.km').forEach(el => el.textContent = s.km + ' km');
+
+    const tlHTML = stops.map((st, i) => {
+      const cls = i < idx || (last && i === idx) ? 'done' : i === idx ? 'now' : 'todo';
+      return `<div class="tl ${cls}"><span class="d"></span><b>${st.name}</b><span>${cls === 'now' ? 'The parcel is here now' : st.sub}</span></div>`;
+    }).join('');
+    document.querySelectorAll('.timelineC').forEach(el => el.innerHTML = tlHTML);
+
+    document.querySelectorAll('.simBtnC').forEach(el => { el.disabled = last; el.textContent = last ? 'Delivery complete' : 'Move parcel to next stop'; });
+
+    if (last && !deliveryConfirmed) { $('pincardBox').hidden = true; $('matchCard').hidden = false; }
+    if (!last) { $('pincardBox').hidden = false; $('matchCard').hidden = true; }
+    $('cDoneCard').hidden = !last;
+    if ($('escrowCard')) $('escrowCard').hidden = last;
+
+    renderMap('c');
+    renderMap('r');
+  }
+  document.querySelectorAll('.simBtnC').forEach(el => el.addEventListener('click', () => { if (idx < stops.length - 1) { idx++; renderAllTrackers(); } }));
+  document.querySelectorAll('.callBtn').forEach(el => el.addEventListener('click', () => alert('Prototype: this calls the driver through the app, so phone numbers stay private.')));
+
+  /* ================= Shared review modal: used by both the receiver (mark as received) and the customer (leave a review) ================= */
+  let deliveryConfirmed = false;      // receiver: has the parcel been confirmed received + reviewed
+  let customerReviewed = false;       // customer: has a review already been submitted this delivery
+  let reviewContext = 'receiver';     // which flow opened the modal: 'receiver' or 'customer'
+
+  function openReviewModal(context) {
+    reviewContext = context;
+    document.querySelectorAll('.rateRow').forEach(row => {
+      row.dataset.value = '0';
+      row.querySelectorAll('button').forEach(b => { b.classList.remove('lit'); b.setAttribute('aria-pressed', 'false'); });
+    });
+    $('reviewComment').value = '';
+    $('submitReview').disabled = true;
+    $('reviewOverlay').classList.add('open');
+  }
+  // Delegated on document because matchCard's innerHTML gets reset each time the receiver re-tracks,
+  // which would otherwise silently detach a listener bound directly to the button.
+  document.addEventListener('click', e => {
+    if (e.target.closest('#markCompleteBtn')) openReviewModal('receiver');
+    if (e.target.closest('#openCustomerReview')) openReviewModal('customer');
+  });
+  function ratingsComplete() {
+    return [...document.querySelectorAll('.rateRow')].every(row => Number(row.dataset.value) > 0);
+  }
+  document.querySelectorAll('.rateRow').forEach(row => {
+    row.querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => {
+      const val = Number(btn.dataset.star);
+      row.dataset.value = String(val);
+      row.querySelectorAll('button').forEach(b => {
+        const lit = Number(b.dataset.star) <= val;
+        b.classList.toggle('lit', lit);
+        b.setAttribute('aria-pressed', String(lit));
+      });
+      $('submitReview').disabled = !ratingsComplete();
+    }));
+  });
+  $('closeReview').addEventListener('click', () => $('reviewOverlay').classList.remove('open'));
+  $('reviewOverlay').addEventListener('click', e => { if (e.target === $('reviewOverlay')) $('reviewOverlay').classList.remove('open'); });
+  $('submitReview').addEventListener('click', () => {
+    const driverStars = document.querySelector('.rateRow[data-group="driver"]').dataset.value;
+    const appStars = document.querySelector('.rateRow[data-group="app"]').dataset.value;
+    $('reviewOverlay').classList.remove('open');
+    if (reviewContext === 'receiver') {
+      deliveryConfirmed = true;
+      $('matchCard').innerHTML = `<svg class="ic"><use href="#i-check"/></svg><h3>Marked as received</h3><p>Thanks for rating Emeka Okafor ${driverStars}★ and SwiftDrop ${appStars}★.</p>`;
+      $('matchCard').classList.add('confirmed');
+    } else {
+      customerReviewed = true;
+      $('cReviewCard').innerHTML = `<svg class="ic"><use href="#i-check"/></svg><h3>Thanks for your review</h3><p>You rated Emeka Okafor ${driverStars}★ and SwiftDrop ${appStars}★.</p>`;
+      $('cReviewCard').classList.add('confirmed');
+    }
+  });
+
+  /* ================= Receiver entry ================= */
+  const matchCardDefaultHTML = $('matchCard').innerHTML;
+  $('trackBtn').addEventListener('click', () => {
+    idx = 2; deliveryConfirmed = false;
+    $('matchCard').classList.remove('confirmed');
+    $('matchCard').innerHTML = matchCardDefaultHTML;
+    goTo('r-track'); renderAllTrackers();
+  });
+
+  /* ================= Customer: leave a review once delivered ================= */
+  const cReviewDefaultHTML = $('cReviewCard').innerHTML;
+  $('goReviewFromTrack').addEventListener('click', () => goTo('c-done'));
+
+  /* ================= Driver app: splash, login, registration, profile ================= */
+  $('toRegister').addEventListener('click', () => goTo('d-register'));
+  $('toLogin').addEventListener('click', () => goTo('d-login'));
+  // Logging in takes the driver straight to their profile, per how the app should greet a returning driver.
+  $('loginBtn').addEventListener('click', () => { driverVerified = true; $('dtopBar').style.display = 'flex'; setOnline(true); goTo('d-profile'); stacks.driver = ['d-profile']; });
+  document.querySelectorAll('[data-up]').forEach(u => u.addEventListener('click', () => {
+    const done = u.getAttribute('aria-pressed') === 'true';
+    u.setAttribute('aria-pressed', String(!done));
+    u.querySelector('.stat2').textContent = done ? 'Upload' : 'Uploaded';
+  }));
+  $('submitAppBtn').addEventListener('click', () => { driverVerified = true; goTo('d-submitted'); });
+  // A freshly-approved driver also lands on their profile first, then chooses to go to the dashboard.
+  $('toProfileFromSubmit').addEventListener('click', () => goTo('d-state-select'));
+  $('confirmDriverState').addEventListener('click', () => {
+    applyStateEverywhere($('onboardStateDriver').value);
+    $('dtopBar').style.display = 'flex'; setOnline(true); goTo('d-profile'); stacks.driver = ['d-profile'];
+  });
+  $('toDashFromProfile').addEventListener('click', () => { goTo('d-home'); stacks.driver = ['d-home']; });
+  $('profileBtn').addEventListener('click', () => goTo('d-profile'));
+  function driverLogout() { clearInterval(driverTripTimer); $('dtopBar').style.display = 'none'; setOnline(false); goTo('d-splash', false); stacks.driver = ['d-splash']; }
+  $('driverLogoutBtn').addEventListener('click', driverLogout);
+  $('driverLogoutBtn2').addEventListener('click', driverLogout);
+
+  /* ================= Driver: available orders board ================= */
+  let acceptedOrder = { pay: 2700, recv: 'Tunde Bello', sender: 'Ade Stores', pickup: '12 Allen Avenue, Ikeja', deliver: '5 Bodija Market Road, Ibadan', parcel: '1 sealed bag, under 2 kg' };
+  function applyAcceptedOrder(data) {
+    acceptedOrder = { pay: Number(data.pay), recv: data.recv, sender: data.sender, pickup: data.pickup, deliver: data.deliver, parcel: data.parcel };
+    const destCity = acceptedOrder.deliver.split(',').pop().trim();
+    $('pickupAddr').textContent = acceptedOrder.pickup;
+    $('pickupParcel').textContent = acceptedOrder.parcel + '. Sender: ' + acceptedOrder.sender + '.';
+    $('deliverRecv').textContent = acceptedOrder.recv;
+    $('startBtn').textContent = 'Start trip to ' + destCity;
+    document.querySelectorAll('.mapDestLabel').forEach(el => el.textContent = destCity);
+    const sameCity = data.otype === 'city';
+    dStops = sameCity
+      ? [acceptedOrder.pickup.split(',')[0], 'Crossing town', destCity]
+      : ['Ikeja', 'Ojota Motor Park', 'Interstate expressway', destCity + ' Entrance'];
+    dDestCity = destCity;
+    resetChecks();
+    goTo('d-pickup');
+  }
+  document.querySelectorAll('.order-accept').forEach(btn => btn.addEventListener('click', () => applyAcceptedOrder(btn.dataset)));
+  document.querySelectorAll('[data-ofilter]').forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-ofilter]').forEach(b => b.setAttribute('aria-pressed', 'false'));
+    btn.setAttribute('aria-pressed', 'true');
+    refreshOrderVisibility();
+  }));
+
+  let weekTotal = 46500, todayTotal = 0, availableBalance = 0, offerTimer = null, driverVerified = false;
+  function setOnline(on) {
+    $('onlineLabel').textContent = on ? 'Online' : 'Offline';
+    $('statusDot').classList.toggle('on', on);
+    clearTimeout(offerTimer);
+    $('offer').hidden = true;
+    $('emptyBox').style.display = 'block';
+    if (on) {
+      $('dHead').textContent = 'Looking for jobs';
+      $('dLead').textContent = 'Stay on this screen. A job will appear shortly.';
+      $('emptyTxt').textContent = 'No job yet. We will alert you as soon as one is near you.';
+      offerTimer = setTimeout(() => {
+        $('emptyBox').style.display = 'none';
+        $('offer').hidden = false;
+        $('dHead').textContent = 'New job for you';
+        $('dLead').textContent = 'Read the details, then accept or decline.';
+      }, 1600);
+    } else {
+      $('dHead').textContent = 'You are offline';
+      $('dLead').textContent = 'Go online to receive jobs, same city or interstate.';
+      $('emptyTxt').textContent = 'Turn the switch above to online. New jobs appear here.';
+    }
+  }
+  $('declineBtn').addEventListener('click', () => setOnline(true));
+  $('acceptBtn').addEventListener('click', () => applyAcceptedOrder($('offer').dataset));
+
+  const checks = document.querySelectorAll('.check');
+  function allChecked() { return [...checks].every(x => x.getAttribute('aria-pressed') === 'true'); }
+  function resetChecks() {
+    checks.forEach(c => c.setAttribute('aria-pressed','false'));
+    $('startBtn').disabled = true;
+    pickupPhotoData = null;
+    $('pickupPhotoPreview').style.display = 'none';
+    $('uploadPhotoBtn').textContent = 'Upload';
+    updatePhotoDisplays();
+  }
+  document.querySelectorAll('.check:not(#photoCheck)').forEach(c => c.addEventListener('click', () => {
+    c.setAttribute('aria-pressed', String(c.getAttribute('aria-pressed') !== 'true'));
+    $('startBtn').disabled = !allChecked();
+  }));
+
+  /* Pickup photo: a real upload, shown to the driver here and shared with sender + receiver */
+  let pickupPhotoData = null;
+  function updatePhotoDisplays() {
+    document.querySelectorAll('.pickupPhotoShared').forEach(img => {
+      if (pickupPhotoData) { img.src = pickupPhotoData; img.closest('.photoShareCard').hidden = false; }
+      else { img.closest('.photoShareCard').hidden = true; }
+    });
+  }
+  $('uploadPhotoBtn').addEventListener('click', () => $('pickupPhotoInput').click());
+  $('pickupPhotoInput').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      pickupPhotoData = reader.result;
+      $('pickupPhotoPreview').src = pickupPhotoData;
+      $('pickupPhotoPreview').style.display = 'block';
+      $('uploadPhotoBtn').textContent = 'Uploaded';
+      $('photoCheck').setAttribute('aria-pressed', 'true');
+      $('startBtn').disabled = !allChecked();
+      updatePhotoDisplays();
+    };
+    reader.readAsDataURL(file);
+  });
+
+  let dIdx = 0;
+  let dStops = ['Ikeja', 'Ojota Motor Park', 'Sagamu Interchange', 'Ogere Toll', 'Ibadan Entrance'];
+  let dDestCity = 'Ibadan';
+  let driverTripTimer = null;
+  function renderDriverTrip() {
+    $('place').textContent = dStops[dIdx];
+    const last = dIdx === dStops.length - 1;
+    $('nextLine').innerHTML = last ? `Next: <b>Deliver to ${acceptedOrder.recv}</b>` : 'Next: <b>' + dStops[dIdx + 1] + '</b>';
+    $('bar').style.width = ((dIdx / (dStops.length - 1)) * 100) + '%';
+    $('arriveBtn').textContent = last ? 'Skip to arrival (prototype)' : 'Skip to next stop (prototype)';
+    idx = dIdx; renderAllTrackers();
+  }
+  function advanceDriverTrip() {
+    if (dIdx < dStops.length - 1) { dIdx++; renderDriverTrip(); }
+    else {
+      clearInterval(driverTripTimer);
+      resetCode(); goTo('d-deliver'); $('codeRow').querySelector('input').focus();
+    }
+  }
+  function startDriverTripAuto() {
+    clearInterval(driverTripTimer);
+    // Simulates real GPS progress — in the live app this is driven by the driver's actual location, no tapping required.
+    driverTripTimer = setInterval(advanceDriverTrip, 4000);
+  }
+  $('startBtn').addEventListener('click', () => { dIdx = 0; renderDriverTrip(); goTo('d-trip'); startDriverTripAuto(); });
+  $('arriveBtn').addEventListener('click', advanceDriverTrip);
+  $('problemBtn').addEventListener('click', () => alert('Prototype: this alerts dispatch and shows a "Delayed" status with the reason.'));
+
+  const inputs = [...$('codeRow').querySelectorAll('input')];
+  function resetCode() { inputs.forEach(i => i.value=''); $('codeRow').classList.remove('bad'); $('codeMsg').textContent=''; $('codeMsg').className='msg'; }
+  inputs.forEach((inp, i) => {
+    inp.addEventListener('input', () => { inp.value = inp.value.replace(/\D/g,'').slice(0,1); if (inp.value && inputs[i+1]) inputs[i+1].focus(); });
+    inp.addEventListener('keydown', e => { if (e.key === 'Backspace' && !inp.value && inputs[i-1]) inputs[i-1].focus(); });
+  });
+  function badCode(text) { $('codeRow').classList.add('bad'); $('codeMsg').className='msg bad'; $('codeMsg').textContent=text; }
+  $('confirmBtn').addEventListener('click', () => {
+    const v = inputs.map(i => i.value).join('');
+    if (v.length < 4) return badCode('Enter all 4 digits. Ask the receiver to read the code from their phone.');
+    if (v !== '4729') return badCode('That code is wrong. Do not hand over the parcel. Ask the receiver to check the SwiftDrop app or their email.');
+    todayTotal += acceptedOrder.pay; weekTotal += acceptedOrder.pay; availableBalance += acceptedOrder.pay;
+    $('today').textContent = naira(todayTotal); $('week').textContent = naira(weekTotal);
+    $('today2').textContent = naira(todayTotal); $('week2').textContent = naira(weekTotal);
+    $('availBal').textContent = naira(availableBalance); $('availBal2').textContent = naira(availableBalance);
+    $('doneRecv').textContent = acceptedOrder.recv; $('doneSender').textContent = acceptedOrder.sender; $('doneEarn').textContent = naira(acceptedOrder.pay);
+    idx = stops.length - 1; renderAllTrackers();
+    goTo('d-done');
+  });
+  $('againBtn').addEventListener('click', () => { goTo('d-home', false); stacks.driver = ['d-home']; setOnline(true); });
+
+  /* ================= Settings: state, language, appearance ================= */
+  const i18n = {
+    en: { tab_customer:'Customer', tab_driver:'Driver', tab_receiver:'Receiver',
+      tag_customer:'Send. Track. Receive.', tag_driver:'Drive. Deliver. Earn.',
+      btn_get_started:'Get started', link_already_account:'Already have an account? Log in', link_already_driver:'Already a driver? Log in',
+      recv_title:'Track your delivery', recv_lead:'Enter the tracking code from the SwiftDrop app or your email notification.', btn_track:'Track',
+      settings_title:'Settings', settings_lead:'These apply across the customer, driver and receiver apps.',
+      settings_state:'Your state', settings_language:'Language', settings_appearance:'Appearance', settings_light:'Light', settings_dark:'Dark', settings_save:'Save',
+      tabHome:'Home', tabDeliveries:'Deliveries', tabWallet:'Wallet', tabProfile:'Profile', tabDashboard:'Dashboard', tabOrders:'Orders', tabEarnings:'Earnings' },
+    pcm: { tab_customer:'Customer', tab_driver:'Driver', tab_receiver:'Receiver',
+      tag_customer:'Send am. Track am. Get am.', tag_driver:'Drive. Deliver. Make money.',
+      btn_get_started:'Start now', link_already_account:'You get account already? Log in', link_already_driver:'You be driver already? Log in',
+      recv_title:'Track your package', recv_lead:'Put the tracking code wey dey inside SwiftDrop app or your email.', btn_track:'Track am',
+      settings_title:'Settings', settings_lead:'Dis one dey work for customer, driver and receiver app.',
+      settings_state:'Your state', settings_language:'Language', settings_appearance:'How e go show', settings_light:'Bright', settings_dark:'Dark', settings_save:'Save am',
+      tabHome:'Home', tabDeliveries:'Deliveries', tabWallet:'Wallet', tabProfile:'Profile', tabDashboard:'Dashboard', tabOrders:'Orders', tabEarnings:'Earnings' },
+    yo: { tab_customer:'Onibara', tab_driver:'Awakọ̀', tab_receiver:'Olugba',
+      tag_customer:'Fi ránṣẹ́. Tọpa. Gbà.', tag_driver:'Wakọ. Fi ránṣẹ́. Jèrè.',
+      btn_get_started:'Bẹ̀rẹ̀', link_already_account:'Ṣé o ti ní àkọọ́lẹ̀? Wọlé', link_already_driver:'Ṣé o ti jẹ́ awakọ̀? Wọlé',
+      recv_title:'Tọpa ìfijiṣẹ́ rẹ', recv_lead:'Tẹ àmì ìtọpa tí ó wà nínú app SwiftDrop tàbí ìmọ̀ràn ímeèlì rẹ sí.', btn_track:'Tọpa',
+      settings_title:'Ètò', settings_lead:'Àwọn ètò yìí ń ṣiṣẹ́ fún gbogbo ẹ̀yà: onibara, awakọ̀ àti olugba.',
+      settings_state:'Ìpínlẹ̀ rẹ', settings_language:'Èdè', settings_appearance:'Ìrísí', settings_light:'Ìmọ́lẹ̀', settings_dark:'Òkùnkùn', settings_save:'Fi pamọ́',
+      tabHome:'Ilé', tabDeliveries:'Ìfijiṣẹ́', tabWallet:'Àpamọ́wọ́', tabProfile:'Profaili', tabDashboard:'Pátákò', tabOrders:'Àwọn Ọ̀tẹ̀lẹ̀', tabEarnings:'Owó Iṣẹ́' }
+  };
+  function setLabel(el, text) {
+    if (!el) return;
+    const svg = el.querySelector('svg');
+    el.textContent = text;
+    if (svg) el.prepend(svg);
+  }
+  function applyLanguage(lang) {
+    const dict = i18n[lang] || i18n.en; // Hausa/Igbo fall back to English until translated
+    document.querySelectorAll('[data-i18n]').forEach(el => { const k = el.dataset.i18n; if (dict[k]) el.textContent = dict[k]; });
+    [['c-home','tabHome'],['c-deliveries','tabDeliveries'],['c-wallet','tabWallet'],['c-profile','tabProfile']].forEach(([sel,key]) => {
+      document.querySelectorAll(`[data-tab="${sel}"]`).forEach(el => setLabel(el, dict[key]));
+    });
+    [['d-home','tabDashboard'],['d-orders','tabOrders'],['d-earnings','tabEarnings'],['d-profile2','tabProfile']].forEach(([sel,key]) => {
+      document.querySelectorAll(`[data-dtab="${sel}"]`).forEach(el => setLabel(el, dict[key]));
+    });
+  }
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    document.querySelectorAll('[data-theme-choice]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeChoice === theme)));
+  }
+  function applyState(state) {
+    document.querySelectorAll('.stateLabel').forEach(el => el.textContent = state);
+  }
+  function refreshSummary() {
+    $('settingsSummary').textContent = `Showing ${prefs.state} orders, in ${$('langSelect').selectedOptions[0].textContent}, ${prefs.theme} mode.`;
+  }
+  $('openSettings').addEventListener('click', () => { $('settingsOverlay').classList.add('open'); refreshSummary(); });
+  $('closeSettings').addEventListener('click', () => $('settingsOverlay').classList.remove('open'));
+  $('settingsOverlay').addEventListener('click', e => { if (e.target === $('settingsOverlay')) $('settingsOverlay').classList.remove('open'); });
+  document.querySelectorAll('[data-theme-choice]').forEach(b => b.addEventListener('click', () => { prefs.theme = b.dataset.themeChoice; applyTheme(prefs.theme); refreshSummary(); }));
+  $('stateSelect').addEventListener('change', () => { applyStateEverywhere($('stateSelect').value); refreshSummary(); });
+  $('langSelect').addEventListener('change', () => { prefs.lang = $('langSelect').value; applyLanguage(prefs.lang); refreshSummary(); });
+  $('saveSettings').addEventListener('click', () => $('settingsOverlay').classList.remove('open'));
+
+  /* ================= Driver: instant withdrawal of escrow-released balance ================= */
+  function openWithdraw() {
+    $('withdrawAmount').textContent = naira(availableBalance);
+    $('withdrawNote').textContent = '';
+    $('withdrawOverlay').classList.add('open');
+  }
+  $('withdrawBtnHome').addEventListener('click', openWithdraw);
+  $('withdrawBtnEarnings').addEventListener('click', openWithdraw);
+  $('closeWithdraw').addEventListener('click', () => $('withdrawOverlay').classList.remove('open'));
+  $('withdrawOverlay').addEventListener('click', e => { if (e.target === $('withdrawOverlay')) $('withdrawOverlay').classList.remove('open'); });
+  $('confirmWithdraw').addEventListener('click', () => {
+    if (availableBalance <= 0) { $('withdrawNote').textContent = 'No available balance to withdraw yet — this fills up as soon as a delivery is confirmed.'; return; }
+    const sent = availableBalance;
+    availableBalance = 0;
+    $('availBal').textContent = naira(availableBalance);
+    $('availBal2').textContent = naira(availableBalance);
+    $('withdrawAmount').textContent = naira(availableBalance);
+    $('withdrawNote').textContent = `${naira(sent)} sent to GTBank ••••4821 — usually arrives within minutes, same day.`;
+  });
+
+  updatePickupDefault();
+  refreshOrderVisibility();
+  renderAllTrackers();
+</script>
+</body>
+</html>
