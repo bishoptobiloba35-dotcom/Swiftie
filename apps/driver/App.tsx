@@ -282,6 +282,7 @@ export default function App() {
       if (!response.ok || data.user?.role !== "DRIVER") throw new Error(data.error ?? "Driver sign in failed");
       await AsyncStorage.setItem("swiftdrop.driverAccessToken", data.accessToken);
       setSignedIn(true);
+      void registerPushNotifications();
     } catch (error) {
       Alert.alert("Sign in failed", error instanceof Error ? error.message : "Unable to sign in");
     }
@@ -305,6 +306,7 @@ export default function App() {
       await AsyncStorage.setItem("swiftdrop.driverAccessToken", data.accessToken);
       await AsyncStorage.setItem("swiftdrop.driverId", data.user.id);
       setSignedIn(true);
+      void registerPushNotifications();
     } catch (error) {
       Alert.alert("Registration failed", error instanceof Error ? error.message : "Unable to register");
     }
