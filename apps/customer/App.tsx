@@ -34,6 +34,7 @@ export default function App() {
   const [quote, setQuote] = React.useState<Awaited<ReturnType<typeof api.quote>> | null>(null);
   const [delivery, setDelivery] = React.useState<ApiDelivery | null>(null);
   const [trackingCode, setTrackingCode] = React.useState("");
+  const [trackingPhone, setTrackingPhone] = React.useState("");
   const [location, setLocation] = React.useState<ApiDelivery["latestLocation"]>(null);
   const [ratingStars, setRatingStars] = React.useState(0);
   const [ratingComment, setRatingComment] = React.useState("");
@@ -183,10 +184,11 @@ export default function App() {
   async function track() {
     try {
       socketRef.current?.close();
-      const tracked = await api.track(trackingCode.trim().toUpperCase());
+      if (!trackingPhone.trim()) throw new Error("Enter the receiver phone number used for this delivery.");
+      const tracked = await api.track(trackingCode.trim().toUpperCase(), trackingPhone.trim());
       setDelivery(tracked);
       setLocation(tracked.latestLocation ?? null);
-      const session = await api.createTrackingSession(tracked.trackingCode);
+      const session = await api.createTrackingSession(tracked.trackingCode, trackingPhone.trim());
       socketRef.current = api.connectToTracking(session.deliveryId, session.trackingToken, next => setLocation(next), update => setDelivery(prev => prev ? { ...prev, ...update } : prev));
     } catch (error) {
       Alert.alert("Tracking failed", error instanceof Error ? error.message : "Tracking code not found.");
@@ -253,6 +255,7 @@ export default function App() {
     <View style={styles.divider} />
     <Text style={styles.heading}>Track a parcel</Text>
     <TextInput style={styles.input} placeholder="Enter tracking code" value={trackingCode} onChangeText={setTrackingCode} autoCapitalize="characters" />
+    <TextInput style={styles.input} placeholder="Receiver phone number" value={trackingPhone} onChangeText={setTrackingPhone} keyboardType="phone-pad" />
     <Pressable style={styles.secondary} onPress={() => void track()}><Text style={styles.secondaryText}>Track delivery</Text></Pressable>
     {delivery && <View style={styles.card}>
       <Text style={styles.heading}>Live delivery tracking</Text>
