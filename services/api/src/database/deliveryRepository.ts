@@ -387,7 +387,7 @@ export async function updatePayoutProviderStatus(
          processed_at=CASE WHEN $2 IN ('RELEASED','FAILED','CANCELLED') THEN COALESCE(processed_at, now()) ELSE processed_at END,
          updated_at=now()
      WHERE provider_reference=$1
-       AND status IN ('PROCESSING','ELIGIBLE','RELEASED')
+       AND (status IN ('PROCESSING','ELIGIBLE') OR ($2='RELEASED' AND status='RELEASED'))
      RETURNING *`,
     [providerReference, status, status === "RELEASED" ? "success" : status === "CANCELLED" ? "reversed" : "failed", failureReason ?? null]
   );
