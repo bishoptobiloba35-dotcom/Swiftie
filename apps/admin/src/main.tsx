@@ -12,7 +12,9 @@ function App(){
  const [token,setToken]=React.useState(localStorage.getItem("swiftdrop.adminToken")??"");
  const [phone,setPhone]=React.useState(""); const [password,setPassword]=React.useState("");
  const [metrics,setMetrics]=React.useState<Metrics|null>(null); const [drivers,setDrivers]=React.useState<Driver[]>([]);
- const [disputes,setDisputes]=React.useState<Dispute[]>([]);\n const [documents,setDocuments]=React.useState<any[]>([]);\n const [payouts,setPayouts]=React.useState<any[]>([]);\n const [deliveries,setDeliveries]=React.useState<any[]>([]); const [error,setError]=React.useState("");
+ const [disputes,setDisputes]=React.useState<Dispute[]>([]);
+ const [documents,setDocuments]=React.useState<any[]>([]);
+ const [payouts,setPayouts]=React.useState<any[]>([]);\n const [deliveries,setDeliveries]=React.useState<any[]>([]); const [error,setError]=React.useState("");
  const call=async(path:string,init:RequestInit={})=>{const res=await fetch(API_URL+path,{...init,headers:{"content-type":"application/json",...(token?{authorization:"Bearer "+token}:{}),...(init.headers||{})}}); const data=await res.json(); if(!res.ok) throw new Error(data.error??"Request failed"); return data;};
  async function login(){try{const d=await call("/api/auth/login",{method:"POST",body:JSON.stringify({phone,password})});if(d.user?.role!=="ADMIN")throw new Error("This account is not an admin account.");localStorage.setItem("swiftdrop.adminToken",d.accessToken);setToken(d.accessToken);setError("");}catch(e){setError(e instanceof Error?e.message:"Login failed");}}
  async function refresh(){try{const [m,d,ds,dl,p]=await Promise.all([call("/api/admin/operations"),call("/api/admin/drivers"),call("/api/admin/disputes"),call("/api/admin/deliveries?limit=50"),call("/api/admin/payouts")]);setMetrics(m.metrics??m);setDrivers(d.drivers??d);setDisputes(ds.disputes??ds);setDeliveries(dl.deliveries??[]);setPayouts(p.payouts??[]);setError("");}catch(e){setError(e instanceof Error?e.message:"Unable to load admin data");}}
