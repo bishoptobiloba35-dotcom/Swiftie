@@ -48,6 +48,9 @@ export type CreateDeliveryInput = {
   receiverPin: string;
   receiverName: string;
   receiverPhone: string;
+  weightKg: number;
+  dimensionsCm: { length: number; width: number; height: number };
+  isPerishable: boolean;
   pickup: { label: string; formattedAddress: string; latitude: number; longitude: number };
   dropoff: { label: string; formattedAddress: string; latitude: number; longitude: number };
   quote: {
