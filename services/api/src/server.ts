@@ -100,6 +100,43 @@ app.get("/health", async (_req, res) => {
   res.json({ ok: true, service: "swiftdrop-api", database });
 });
 
+app.post("/api/deliveries/:id/rating", requireAuth(), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Ratings require the production database" });
+  const userId = identity(req);
+  const delivery = await findDeliveryForUser(req.params.id, userId, "CUSTOMER");
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  if (delivery.status !== "DELIVERED") return res.status(409).json({ error: "Only completed deliveries can be rated" });
+  if (!delivery.driverId) return res.status(409).json({ error: "Delivery has no driver to rate" });
+  const parsed = z.object({ stars: z.number().int().min(1).max(5), comment: z.string().max(500).optional() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const driver = await driverForUser(delivery.driverId);
+  if (!driver) return res.status(409).json({ error: "Driver profile not found" });
+  try {
+    const result = await pool!.query(
+      `INSERT INTO ratings (delivery_id, rater_user_id, rated_user_id, stars, comment)
+       VALUES ($1,$2,$3,$4,$5)
+       RETURNING id, delivery_id, rater_user_id, rated_user_id, stars, comment, created_at`,
+      [delivery.id, userId, driver.userId, parsed.data.stars, parsed.data.comment?.trim() || null]
+    );
+    return res.status(201).json({ rating: result.rows[0] });
+  } catch (error) {
+    if ((error as { code?: string })?.code === "23505") return res.status(409).json({ error: "This delivery has already been rated" });
+    return res.status(500).json({ error: "Unable to save rating" });
+  }
+});
+
+app.get("/api/drivers/:driverId/ratings", requireAuth(), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Ratings require the production database" });
+  const result = await pool!.query(
+    `SELECT stars, comment, created_at FROM ratings WHERE rated_user_id=$1 ORDER BY created_at DESC LIMIT 100`,
+    [req.params.driverId]
+  );
+  const average = result.rows.length
+    ? result.rows.reduce((sum: number, row: { stars: number }) => sum + Number(row.stars), 0) / result.rows.length
+    : null;
+  res.json({ average, count: result.rows.length, ratings: result.rows });
+});
+
 app.get("/api/notifications", requireAuth(), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Notifications require the production database" });
   const result = await pool!.query(
