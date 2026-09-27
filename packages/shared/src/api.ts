@@ -122,6 +122,23 @@ export class SwiftDropApi {
     if (!response.ok) throw new Error(data.error ?? "Unable to save rating");
   }
 
+  async confirmReceiver(deliveryId: string, receiverPhone: string, receiverPin: string): Promise<{ delivery: ApiDelivery; payoutAmountMinor: number; escrowStatus: string }> {
+    const response = await fetch(this.baseUrl + `/api/deliveries/${encodeURIComponent(deliveryId)}/receiver-confirm`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ receiverPhone, receiverPin })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to confirm receipt");
+    return data;
+  }
+
+  async rateReceiverDelivery(deliveryId: string, receiverPhone: string, receiverPin: string, stars: number, comment?: string): Promise<void> {
+    const response = await fetch(this.baseUrl + `/api/deliveries/${encodeURIComponent(deliveryId)}/rating/receiver`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ receiverPhone, receiverPin, stars, comment })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to save receiver rating");
+  }
+
   async rateSender(deliveryId: string, stars: number, comment?: string): Promise<void> {
     const response = await fetch(this.baseUrl + `/api/deliveries/${encodeURIComponent(deliveryId)}/rating/driver`, {
       method: "POST",
@@ -163,9 +180,13 @@ export class SwiftDropApi {
   async quote(input: {
     pickup: { latitude: number; longitude: number };
     dropoff: { latitude: number; longitude: number };
+    weightKg: number;
+    dimensionsCm: { length: number; width: number; height: number };
+    isPerishable: boolean;
   }): Promise<{
     currency: string; distanceMeters: number; durationSeconds: number;
-    baseFareMinor: number; distanceFareMinor: number; serviceFeeMinor: number; totalMinor: number;
+    baseFareMinor: number; distanceFareMinor: number; weightFareMinor: number; sizeFareMinor: number;
+    perishableSurchargeMinor: number; serviceFeeMinor: number; totalMinor: number;
   }> {
     const response = await fetch(this.baseUrl + "/api/quotes", {
       method: "POST",
