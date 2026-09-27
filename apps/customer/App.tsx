@@ -4,7 +4,7 @@ import * as WebBrowser from "expo-web-browser";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
-import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, ScrollView } from "react-native";
+import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, ScrollView, Platform } from "react-native";
 import { SwiftDropApi, type ApiDelivery } from "../../packages/shared/src/api";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -42,7 +42,7 @@ export default function App() {
       if (status !== "granted") return;
       const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
       const token = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
-      await api.registerDeviceToken(token.data, "IOS");
+      await api.registerDeviceToken(token.data, Platform.OS === "ios" ? "IOS" : "ANDROID");
     } catch {}
   }
 
