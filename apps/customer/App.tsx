@@ -6,6 +6,8 @@ import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
 import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, ScrollView, Platform } from "react-native";
 import { SwiftDropApi, type ApiDelivery } from "../../packages/shared/src/api";
+import { haversineDistanceMeters, etaMinutes } from "./src/trackingMath";
+import { haversineDistanceMeters, etaMinutes } from "./src/trackingMath";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 const api = new SwiftDropApi(API_URL);
@@ -240,7 +242,7 @@ export default function App() {
       <Text style={styles.status}>{delivery.status.replaceAll("_", " ")}</Text>
       <Text>Pickup: {delivery.pickup.formattedAddress}</Text>
       <Text>Drop-off: {delivery.dropoff.formattedAddress}</Text>
-      {location ? <View style={styles.locationBox}><Text style={styles.photoTitle}>Driver location</Text><Text>Latitude: {location.latitude.toFixed(6)}</Text><Text>Longitude: {location.longitude.toFixed(6)}</Text><Text style={styles.muted}>Updated: {new Date(location.recordedAt).toLocaleTimeString()}</Text></View> : <Text style={styles.muted}>Waiting for the driver to start the trip…</Text>}
+      {location ? <View style={styles.locationBox}><Text style={styles.photoTitle}>Live driver position</Text><Text>Latitude: {location.latitude.toFixed(6)}</Text><Text>Longitude: {location.longitude.toFixed(6)}</Text><Text style={styles.eta}>Approx. ETA: {etaMinutes(haversineDistanceMeters(location, delivery.dropoff))} min</Text><Text style={styles.muted}>Updated: {new Date(location.recordedAt).toLocaleTimeString()}</Text></View> : <Text style={styles.muted}>Waiting for the driver to start the trip…</Text>}
       {delivery.status === "DELIVERED" && <Text style={styles.done}>✓ Delivered and PIN verified</Text>}
     </View>}
   </ScrollView></SafeAreaView>;
@@ -273,6 +275,7 @@ const styles = StyleSheet.create({
   photoTitle: { fontWeight: "700" },
   muted: { color: "#666" },
   done: { fontSize: 17, fontWeight: "800", marginTop: 6 },
+  eta: { fontSize: 18, fontWeight: "800", marginTop: 6 },
   notification: { borderTopWidth: 1, borderTopColor: "#eee", paddingTop: 10, gap: 4 },
   notificationTitle: { fontWeight: "800" }
 });
