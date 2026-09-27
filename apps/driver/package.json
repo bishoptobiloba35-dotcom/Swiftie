@@ -17,6 +17,7 @@
     "react": "19.1.0",
     "react-native": "0.81.4",
     "expo-document-picker": "~13.0.3",
-    "expo-file-system": "~19.0.24"
+    "expo-file-system": "~19.0.24",
+    "expo-notifications": "~0.32.0"
   }
 }
