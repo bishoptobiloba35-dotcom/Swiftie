@@ -595,7 +595,7 @@ export async function saveDriverPayoutAccount(input: {
      RETURNING payout_bank_code AS "bankCode", payout_bank_name AS "bankName",
        payout_account_name AS "accountName", RIGHT(payout_account_number, 4) AS "accountLast4",
        payout_recipient_code AS "recipientCode", 'NGN' AS currency`,
-    [input.driverId, input.bankCode, input.bankName ?? null, input.accountNumber, input.accountName, input.recipientCode]
+    [input.driverId, input.bankCode, input.bankName ?? null, "*".repeat(6) + input.accountNumber.slice(-4), input.accountName, input.recipientCode]
   );
   return result.rows[0] ?? null;
 }
