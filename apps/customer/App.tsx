@@ -39,6 +39,7 @@ export default function App() {
   const [receiverRatingStars, setReceiverRatingStars] = React.useState(0);
   const [receiverRatingComment, setReceiverRatingComment] = React.useState("");
   const [receiverRatingSubmitted, setReceiverRatingSubmitted] = React.useState(false);
+  const [receiverMode, setReceiverMode] = React.useState(false);
   const [email, setEmail] = React.useState("");
   const [quote, setQuote] = React.useState<Awaited<ReturnType<typeof api.quote>> | null>(null);
   const [delivery, setDelivery] = React.useState<ApiDelivery | null>(null);
@@ -257,6 +258,37 @@ export default function App() {
     setDelivery(null);
   }
 
+  if (!signedIn && receiverMode) {
+    return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.auth}>
+      <Text style={styles.logo}>SwiftDrop Receiver</Text>
+      <Text style={styles.subtitle}>Confirm that you received the parcel. Your confirmation releases the courier's held payment.</Text>
+      <TextInput style={styles.input} placeholder="Tracking code" value={trackingCode} onChangeText={setTrackingCode} autoCapitalize="characters" />
+      <TextInput style={styles.input} placeholder="Receiver phone number" value={trackingPhone} onChangeText={setTrackingPhone} keyboardType="phone-pad" />
+      <TextInput style={styles.input} placeholder="Six-digit receiver PIN" value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} keyboardType="number-pad" secureTextEntry maxLength={6} />
+      <Pressable style={styles.primary} onPress={() => void (async () => {
+        try {
+          const tracked = await api.track(trackingCode.trim().toUpperCase(), trackingPhone.trim());
+          setDelivery(tracked);
+          if (tracked.status !== "ARRIVED") throw new Error("The courier has not marked the parcel as arrived yet.");
+          const result = await api.confirmReceiver(tracked.id, trackingPhone.trim(), receiverConfirmPin);
+          setDelivery(result.delivery);
+          Alert.alert("Delivery complete", "Receipt confirmed. Courier payment has been released for payout.");
+        } catch (error) {
+          Alert.alert("Unable to complete", error instanceof Error ? error.message : "Please check the tracking details.");
+        }
+      })()}><Text style={styles.primaryText}>I received the parcel</Text></Pressable>
+      {delivery?.status === "DELIVERED" && <View style={styles.ratingBox}>
+        <Text style={styles.photoTitle}>Review your courier</Text>
+        {receiverRatingSubmitted ? <Text style={styles.done}>✓ Review submitted</Text> : <>
+          <View style={styles.starRow}>{[1,2,3,4,5].map(star => <Pressable key={star} onPress={() => setReceiverRatingStars(star)}><Text style={styles.star}>{star <= receiverRatingStars ? "★" : "☆"}</Text></Pressable>)}</View>
+          <TextInput style={styles.input} placeholder="Optional comment" value={receiverRatingComment} onChangeText={setReceiverRatingComment} maxLength={500} multiline />
+          <Pressable style={styles.primary} onPress={() => void submitReceiverRating()}><Text style={styles.primaryText}>Submit review</Text></Pressable>
+        </>}
+      </View>}
+      <Pressable style={styles.secondary} onPress={() => setReceiverMode(false)}><Text>Back to customer sign in</Text></Pressable>
+    </ScrollView></SafeAreaView>;
+  }
+
   if (!signedIn) {
     return <SafeAreaView style={styles.safe}><View style={styles.auth}>
       <Text style={styles.logo}>SwiftDrop</Text>
@@ -267,6 +299,7 @@ export default function App() {
       <TextInput style={styles.input} placeholder="Password" value={authPassword} onChangeText={setAuthPassword} secureTextEntry />
       <Pressable style={styles.primary} onPress={() => void (authMode === "login" ? signIn() : registerCustomer())}><Text style={styles.primaryText}>{authMode === "login" ? "Sign in" : "Create account"}</Text></Pressable>
       <Pressable onPress={() => setAuthMode(authMode === "login" ? "register" : "login")}><Text style={styles.link}>{authMode === "login" ? "Create an account" : "Already have an account? Sign in"}</Text></Pressable>
+      <Pressable onPress={() => setReceiverMode(true)}><Text style={styles.link}>I am a receiver — confirm a delivery</Text></Pressable>
     </View></SafeAreaView>;
   }
 
