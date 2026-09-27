@@ -6,6 +6,8 @@ import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 const BACKGROUND_LOCATION_TASK = "SWIFTDROP_BACKGROUND_LOCATION";
@@ -102,6 +104,8 @@ export default function App() {
   const [driverApproved, setDriverApproved] = React.useState(false);
   const [documentType, setDocumentType] = React.useState("DRIVER_LICENSE");
   const [documentUrl, setDocumentUrl] = React.useState("");
+  const [documentFile, setDocumentFile] = React.useState<{ name: string; mimeType: string; uri: string } | null>(null);
+  const [documentUploading, setDocumentUploading] = React.useState(false);
   const [online, setOnline] = React.useState(false);
   const [jobs, setJobs] = React.useState<Job[]>([]);
   const [job, setJob] = React.useState<Job | null>(null);
@@ -212,20 +216,41 @@ export default function App() {
     }
   }
 
-  async function submitKyc() {
-    if (!documentType.trim() || !documentUrl.trim()) {
-      Alert.alert("KYC", "Document type and secure document URL are required.");
+  async function pickKycDocument() {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ["application/pdf", "image/jpeg", "image/png"],
+      copyToCacheDirectory: true,
+      multiple: false
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+    const asset = result.assets[0];
+    if ((asset.size ?? 0) > 10 * 1024 * 1024) {
+      Alert.alert("KYC document", "The selected document must be 10MB or smaller.");
       return;
     }
-    try {
-      await driverApi("/api/driver/documents", { documentType: documentType.trim(), documentUrl: documentUrl.trim() });
-      Alert.alert("KYC submitted", "Your document is pending admin review.");
-      await refreshDriverState();
-    } catch (error) {
-      Alert.alert("KYC submission failed", error instanceof Error ? error.message : "Unable to submit document");
-    }
+    setDocumentFile({ name: asset.name, mimeType: asset.mimeType ?? "", uri: asset.uri });
   }
 
+  async function submitKyc() {
+    if (!documentType.trim() || !documentFile) {
+      Alert.alert("KYC", "Choose a document type and document first.");
+      return;
+    }
+    setDocumentUploading(true);
+    try {
+      const mime = documentFile.mimeType.toLowerCase();
+      if (!["application/pdf", "image/jpeg", "image/png"].includes(mime)) throw new Error("Only PDF, JPEG, or PNG documents are supported.");
+      const base64 = await FileSystem.readAsStringAsync(documentFile.uri, { encoding: FileSystem.EncodingType.Base64 });
+      await driverApi("/api/driver/documents/upload", { documentType: documentType.trim(), file: "data:" + mime + ";base64," + base64 });
+      setDocumentFile(null);
+      Alert.alert("KYC submitted", "Your document was uploaded and is pending admin review.");
+      await refreshDriverState();
+    } catch (error) {
+      Alert.alert("KYC submission failed", error instanceof Error ? error.message : "Unable to upload document");
+    } finally {
+      setDocumentUploading(false);
+    }
+  }
   async function refreshJobs() {
     try {
       const driver = await driverApi("/api/driver/me");
@@ -428,8 +453,9 @@ export default function App() {
       <Text style={styles.logo}>Driver verification</Text>
       <Text style={styles.subtitle}>At least one KYC document must be approved before you can go online.</Text>
       <TextInput style={styles.input} placeholder="Document type (e.g. DRIVER_LICENSE)" value={documentType} onChangeText={setDocumentType} />
-      <TextInput style={styles.input} placeholder="Secure document URL" value={documentUrl} onChangeText={setDocumentUrl} autoCapitalize="none" />
-      <Pressable style={styles.primary} onPress={() => void submitKyc()}><Text style={styles.primaryText}>Submit document</Text></Pressable>
+      <Pressable style={styles.secondary} onPress={() => void pickKycDocument()}><Text>{documentFile ? "Change selected document" : "Choose KYC document"}</Text></Pressable>
+      {documentFile && <View style={styles.fileCard}><Text style={styles.title}>Selected document</Text><Text>{documentFile.name}</Text></View>}
+      <Pressable style={styles.primary} disabled={documentUploading} onPress={() => void submitKyc()}><Text style={styles.primaryText}>{documentUploading ? "Uploading…" : "Upload document for review"}</Text></Pressable>
       <Pressable style={styles.secondary} onPress={() => void refreshDriverState()}><Text>Check verification status</Text></Pressable>
     </ScrollView></SafeAreaView>;
   }
@@ -509,5 +535,5 @@ const styles = StyleSheet.create({
   secondary:{borderWidth:1,borderColor:"#ccc",padding:13,borderRadius:10,alignItems:"center"}, link:{fontWeight:"700"},
   muted:{color:"#666"}, job:{borderTopWidth:1,borderTopColor:"#eee",paddingTop:12,gap:8}, done:{fontSize:18,fontWeight:"800"},
   preview:{width:"100%",height:220,borderRadius:12}, cameraCard:{gap:12}, camera:{height:420,borderRadius:16,overflow:"hidden"},
-  notification:{borderTopWidth:1,borderTopColor:"#eee",paddingTop:10,gap:4}, notificationTitle:{fontWeight:"800"}
+  notification:{borderTopWidth:1,borderTopColor:"#eee",paddingTop:10,gap:4}, notificationTitle:{fontWeight:"800"}, fileCard:{borderWidth:1,borderColor:"#ddd",borderRadius:10,padding:12,gap:4}
 });
