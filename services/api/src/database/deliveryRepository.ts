@@ -358,8 +358,36 @@ export async function markPayoutReleased(deliveryId: string, providerReference: 
   if (!pool) return null;
   const result = await pool.query(
     `UPDATE payouts
-     SET status='RELEASED', provider_reference=$2, updated_at=now()
-     WHERE delivery_id=$1 AND status IN ('ELIGIBLE','PROCESSING')
+     SET status='RELEASED', provider='paystack', provider_reference=$2, updated_at=now()
+     WHERE delivery_id=$1 AND status IN ('PROCESSING','ELIGIBLE')
+     RETURNING *`,
+    [deliveryId, providerReference]
+  );
+  return result.rows[0] ? rowToPayout(result.rows[0]) : null;
+}
+
+export async function updatePayoutProviderStatus(
+  providerReference: string,
+  status: "RELEASED" | "FAILED" | "CANCELLED"
+): Promise<PayoutRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `UPDATE payouts
+     SET status=$2, provider='paystack', updated_at=now()
+     WHERE provider_reference=$1
+       AND status IN ('PROCESSING','ELIGIBLE','RELEASED')
+     RETURNING *`,
+    [providerReference, status]
+  );
+  return result.rows[0] ? rowToPayout(result.rows[0]) : null;
+}
+
+export async function setPayoutProviderReference(deliveryId: string, providerReference: string): Promise<PayoutRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `UPDATE payouts
+     SET provider='paystack', provider_reference=$2, updated_at=now()
+     WHERE delivery_id=$1 AND status='PROCESSING' AND provider_reference IS NULL
      RETURNING *`,
     [deliveryId, providerReference]
   );
@@ -563,7 +591,7 @@ export async function saveDriverPayoutAccount(input: {
 export async function setPayoutProcessing(deliveryId: string): Promise<PayoutRecord | null> {
   if (!pool) return null;
   const result = await pool.query(
-    `UPDATE payouts SET status='PROCESSING', updated_at=now()
+    `UPDATE payouts SET status='PROCESSING', provider='paystack', updated_at=now()
      WHERE delivery_id=$1 AND status='ELIGIBLE'
      RETURNING *`,
     [deliveryId]
