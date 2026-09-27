@@ -90,6 +90,9 @@ export type StoredDelivery = {
     durationSeconds: number;
     baseFareMinor: number;
     distanceFareMinor: number;
+    weightFareMinor: number;
+    sizeFareMinor: number;
+    perishableSurchargeMinor: number;
     serviceFeeMinor: number;
     totalMinor: number;
   };
