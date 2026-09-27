@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
@@ -436,6 +436,62 @@ app.get("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER", "ADMIN"
   const dispute = await findDispute(req.params.id);
   if (!dispute) return res.status(404).json({ error: "No dispute found" });
   res.json({ dispute });
+});
+
+app.post("/api/driver/documents/upload", requireAuth("DRIVER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const userId = identity(req);
+  const driver = await driverForUser(userId);
+  if (!driver) return res.status(404).json({ error: "Driver profile not found" });
+
+  const documentType = String(req.body?.documentType ?? "").trim().toUpperCase();
+  const dataUrl = String(req.body?.file ?? "");
+  if (!documentType || !dataUrl) return res.status(400).json({ error: "Document type and document file are required" });
+
+  let extension = "";
+  let base64 = "";
+  if (/^data:application\/pdf;base64,/i.test(dataUrl)) {
+    extension = "pdf";
+    base64 = dataUrl.replace(/^data:application\/pdf;base64,/i, "");
+  } else {
+    const imageMatch = dataUrl.match(/^data:image\/(jpeg|jpg|png);base64,(.+)$/i);
+    if (!imageMatch) return res.status(400).json({ error: "Only PDF, JPEG, or PNG documents are supported" });
+    extension = imageMatch[1].toLowerCase() === "png" ? "png" : "jpg";
+    base64 = imageMatch[2];
+  }
+
+  const buffer = Buffer.from(base64, "base64");
+  if (buffer.length === 0) return res.status(400).json({ error: "Document file is empty" });
+  if (buffer.length > 10 * 1024 * 1024) return res.status(413).json({ error: "KYC document must be 10MB or smaller" });
+
+  const filename = randomUUID() + "." + extension;
+  const directory = path.resolve(process.env.UPLOADS_DIR ?? "uploads", "kyc");
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, filename), buffer);
+
+  const result = await pool!.query(
+    "INSERT INTO driver_documents (driver_id, document_type, document_url) VALUES ($1,$2,$3) RETURNING id, document_type, status, created_at",
+    [driver.id, documentType, "/api/driver/documents/file/" + filename]
+  );
+  res.status(201).json({ document: result.rows[0] });
+});
+
+app.get("/api/driver/documents/file/:filename", requireAuth(), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const filename = path.basename(req.params.filename);
+  const documentUrl = "/api/driver/documents/file/" + filename;
+  const result = await pool!.query("SELECT driver_id FROM driver_documents WHERE document_url=$1 LIMIT 1", [documentUrl]);
+  const row = result.rows[0];
+  if (!row) return res.status(404).json({ error: "Document not found" });
+
+  if ((req as any).user?.role !== "ADMIN") {
+    const driver = await driverForUser(identity(req));
+    if (!driver || driver.id !== row.driver_id) return res.status(403).json({ error: "Not authorized to view this document" });
+  }
+
+  const filePath = path.resolve(process.env.UPLOADS_DIR ?? "uploads", "kyc", filename);
+  try { await access(filePath); } catch { return res.status(404).json({ error: "Document file not found" }); }
+  return res.sendFile(filePath);
 });
 
 app.post("/api/driver/documents", requireAuth("DRIVER"), async (req, res) => {
