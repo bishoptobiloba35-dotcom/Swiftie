@@ -54,6 +54,7 @@ export default function App() {
         api.setAccessToken(token);
         setSignedIn(true);
         void registerPushNotifications();
+        void loadNotifications();
       }
     });
     return () => socketRef.current?.close();
@@ -66,6 +67,7 @@ export default function App() {
       await AsyncStorage.setItem("swiftdrop.customerAccessToken", data.accessToken);
       setSignedIn(true);
       void registerPushNotifications();
+      void loadNotifications();
     } catch (error) {
       Alert.alert("Sign in failed", error instanceof Error ? error.message : "Unable to sign in");
     }
