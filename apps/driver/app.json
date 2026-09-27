@@ -5,7 +5,17 @@
     "version": "0.1.0",
     "scheme": "swiftdrop-driver",
     "orientation": "portrait",
-    "plugins": ["expo-camera", ["expo-location", { "isAndroidBackgroundLocationEnabled": true, "isIosBackgroundLocationEnabled": true }]],
+    "plugins": [
+      "expo-camera",
+      [
+        "expo-location",
+        {
+          "isAndroidBackgroundLocationEnabled": true,
+          "isIosBackgroundLocationEnabled": true
+        }
+      ],
+      "expo-notifications"
+    ],
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
