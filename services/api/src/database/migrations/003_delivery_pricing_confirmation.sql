@@ -4,7 +4,10 @@ ALTER TABLE deliveries
   ADD COLUMN IF NOT EXISTS width_cm NUMERIC(8,2),
   ADD COLUMN IF NOT EXISTS height_cm NUMERIC(8,2),
   ADD COLUMN IF NOT EXISTS is_perishable BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN IF NOT EXISTS receiver_confirmed_at TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS receiver_confirmed_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS quote_weight_fare_minor INTEGER,
+  ADD COLUMN IF NOT EXISTS quote_size_fare_minor INTEGER,
+  ADD COLUMN IF NOT EXISTS quote_perishable_surcharge_minor INTEGER;
 
 ALTER TABLE payments
   ADD COLUMN IF NOT EXISTS escrow_status TEXT NOT NULL DEFAULT 'PENDING'
