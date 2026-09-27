@@ -213,6 +213,30 @@ app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) =
   return res.status(201).json({ account });
 });
 
+app.get("/api/driver/payouts", requireAuth("DRIVER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Payouts require the production database" });
+  const driver = await driverForUser(identity(req));
+  if (!driver) return res.status(404).json({ error: "Driver profile not found" });
+  const result = await pool!.query(
+    `SELECT id, delivery_id, amount_minor, currency, status, provider, provider_reference,
+            provider_status, failure_reason, processed_at, created_at, updated_at
+       FROM payouts
+      WHERE driver_id=$1
+      ORDER BY created_at DESC
+      LIMIT 100`,
+    [driver.id]
+  );
+  const summary = result.rows.reduce((acc: { eligibleMinor: number; processingMinor: number; releasedMinor: number; failedMinor: number }, row: { amount_minor: number; status: string }) => {
+    const amount = Number(row.amount_minor);
+    if (row.status === "ELIGIBLE") acc.eligibleMinor += amount;
+    else if (row.status === "PROCESSING") acc.processingMinor += amount;
+    else if (row.status === "RELEASED") acc.releasedMinor += amount;
+    else if (row.status === "FAILED") acc.failedMinor += amount;
+    return acc;
+  }, { eligibleMinor: 0, processingMinor: 0, releasedMinor: 0, failedMinor: 0 });
+  return res.json({ summary, payouts: result.rows });
+});
+
 app.get("/api/deliveries/:id/payout", requireAuth(), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Payouts require the production database" });
   const delivery = await findDeliveryForUser(req.params.id, identity(req), "DRIVER");
