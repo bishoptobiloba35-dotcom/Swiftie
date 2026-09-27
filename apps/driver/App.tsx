@@ -1,9 +1,11 @@
 import React from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { SafeAreaView, View, Text, Pressable, StyleSheet, Alert, TextInput, Image } from "react-native";
+import { SafeAreaView, View, Text, Pressable, StyleSheet, Alert, TextInput, Image, Platform } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
+import * as Notifications from "expo-notifications";
+import Constants from "expo-constants";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 const BACKGROUND_LOCATION_TASK = "SWIFTDROP_BACKGROUND_LOCATION";
@@ -23,6 +25,21 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
     } catch {}
   }
 });
+
+async function registerPushNotifications(): Promise<void> {
+  try {
+    const permission = await Notifications.getPermissionsAsync();
+    let status = permission.status;
+    if (status !== "granted") status = (await Notifications.requestPermissionsAsync()).status;
+    if (status !== "granted") return;
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
+    const token = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+    await api("/api/notifications/device-token", {
+      token: token.data,
+      platform: Platform.OS === "ios" ? "IOS" : "ANDROID"
+    });
+  } catch {}
+}
 
 async function getActiveDeliveryId(): Promise<string | null> {
   return AsyncStorage.getItem("swiftdrop.activeDeliveryId");
