@@ -388,6 +388,24 @@ export default function App() {
     };
   }, [tracking, job?.id]);
 
+  React.useEffect(() => {
+    if (!job?.id || job.status !== "ARRIVED") return;
+    const timer = setInterval(async () => {
+      try {
+        const data = await driverApi("/api/deliveries/" + job.id);
+        setJob(data);
+        setStatus(data.status);
+        if (data.status === "DELIVERED") {
+          setTracking(false);
+          await stopBackgroundTracking();
+          await setActiveDeliveryId(null);
+          await loadPayout(data.id);
+        }
+      } catch {}
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [job?.id, job?.status]);
+
   async function markArrived() {
     if (!job) return;
     try {
