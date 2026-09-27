@@ -139,6 +139,29 @@ app.get("/api/drivers/:driverId/ratings", requireAuth(), async (req, res) => {
   res.json({ average, count: result.rows.length, ratings: result.rows });
 });
 
+app.post("/api/deliveries/:id/rating/driver", requireAuth("DRIVER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Ratings require the production database" });
+  const userId = identity(req);
+  const delivery = await findDeliveryForUser(req.params.id, userId, "DRIVER");
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  if (delivery.status !== "DELIVERED") return res.status(409).json({ error: "Only completed deliveries can be rated" });
+  const parsed = z.object({ stars: z.number().int().min(1).max(5), comment: z.string().max(500).optional() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  try {
+    const result = await pool!.query(
+      `INSERT INTO ratings (delivery_id, rater_user_id, rated_user_id, stars, comment)
+       SELECT $1, $2, sender_id, $3, $4 FROM deliveries WHERE id=$1
+       RETURNING id, delivery_id, rater_user_id, rated_user_id, stars, comment, created_at`,
+      [delivery.id, userId, parsed.data.stars, parsed.data.comment?.trim() || null]
+    );
+    if (!result.rows[0]) return res.status(409).json({ error: "Sender could not be found" });
+    return res.status(201).json({ rating: result.rows[0] });
+  } catch (error) {
+    if ((error as { code?: string })?.code === "23505") return res.status(409).json({ error: "This delivery has already been rated" });
+    return res.status(500).json({ error: "Unable to save rating" });
+  }
+});
+
 app.get("/api/notifications", requireAuth(), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Notifications require the production database" });
   const result = await pool!.query(
