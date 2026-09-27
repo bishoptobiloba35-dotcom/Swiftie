@@ -120,6 +120,9 @@ function rowToDelivery(row: any): StoredDelivery {
       durationSeconds: Number(row.quote_duration_seconds),
       baseFareMinor: Number(row.quote_base_fare_minor),
       distanceFareMinor: Number(row.quote_distance_fare_minor),
+      weightFareMinor: Number(row.quote_weight_fare_minor ?? 0),
+      sizeFareMinor: Number(row.quote_size_fare_minor ?? 0),
+      perishableSurchargeMinor: Number(row.quote_perishable_surcharge_minor ?? 0),
       serviceFeeMinor: Number(row.quote_service_fee_minor),
       totalMinor: Number(row.quote_total_minor)
     },
@@ -188,14 +191,15 @@ export async function createPersistentDelivery(input: {
        pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, status, receiver_pin_hash,
        weight_kg, length_cm, width_cm, height_cm, is_perishable,
        quote_distance_meters, quote_duration_seconds, quote_base_fare_minor,
-       quote_distance_fare_minor, quote_service_fee_minor, quote_total_minor, quote_currency)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'CREATED',$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+       quote_distance_fare_minor, quote_weight_fare_minor, quote_size_fare_minor, quote_perishable_surcharge_minor, quote_service_fee_minor, quote_total_minor, quote_currency)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'CREATED',$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
      RETURNING *`,
     [id, code, input.senderId, input.receiverName, input.receiverPhone,
       input.pickup.formattedAddress, input.pickup.location.latitude, input.pickup.location.longitude,
       input.dropoff.formattedAddress, input.dropoff.location.latitude, input.dropoff.location.longitude,
       hashPin(input.receiverPin), input.weightKg ?? null, input.dimensionsCm?.length ?? null, input.dimensionsCm?.width ?? null, input.dimensionsCm?.height ?? null, input.isPerishable ?? false, input.quote?.distanceMeters ?? null, input.quote?.durationSeconds ?? null,
       input.quote?.baseFareMinor ?? null, input.quote?.distanceFareMinor ?? null,
+      input.quote?.weightFareMinor ?? null, input.quote?.sizeFareMinor ?? null, input.quote?.perishableSurchargeMinor ?? null,
       input.quote?.serviceFeeMinor ?? null, input.quote?.totalMinor ?? null, input.quote?.currency ?? "NGN"]
   );
   return rowToDelivery(result.rows[0]);
