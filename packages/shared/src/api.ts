@@ -1,7 +1,7 @@
 export type ApiDelivery = {
   id: string;
   trackingCode: string;
-  senderId: string;
+  senderId?: string;
   receiverName: string;
   receiverPhone: string;
   pickup: { label: string; formattedAddress: string; location?: { latitude: number; longitude: number; recordedAt?: string } };
