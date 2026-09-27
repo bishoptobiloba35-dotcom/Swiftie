@@ -114,6 +114,10 @@ export default function App() {
   const [tracking, setTracking] = React.useState(false);
   const [notifications, setNotifications] = React.useState<NotificationItem[]>([]);
   const [showNotifications, setShowNotifications] = React.useState(false);
+  const [ratingStars, setRatingStars] = React.useState(0);
+  const [ratingComment, setRatingComment] = React.useState("");
+  const [ratingSubmitted, setRatingSubmitted] = React.useState(false);
+  const [payout, setPayout] = React.useState<{ amount_minor: number; currency: string; status: string } | null>(null);
 
   async function registerPushNotifications() {
     try {
@@ -366,6 +370,32 @@ export default function App() {
     }
   }
 
+  async function loadPayout(deliveryId: string) {
+    try {
+      const data = await driverApi("/api/deliveries/" + deliveryId + "/payout");
+      setPayout(data.payout ?? null);
+    } catch {
+      setPayout(null);
+    }
+  }
+
+  async function submitSenderRating() {
+    if (!job || ratingStars < 1) {
+      Alert.alert("Rating", "Please select a rating from 1 to 5 stars.");
+      return;
+    }
+    try {
+      await driverApi("/api/deliveries/" + job.id + "/rating/driver", {
+        stars: ratingStars,
+        comment: ratingComment.trim() || undefined
+      });
+      setRatingSubmitted(true);
+      Alert.alert("Thank you", "Your sender rating has been saved.");
+    } catch (error) {
+      Alert.alert("Rating failed", error instanceof Error ? error.message : "Unable to save rating");
+    }
+  }
+
   async function complete() {
     if (!job || pin.length !== 6) return;
     try {
@@ -373,6 +403,7 @@ export default function App() {
       setJob(data); setStatus(data.status); setTracking(false); setPin("");
       await stopBackgroundTracking();
       await setActiveDeliveryId(null);
+      await loadPayout(data.id);
       Alert.alert("Delivered", "Receiver PIN verified. Delivery completed.");
     } catch (error) {
       Alert.alert("Verification failed", error instanceof Error ? error.message : "Invalid PIN");
@@ -406,6 +437,12 @@ export default function App() {
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.container}>
     <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop Driver</Text><Text style={styles.subtitle}>Deliver safely. Track every trip.</Text></View><Pressable onPress={() => setShowNotifications(v => !v)}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable></View>
 
+    {payout && <View style={styles.card}>
+      <Text style={styles.title}>Delivery payout</Text>
+      <Text style={styles.earnings}>₦{(payout.amount_minor / 100).toLocaleString()}</Text>
+      <Text style={styles.muted}>Status: {payout.status.replaceAll("_", " ")}</Text>
+    </View>}
+
     {showNotifications && <View style={styles.card}>
       <View style={styles.header}><Text style={styles.title}>Notifications</Text><Pressable onPress={() => void loadNotifications()}><Text>Refresh</Text></Pressable></View>
       {notifications.length === 0 ? <Text style={styles.muted}>No notifications.</Text> : notifications.map(item => (
@@ -418,6 +455,16 @@ export default function App() {
     </View>}
 
     <Text style={styles.status}>{status.replaceAll("_", " ")}</Text>
+    {job?.status === "DELIVERED" && <View style={styles.card}>
+      <Text style={styles.title}>Rate the sender</Text>
+      {ratingSubmitted ? <Text style={styles.done}>✓ Rating submitted</Text> : <>
+        <View style={styles.starRow}>{[1,2,3,4,5].map(star => <Pressable key={star} onPress={() => setRatingStars(star)}><Text style={styles.star}>{star <= ratingStars ? "★" : "☆"}</Text></Pressable>)}</View>
+        <TextInput style={styles.input} placeholder="Optional comment" value={ratingComment} onChangeText={setRatingComment} maxLength={500} multiline />
+        <Pressable style={styles.primary} onPress={() => void submitSenderRating()}><Text style={styles.primaryText}>Submit sender rating</Text></Pressable>
+      </>}
+    </View>}
+
+
     {!online && !job ? <Pressable style={styles.primary} onPress={() => void goOnline()}><Text style={styles.primaryText}>Go online</Text></Pressable> : null}
     {online && !job ? <View style={styles.card}>
       <Text style={styles.title}>Available delivery jobs</Text>
