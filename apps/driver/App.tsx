@@ -149,7 +149,7 @@ export default function App() {
   }
 
   async function savePayoutAccount() {
-    if (!/^\\d{3,6}$/.test(bankCode.trim()) || !/^\\d{10}$/.test(accountNumber.trim())) {
+    if (!/^\d{3,6}$/.test(bankCode.trim()) || !/^\d{10}$/.test(accountNumber.trim())) {
       Alert.alert("Payout account", "Enter a valid bank code and 10-digit Nigerian account number.");
       return;
     }
@@ -168,7 +168,7 @@ export default function App() {
     try {
       const data = await driverApi("/api/deliveries/" + job.id + "/payout/withdraw", {});
       setPayout(data.payout ?? null);
-      Alert.alert("Withdrawal started", "The courier payout has been sent to your verified bank recipient.");
+      Alert.alert("Withdrawal started", "The transfer has been initiated. Your payout will change to Released after Paystack confirms the transfer.");
     } catch (error) {
       Alert.alert("Withdrawal failed", error instanceof Error ? error.message : "Unable to withdraw payout.");
     }
