@@ -11,7 +11,7 @@ import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, confirmReceiverAndReleaseEscrow } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
-import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, createDispute, findDispute, resolveDispute } from "./database/deliveryRepository.js";
+import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, createDispute, findDispute, resolveDispute, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, markPayoutFailed, markPayoutReleased } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -170,6 +170,84 @@ app.post("/api/deliveries/:id/rating/receiver", async (req, res) => {
     if ((error as { code?: string })?.code === "23505") return res.status(409).json({ error: "This delivery has already been rated by the receiver" });
     return res.status(500).json({ error: "Unable to save receiver rating" });
   }
+});
+
+app.get("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Payout account requires the production database" });
+  const driver = await driverForUser(identity(req));
+  if (!driver) return res.status(404).json({ error: "Driver profile not found" });
+  const account = await getDriverPayoutAccount(driver.id);
+  return res.json({ account });
+});
+
+app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Payout account requires the production database" });
+  const driver = await driverForUser(identity(req));
+  if (!driver) return res.status(404).json({ error: "Driver profile not found" });
+  const parsed = z.object({
+    bankCode: z.string().regex(/^\\d{3,6}$/),
+    accountNumber: z.string().regex(/^\\d{10}$/)
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "A valid Nigerian bank code and 10-digit account number are required" });
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  if (!secret) return res.status(503).json({ error: "Paystack transfers are not configured" });
+  const resolveResponse = await fetch("https://api.paystack.co/bank/resolve?account_number=" + encodeURIComponent(parsed.data.accountNumber) + "&bank_code=" + encodeURIComponent(parsed.data.bankCode), {
+    headers: { authorization: "Bearer " + secret }
+  });
+  const resolved = await resolveResponse.json() as { status?: boolean; message?: string; data?: { account_name?: string } };
+  if (!resolveResponse.ok || !resolved.status || !resolved.data?.account_name) return res.status(400).json({ error: resolved.message ?? "Unable to verify the bank account" });
+  const recipientResponse = await fetch("https://api.paystack.co/transferrecipient", {
+    method: "POST",
+    headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
+    body: JSON.stringify({ type: "nuban", name: resolved.data.account_name, account_number: parsed.data.accountNumber, bank_code: parsed.data.bankCode, currency: "NGN" })
+  });
+  const recipient = await recipientResponse.json() as { status?: boolean; message?: string; data?: { recipient_code?: string } };
+  if (!recipientResponse.ok || !recipient.status || !recipient.data?.recipient_code) return res.status(400).json({ error: recipient.message ?? "Unable to create payout recipient" });
+  const account = await saveDriverPayoutAccount({
+    driverId: driver.id,
+    bankCode: parsed.data.bankCode,
+    accountNumber: parsed.data.accountNumber,
+    accountName: resolved.data.account_name,
+    recipientCode: recipient.data.recipient_code
+  });
+  return res.status(201).json({ account });
+});
+
+app.get("/api/deliveries/:id/payout", requireAuth(), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Payouts require the production database" });
+  const delivery = await findDeliveryForUser(req.params.id, identity(req), "DRIVER");
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  const payout = await findPayout(req.params.id);
+  return res.json({ payout });
+});
+
+app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Payouts require the production database" });
+  const driver = await driverForUser(identity(req));
+  if (!driver) return res.status(404).json({ error: "Driver profile not found" });
+  const delivery = await findDeliveryForUser(req.params.id, identity(req), "DRIVER");
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  const payout = await findPayout(req.params.id);
+  if (!payout || payout.status !== "ELIGIBLE") return res.status(409).json({ error: "Payout is not eligible yet. The receiver must confirm delivery first." });
+  const account = await getDriverPayoutAccount(driver.id);
+  if (!account) return res.status(409).json({ error: "Add and verify a payout bank account before withdrawing." });
+  const processing = await setPayoutProcessing(req.params.id);
+  if (!processing) return res.status(409).json({ error: "Payout is already being processed." });
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  if (!secret) { await markPayoutFailed(req.params.id); return res.status(503).json({ error: "Paystack transfers are not configured" }); }
+  const reference = "sd_payout_" + randomUUID().replaceAll("-", "");
+  const response = await fetch("https://api.paystack.co/transfer", {
+    method: "POST",
+    headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
+    body: JSON.stringify({ source: "balance", amount: processing.amountMinor, recipient: account.recipientCode, reference, reason: "SwiftDrop courier payout", currency: processing.currency })
+  });
+  const data = await response.json() as { status?: boolean; message?: string; data?: { reference?: string; status?: string } };
+  if (!response.ok || !data.status || !data.data?.reference) {
+    await markPayoutFailed(req.params.id);
+    return res.status(502).json({ error: data.message ?? "Paystack transfer could not be initiated" });
+  }
+  await markPayoutReleased(req.params.id, data.data.reference);
+  return res.json({ payout: await findPayout(req.params.id), providerStatus: data.data.status ?? "pending" });
 });
 
 app.get("/api/drivers/:driverId/ratings", requireAuth(), async (req, res) => {
