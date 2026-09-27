@@ -647,3 +647,16 @@ export async function markPayoutFailed(deliveryId: string): Promise<PayoutRecord
   );
   return result.rows[0] ? rowToPayout(result.rows[0]) : null;
 }
+
+export async function retryFailedPayout(deliveryId: string): Promise<PayoutRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `UPDATE payouts
+     SET status='ELIGIBLE', provider_reference=NULL, provider_status=NULL,
+         failure_reason=NULL, processed_at=NULL, updated_at=now()
+     WHERE delivery_id=$1 AND status IN ('FAILED','CANCELLED')
+     RETURNING *`,
+    [deliveryId]
+  );
+  return result.rows[0] ? rowToPayout(result.rows[0]) : null;
+}
