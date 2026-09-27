@@ -185,8 +185,8 @@ app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) =
   const driver = await driverForUser(identity(req));
   if (!driver) return res.status(404).json({ error: "Driver profile not found" });
   const parsed = z.object({
-    bankCode: z.string().regex(/^\\d{3,6}$/),
-    accountNumber: z.string().regex(/^\\d{10}$/)
+    bankCode: z.string().regex(/^\d{3,6}$/),
+    accountNumber: z.string().regex(/^\d{10}$/)
   }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "A valid Nigerian bank code and 10-digit account number are required" });
   const secret = process.env.PAYSTACK_SECRET_KEY;
@@ -751,7 +751,7 @@ app.get("/api/admin/disputes", requireAuth("ADMIN"), async (_req, res) => {
 
 app.get("/api/admin/payouts", requireAuth("ADMIN"), async (_req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
-  const result = await pool!.query("SELECT id, delivery_id, driver_id, amount_minor, currency, status, provider, provider_reference, created_at, updated_at FROM payouts ORDER BY updated_at DESC LIMIT 100");
+  const result = await pool!.query("SELECT id, delivery_id, driver_id, amount_minor, currency, status, provider, provider_reference, provider_status, failure_reason, processed_at, created_at, updated_at FROM payouts ORDER BY updated_at DESC LIMIT 100");
   res.json({ payouts: result.rows });
 });
 
