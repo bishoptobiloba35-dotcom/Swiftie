@@ -367,7 +367,7 @@ export async function assignNextDeliveryToDriver(driverId: string): Promise<Stor
   if (!pool) return null;
   const verified = await pool.query(
     `SELECT 1 FROM drivers d
-     WHERE d.id=$1 AND d.status='APPROVED'
+     WHERE d.id=$1 AND d.status='APPROVED' AND d.online=true
        AND EXISTS (SELECT 1 FROM driver_documents dd WHERE dd.driver_id=d.id AND dd.status='APPROVED')`,
     [driverId]
   );
