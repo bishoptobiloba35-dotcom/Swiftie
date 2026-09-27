@@ -5,6 +5,7 @@ import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
 import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, ScrollView, Platform } from "react-native";
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { SwiftDropApi, type ApiDelivery } from "../../packages/shared/src/api";
 import { haversineDistanceMeters, etaMinutes } from "./src/trackingMath";
 
@@ -258,7 +259,38 @@ export default function App() {
       <Text style={styles.status}>{delivery.status.replaceAll("_", " ")}</Text>
       <Text>Pickup: {delivery.pickup.formattedAddress}</Text>
       <Text>Drop-off: {delivery.dropoff.formattedAddress}</Text>
-      {location ? <View style={styles.locationBox}><Text style={styles.photoTitle}>Live driver position</Text><Text>Latitude: {location.latitude.toFixed(6)}</Text><Text>Longitude: {location.longitude.toFixed(6)}</Text><Text style={styles.eta}>Approx. ETA: {etaMinutes(haversineDistanceMeters(location, delivery.dropoff))} min</Text><Text style={styles.muted}>Updated: {new Date(location.recordedAt).toLocaleTimeString()}</Text></View> : <Text style={styles.muted}>Waiting for the driver to start the trip…</Text>}
+      {location ? <View style={styles.locationBox}>
+        <Text style={styles.photoTitle}>Live driver position</Text>
+        <MapView
+          style={styles.map}
+          provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
+          initialRegion={{
+            latitude: location.latitude,
+            longitude: location.longitude,
+            latitudeDelta: 0.04,
+            longitudeDelta: 0.04
+          }}
+          region={{
+            latitude: location.latitude,
+            longitude: location.longitude,
+            latitudeDelta: 0.04,
+            longitudeDelta: 0.04
+          }}
+        >
+          <Marker coordinate={{ latitude: location.latitude, longitude: location.longitude }} title="SwiftDrop driver" description="Live driver location" />
+          <Marker coordinate={{ latitude: delivery.dropoff.latitude, longitude: delivery.dropoff.longitude }} title="Drop-off" description={delivery.dropoff.formattedAddress} />
+          <Polyline
+            coordinates={[
+              { latitude: location.latitude, longitude: location.longitude },
+              { latitude: delivery.dropoff.latitude, longitude: delivery.dropoff.longitude }
+            ]}
+            strokeWidth={4}
+          />
+        </MapView>
+        <Text>Driver: {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}</Text>
+        <Text style={styles.eta}>Approx. ETA: {etaMinutes(haversineDistanceMeters(location, delivery.dropoff))} min</Text>
+        <Text style={styles.muted}>Updated: {new Date(location.recordedAt).toLocaleTimeString()}</Text>
+      </View> : <Text style={styles.muted}>Waiting for the driver to start the trip…</Text>}
       {delivery.status === "DELIVERED" && <Text style={styles.done}>✓ Delivered and PIN verified</Text>}{delivery.status === "DELIVERED" && <View style={styles.ratingBox}>
         <Text style={styles.photoTitle}>Rate your driver</Text>
         {ratingSubmitted ? <Text style={styles.done}>✓ Rating submitted</Text> : <>
@@ -294,7 +326,8 @@ const styles = StyleSheet.create({
   divider: { height: 1, backgroundColor: "#eee", marginVertical: 18 },
   card: { borderWidth: 1, borderColor: "#ddd", borderRadius: 16, padding: 16, gap: 10, marginTop: 12 },
   status: { fontSize: 18, fontWeight: "800" },
-  locationBox: { borderWidth: 1, borderColor: "#eee", borderRadius: 10, padding: 12, gap: 4 },
+  locationBox: { borderWidth: 1, borderColor: "#eee", borderRadius: 10, padding: 12, gap: 8 },
+  map: { width: "100%", height: 260, borderRadius: 12 },
   photoTitle: { fontWeight: "700" },
   muted: { color: "#666" },
   done: { fontSize: 17, fontWeight: "800", marginTop: 6 },
