@@ -169,6 +169,7 @@ export default function App() {
       if (!token) return;
       setSignedIn(true);
       await refreshDriverState();
+      if (driverApproved) await goOnline();
       void registerPushNotifications();
     });
     return () => { void stopBackgroundTracking().catch(() => {}); };
@@ -186,6 +187,8 @@ export default function App() {
       await AsyncStorage.setItem("swiftdrop.driverAccessToken", data.accessToken);
       setSignedIn(true);
       await refreshDriverState();
+      const current = await driverApi("/api/driver/me");
+      if (current.driver?.status === "APPROVED") await goOnline();
       void registerPushNotifications();
     } catch (error) {
       Alert.alert("Sign in failed", error instanceof Error ? error.message : "Unable to sign in");
@@ -422,17 +425,7 @@ export default function App() {
   }
 
   async function complete() {
-    if (!job || pin.length !== 6) return;
-    try {
-      const data = await driverApi("/api/deliveries/" + job.id + "/complete", { receiverPin: pin });
-      setJob(data); setStatus(data.status); setTracking(false); setPin("");
-      await stopBackgroundTracking();
-      await setActiveDeliveryId(null);
-      await loadPayout(data.id);
-      Alert.alert("Delivered", "Receiver PIN verified. Delivery completed.");
-    } catch (error) {
-      Alert.alert("Verification failed", error instanceof Error ? error.message : "Invalid PIN");
-    }
+    Alert.alert("Receiver confirmation required", "The receiver must confirm receipt in the SwiftDrop app using the delivery PIN. Courier payout remains held until the receiver confirms.");
   }
 
   if (!signedIn) {
@@ -517,9 +510,8 @@ export default function App() {
       {job.status === "PICKED_UP" && <Pressable style={styles.primary} onPress={() => void startTrip()}><Text style={styles.primaryText}>Start trip & share location</Text></Pressable>}
       {job.status === "IN_TRANSIT" && <Pressable style={styles.primary} onPress={() => void markArrived()}><Text style={styles.primaryText}>I have arrived</Text></Pressable>}
       {job.status === "ARRIVED" && <>
-        <Text style={styles.muted}>Ask the receiver for the six-digit SwiftDrop PIN.</Text>
-        <TextInput value={pin} onChangeText={setPin} keyboardType="number-pad" placeholder="Receiver PIN" style={styles.input} maxLength={6} />
-        <Pressable style={styles.primary} onPress={() => void complete()}><Text style={styles.primaryText}>Verify PIN & complete</Text></Pressable>
+        <Text style={styles.muted}>You have arrived. Hand the parcel to the receiver and ask them to confirm receipt in SwiftDrop using their six-digit PIN.</Text>
+        <Text style={styles.done}>Courier payment is held until receiver confirmation.</Text>
       </>}
       {job.status === "DELIVERED" && <Text style={styles.done}>✓ Delivery completed</Text>}
     </View>}
