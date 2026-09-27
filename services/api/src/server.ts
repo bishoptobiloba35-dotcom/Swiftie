@@ -753,7 +753,12 @@ async function authenticatedDriverId(req: express.Request): Promise<string | nul
   const userId = identity(req as express.Request & { user?: { userId: string; role: "CUSTOMER" | "DRIVER" | "ADMIN" } });
   if (!databaseEnabled()) return userId;
   const driver = await driverForUser(userId);
-  return driver?.status === "APPROVED" ? driver.id : null;
+  if (!driver || driver.status !== "APPROVED") return null;
+  const verification = await pool!.query(
+    `SELECT 1 FROM driver_documents WHERE driver_id=$1 AND status='APPROVED' LIMIT 1`,
+    [driver.id]
+  );
+  return verification.rowCount ? driver.id : null;
 }
 
 app.post("/api/driver/availability", requireAuth("DRIVER"), async (req, res) => {
