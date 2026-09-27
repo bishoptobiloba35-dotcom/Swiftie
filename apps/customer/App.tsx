@@ -390,13 +390,6 @@ export default function App() {
       </View>}
       {delivery.status === "DELIVERED" && <Text style={styles.done}>✓ Delivered and PIN verified</Text>}
       {delivery.status === "DELIVERED" && <View style={styles.ratingBox}>
-        <Text style={styles.photoTitle}>Receiver review</Text>
-        {receiverRatingSubmitted ? <Text style={styles.done}>✓ Receiver review submitted</Text> : <>
-          <View style={styles.starRow}>{[1,2,3,4,5].map(star => <Pressable key={star} onPress={() => setReceiverRatingStars(star)}><Text style={styles.star}>{star <= receiverRatingStars ? "★" : "☆"}</Text></Pressable>)}</View>
-          <TextInput style={styles.input} placeholder="Optional comment about the courier" value={receiverRatingComment} onChangeText={setReceiverRatingComment} maxLength={500} multiline />
-          <Pressable style={styles.primary} onPress={() => void submitReceiverRating()}><Text style={styles.primaryText}>Submit receiver review</Text></Pressable>
-        </>}
-      </View>{delivery.status === "DELIVERED" && <View style={styles.ratingBox}>
         <Text style={styles.photoTitle}>Rate your driver</Text>
         {ratingSubmitted ? <Text style={styles.done}>✓ Rating submitted</Text> : <>
           <View style={styles.starRow}>{[1,2,3,4,5].map(star => <Pressable key={star} onPress={() => setRatingStars(star)}><Text style={styles.star}>{star <= ratingStars ? "★" : "☆"}</Text></Pressable>)}</View>
