@@ -197,19 +197,19 @@ export class SwiftDropApi {
     return response.json() as Promise<ApiDelivery>;
   }
 
-  async createTrackingSession(trackingCode: string): Promise<{ deliveryId: string; trackingToken: string }> {
+  async createTrackingSession(trackingCode: string, receiverPhone: string): Promise<{ deliveryId: string; trackingToken: string }> {
     const response = await fetch(this.baseUrl + "/api/track/session", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ trackingCode })
+      body: JSON.stringify({ trackingCode, receiverPhone })
     });
     if (!response.ok) throw new Error("Unable to start tracking session");
     return response.json() as Promise<{ deliveryId: string; trackingToken: string }>;
   }
 
-  async track(trackingCode: string): Promise<ApiDelivery> {
+  async track(trackingCode: string, receiverPhone: string): Promise<ApiDelivery> {
     const response = await fetch(
-      this.baseUrl + "/api/track/" + encodeURIComponent(trackingCode)
+      this.baseUrl + "/api/track/" + encodeURIComponent(trackingCode) + "?receiverPhone=" + encodeURIComponent(receiverPhone)
     );
     if (!response.ok) throw new Error("Tracking code not found");
     return response.json() as Promise<ApiDelivery>;
