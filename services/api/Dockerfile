@@ -18,6 +18,7 @@ ENV API_PORT=4000
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/services/api/dist ./services/api/dist
 COPY --from=build /app/services/api/package.json ./services/api/package.json
+COPY --from=build /app/services/api/src/database/migrations ./services/api/src/database/migrations
 
 RUN mkdir -p /var/lib/swiftdrop/uploads
 EXPOSE 4000
