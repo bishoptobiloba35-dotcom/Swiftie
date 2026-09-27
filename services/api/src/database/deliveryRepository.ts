@@ -10,6 +10,7 @@ export type PaymentRecord = {
   amountMinor: number;
   currency: string;
   status: "PENDING" | "AUTHORIZED" | "HELD" | "RELEASED" | "REFUNDED" | "FAILED";
+  escrowStatus?: "PENDING" | "HELD" | "RELEASED" | "REFUNDED";
   createdAt: string;
   updatedAt: string;
 };
@@ -29,6 +30,7 @@ function paymentFromRow(row: any): PaymentRecord {
     amountMinor: Number(row.amount_minor),
     currency: row.currency,
     status: row.status,
+    escrowStatus: row.escrow_status ?? undefined,
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString()
   };
