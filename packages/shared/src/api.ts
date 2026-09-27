@@ -38,7 +38,8 @@ export type ApiDelivery = {
 };
 
 export type CreateDeliveryInput = {
-  senderId: string;
+  senderId?: string;
+  receiverPin: string;
   receiverName: string;
   receiverPhone: string;
   pickup: { label: string; formattedAddress: string; latitude: number; longitude: number };
