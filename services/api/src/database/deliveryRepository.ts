@@ -374,7 +374,8 @@ export async function markPayoutReleased(deliveryId: string, providerReference: 
 
 export async function updatePayoutProviderStatus(
   providerReference: string,
-  status: "RELEASED" | "FAILED" | "CANCELLED"
+  status: "RELEASED" | "FAILED" | "CANCELLED",
+  failureReason?: string | null
 ): Promise<PayoutRecord | null> {
   if (!pool) return null;
   const result = await pool.query(
@@ -382,13 +383,13 @@ export async function updatePayoutProviderStatus(
      SET status=$2,
          provider='paystack',
          provider_status=$3,
-         failure_reason=CASE WHEN $2='FAILED' THEN COALESCE(failure_reason, 'Paystack transfer failed') ELSE failure_reason END,
+         failure_reason=CASE WHEN $2='FAILED' THEN COALESCE($4, failure_reason, 'Paystack transfer failed') ELSE failure_reason END,
          processed_at=CASE WHEN $2 IN ('RELEASED','FAILED','CANCELLED') THEN COALESCE(processed_at, now()) ELSE processed_at END,
          updated_at=now()
      WHERE provider_reference=$1
        AND status IN ('PROCESSING','ELIGIBLE','RELEASED')
      RETURNING *`,
-    [providerReference, status, status === "RELEASED" ? "success" : status === "CANCELLED" ? "reversed" : "failed"]
+    [providerReference, status, status === "RELEASED" ? "success" : status === "CANCELLED" ? "reversed" : "failed", failureReason ?? null]
   );
   return result.rows[0] ? rowToPayout(result.rows[0]) : null;
 }
