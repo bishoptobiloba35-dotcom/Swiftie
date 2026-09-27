@@ -49,6 +49,9 @@ const notificationForDelivery = async (deliveryId: string, userId: string, title
 const createDeliverySchema = z.object({
   senderId: z.string().uuid().optional(), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
   receiverPin: z.string().regex(/^\d{6}$/, "Receiver PIN must be exactly 6 digits"),
+  weightKg: z.number().positive().max(1000),
+  dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
+  isPerishable: z.boolean(),
   pickup: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   dropoff: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   quote: z.object({
@@ -57,16 +60,26 @@ const createDeliverySchema = z.object({
     durationSeconds: z.number().int().positive(),
     baseFareMinor: z.number().int().positive(),
     distanceFareMinor: z.number().int().nonnegative(),
+    weightFareMinor: z.number().int().nonnegative(),
+    sizeFareMinor: z.number().int().nonnegative(),
+    perishableSurchargeMinor: z.number().int().nonnegative(),
     serviceFeeMinor: z.number().int().nonnegative(),
     totalMinor: z.number().int().positive()
   })
 });
 const quoteSchema = z.object({
   pickup: z.object({ latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
-  dropoff: z.object({ latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) })
+  dropoff: z.object({ latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
+  weightKg: z.number().positive().max(1000),
+  dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
+  isPerishable: z.boolean()
 });
 
-function calculateQuote(pickup: { latitude: number; longitude: number }, dropoff: { latitude: number; longitude: number }) {
+function calculateQuote(
+  pickup: { latitude: number; longitude: number },
+  dropoff: { latitude: number; longitude: number },
+  parcel: { weightKg: number; dimensionsCm: { length: number; width: number; height: number }; isPerishable: boolean }
+) {
   const earthRadius = 6371000;
   const lat1 = pickup.latitude * Math.PI / 180;
   const lat2 = dropoff.latitude * Math.PI / 180;
@@ -75,17 +88,27 @@ function calculateQuote(pickup: { latitude: number; longitude: number }, dropoff
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
   const distanceMeters = earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   const distanceKm = distanceMeters / 1000;
+  const volumeCm3 = parcel.dimensionsCm.length * parcel.dimensionsCm.width * parcel.dimensionsCm.height;
+  const volumetricWeightKg = volumeCm3 / 5000;
+  const billableWeightKg = Math.max(parcel.weightKg, volumetricWeightKg);
   const baseFareMinor = 50000;
   const distanceFareMinor = Math.ceil(distanceKm * 18000);
-  const serviceFeeMinor = Math.ceil((baseFareMinor + distanceFareMinor) * 0.05);
+  const weightFareMinor = Math.ceil(Math.max(0, billableWeightKg - 1) * 10000);
+  const sizeFareMinor = Math.ceil(Math.max(0, volumeCm3 - 10000) / 1000 * 250);
+  const handlingMinor = baseFareMinor + distanceFareMinor + weightFareMinor + sizeFareMinor;
+  const perishableSurchargeMinor = parcel.isPerishable ? Math.ceil(handlingMinor * 0.15) : 0;
+  const serviceFeeMinor = Math.ceil((handlingMinor + perishableSurchargeMinor) * 0.05);
   return {
     currency: "NGN",
     distanceMeters: Math.round(distanceMeters),
     durationSeconds: Math.max(60, Math.round((distanceMeters / 8000) * 3600)),
     baseFareMinor,
     distanceFareMinor,
+    weightFareMinor,
+    sizeFareMinor,
+    perishableSurchargeMinor,
     serviceFeeMinor,
-    totalMinor: baseFareMinor + distanceFareMinor + serviceFeeMinor
+    totalMinor: handlingMinor + perishableSurchargeMinor + serviceFeeMinor
   };
 }
 
@@ -231,7 +254,7 @@ app.get("/api/locations/search", requireAuth("CUSTOMER"), async (req, res) => {
 app.post("/api/quotes", requireAuth("CUSTOMER"), async (req, res) => {
   const parsed = quoteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  res.json(calculateQuote(parsed.data.pickup, parsed.data.dropoff));
+  res.json(calculateQuote(parsed.data.pickup, parsed.data.dropoff, { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable }));
 });
 
 app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
@@ -240,7 +263,8 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   const input = { ...parsed.data, senderId: identity(req) };
   const quote = calculateQuote(
     { latitude: parsed.data.pickup.latitude, longitude: parsed.data.pickup.longitude },
-    { latitude: parsed.data.dropoff.latitude, longitude: parsed.data.dropoff.longitude }
+    { latitude: parsed.data.dropoff.latitude, longitude: parsed.data.dropoff.longitude },
+    { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable }
   );
   if (quote.currency !== "NGN" || !Number.isSafeInteger(quote.totalMinor) || quote.totalMinor <= 0) {
     return res.status(500).json({ error: "Unable to calculate delivery quote" });
