@@ -190,7 +190,12 @@ export default function App() {
       setSignedIn(true);
       await refreshDriverState();
       const current = await driverApi("/api/driver/me");
-      if (current.driver?.status === "APPROVED") await goOnline();
+      if (current.driver?.status === "APPROVED") {
+        const docs = await driverApi("/api/driver/documents");
+        if (docs.documents?.some((d: { status: string }) => d.status === "APPROVED")) {
+          await goOnline();
+        }
+      }
       void registerPushNotifications();
     } catch (error) {
       Alert.alert("Sign in failed", error instanceof Error ? error.message : "Unable to sign in");
