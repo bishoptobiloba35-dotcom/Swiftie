@@ -169,7 +169,9 @@ export default function App() {
       if (!token) return;
       setSignedIn(true);
       await refreshDriverState();
-      if (driverApproved) await goOnline();
+      const current = await driverApi("/api/driver/me");
+      const docs = current.driver?.status === "APPROVED" ? await driverApi("/api/driver/documents") : null;
+      if (current.driver?.status === "APPROVED" && docs?.documents?.some((d: { status: string }) => d.status === "APPROVED")) await goOnline();
       void registerPushNotifications();
     });
     return () => { void stopBackgroundTracking().catch(() => {}); };
