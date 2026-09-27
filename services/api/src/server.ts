@@ -851,7 +851,7 @@ app.post("/api/deliveries/:id/at-pickup", requireAuth("DRIVER"), async (req, res
 
 app.post("/api/uploads/pickup-photo", requireAuth("DRIVER"), async (req, res) => {
   const dataUrl = String(req.body?.image ?? "");
-  const match = dataUrl.match(/^data:image\\/(jpeg|jpg|png);base64,(.+)$/);
+  const match = dataUrl.match(/^data:image\/(jpeg|jpg|png);base64,(.+)$/);
   if (!match) return res.status(400).json({ error: "A JPEG or PNG data URL is required" });
   const extension = match[1] === "png" ? "png" : "jpg";
   const buffer = Buffer.from(match[2], "base64");
