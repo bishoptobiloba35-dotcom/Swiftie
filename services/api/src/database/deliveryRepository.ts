@@ -407,6 +407,31 @@ export async function verifyReceiverPin(id: string, pin: string): Promise<boolea
   return Boolean(delivery && verifyPin(pin, delivery.receiverPinHash));
 }
 
+export async function confirmReceiverAndReleaseEscrow(id: string, receiverPhone: string, pin: string, payoutPercent: number): Promise<{ delivery: StoredDelivery; payoutAmountMinor: number } | null> {
+  if (!pool) return null;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(`SELECT d.*, p.amount_minor, p.currency AS payment_currency, p.status AS payment_status FROM deliveries d LEFT JOIN payments p ON p.delivery_id=d.id WHERE d.id=$1 FOR UPDATE`, [id]);
+    const row = result.rows[0];
+    if (!row || row.receiver_phone !== receiverPhone || row.status !== 'ARRIVED' || row.payment_status !== 'HELD' || !verifyPin(pin, row.receiver_pin_hash) || !row.driver_id) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const deliveryResult = await client.query(`UPDATE deliveries SET status='DELIVERED', receiver_confirmed_at=now(), updated_at=now() WHERE id=$1 RETURNING *`, [id]);
+    const payoutAmountMinor = Math.max(0, Math.floor(Number(row.amount_minor) * Math.min(100, Math.max(0, payoutPercent)) / 100));
+    await client.query(`UPDATE payments SET status='RELEASED', escrow_status='RELEASED', updated_at=now() WHERE delivery_id=$1 AND status='HELD'`, [id]);
+    if (payoutAmountMinor > 0) {
+      await client.query(`INSERT INTO payouts (delivery_id, driver_id, amount_minor, currency, status) VALUES ($1,$2,$3,$4,'ELIGIBLE') ON CONFLICT (delivery_id) DO UPDATE SET amount_minor=EXCLUDED.amount_minor, currency=EXCLUDED.currency, status=CASE WHEN payouts.status IN ('PENDING','ELIGIBLE') THEN 'ELIGIBLE' ELSE payouts.status END, updated_at=now()`, [id, row.driver_id, payoutAmountMinor, row.payment_currency ?? 'NGN']);
+    }
+    await client.query('COMMIT');
+    return { delivery: rowToDelivery(deliveryResult.rows[0]), payoutAmountMinor };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally { client.release(); }
+}
+
 export async function confirmReceiverDelivery(id: string, receiverPhone: string, pin: string): Promise<StoredDelivery | null> {
   if (!pool) return null;
   const delivery = await findDelivery(id);
