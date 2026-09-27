@@ -150,6 +150,28 @@ app.post("/api/deliveries/:id/rating", requireAuth(), async (req, res) => {
   }
 });
 
+app.post("/api/deliveries/:id/rating/receiver", async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Receiver ratings require the production database" });
+  const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
+  const receiverPin = String(req.body?.receiverPin ?? "").trim();
+  const parsed = z.object({ stars: z.number().int().min(1).max(5), comment: z.string().max(500).optional() }).safeParse(req.body);
+  if (!receiverPhone || !/^\d{6}$/.test(receiverPin) || !parsed.success) return res.status(400).json({ error: "Receiver phone, six-digit PIN, rating and optional comment are required" });
+  const delivery = await findByTrackingCode(String(req.params.id).trim().toUpperCase()).catch(() => null) ?? await findDelivery(req.params.id);
+  if (!delivery || delivery.status !== "DELIVERED" || delivery.receiverPhone !== receiverPhone || !await verifyReceiverPin(delivery.id, receiverPin) || !delivery.driverId) return res.status(403).json({ error: "Receiver details could not be verified" });
+  try {
+    const result = await pool!.query(
+      `INSERT INTO receiver_ratings (delivery_id, driver_id, receiver_phone, stars, comment)
+       VALUES ($1,$2,$3,$4,$5)
+       RETURNING id, delivery_id, driver_id, stars, comment, created_at`,
+      [delivery.id, delivery.driverId, receiverPhone, parsed.data.stars, parsed.data.comment?.trim() || null]
+    );
+    return res.status(201).json({ rating: result.rows[0] });
+  } catch (error) {
+    if ((error as { code?: string })?.code === "23505") return res.status(409).json({ error: "This delivery has already been rated by the receiver" });
+    return res.status(500).json({ error: "Unable to save receiver rating" });
+  }
+});
+
 app.get("/api/drivers/:driverId/ratings", requireAuth(), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Ratings require the production database" });
   const result = await pool!.query(
