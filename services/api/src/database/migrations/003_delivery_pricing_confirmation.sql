@@ -7,7 +7,7 @@ ALTER TABLE deliveries
   ADD COLUMN IF NOT EXISTS receiver_confirmed_at TIMESTAMPTZ;
 
 ALTER TABLE payments
-  ADD COLUMN IF NOT EXISTS escrow_status TEXT NOT NULL DEFAULT 'HELD'
+  ADD COLUMN IF NOT EXISTS escrow_status TEXT NOT NULL DEFAULT 'PENDING'
     CHECK (escrow_status IN ('PENDING','HELD','RELEASED','REFUNDED'));
 
 CREATE INDEX IF NOT EXISTS idx_deliveries_payment_ready
