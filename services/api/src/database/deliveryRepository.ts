@@ -392,10 +392,19 @@ export async function assignNextDeliveryToDriver(driverId: string): Promise<Stor
   return result.rows[0] ? rowToDelivery(result.rows[0]) : null;
 }
 
-export async function listOpenJobs(): Promise<StoredDelivery[]> {
+export async function listOpenJobs(driverId: string): Promise<StoredDelivery[]> {
   if (!pool) return [];
   const result = await pool.query(
-    "SELECT * FROM deliveries WHERE driver_id IS NULL AND status = 'PAYMENT_AUTHORIZED' ORDER BY created_at ASC"
+    `SELECT d.* FROM deliveries d
+     WHERE d.driver_id IS NULL
+       AND d.status = 'PAYMENT_AUTHORIZED'
+       AND EXISTS (
+         SELECT 1 FROM drivers dr
+         WHERE dr.id=$1 AND dr.status='APPROVED' AND dr.online=true
+           AND EXISTS (SELECT 1 FROM driver_documents dd WHERE dd.driver_id=dr.id AND dd.status='APPROVED')
+       )
+     ORDER BY d.created_at ASC`,
+    [driverId]
   );
   return result.rows.map(rowToDelivery);
 }
