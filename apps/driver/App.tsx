@@ -122,6 +122,9 @@ export default function App() {
   const [ratingComment, setRatingComment] = React.useState("");
   const [ratingSubmitted, setRatingSubmitted] = React.useState(false);
   const [payout, setPayout] = React.useState<{ amount_minor: number; currency: string; status: string } | null>(null);
+  const [payoutAccount, setPayoutAccount] = React.useState<{ bankCode: string; bankName?: string | null; accountName: string; accountLast4: string; recipientCode: string } | null>(null);
+  const [bankCode, setBankCode] = React.useState("");
+  const [accountNumber, setAccountNumber] = React.useState("");
 
   async function registerPushNotifications() {
     try {
@@ -136,6 +139,39 @@ export default function App() {
         platform: Platform.OS === "ios" ? "IOS" : "ANDROID"
       });
     } catch {}
+  }
+
+  async function loadPayoutAccount() {
+    try {
+      const data = await driverApi("/api/driver/payout-account");
+      setPayoutAccount(data.account ?? null);
+    } catch {}
+  }
+
+  async function savePayoutAccount() {
+    if (!/^\\d{3,6}$/.test(bankCode.trim()) || !/^\\d{10}$/.test(accountNumber.trim())) {
+      Alert.alert("Payout account", "Enter a valid bank code and 10-digit Nigerian account number.");
+      return;
+    }
+    try {
+      const data = await driverApi("/api/driver/payout-account", { bankCode: bankCode.trim(), accountNumber: accountNumber.trim() });
+      setPayoutAccount(data.account);
+      setAccountNumber("");
+      Alert.alert("Payout account verified", data.account?.accountName ? "Paystack verified the account as " + data.account.accountName + "." : "Your payout account is ready.");
+    } catch (error) {
+      Alert.alert("Payout account", error instanceof Error ? error.message : "Unable to save payout account.");
+    }
+  }
+
+  async function withdrawPayout() {
+    if (!job?.id) return;
+    try {
+      const data = await driverApi("/api/deliveries/" + job.id + "/payout/withdraw", {});
+      setPayout(data.payout ?? null);
+      Alert.alert("Withdrawal started", "The courier payout has been sent to your verified bank recipient.");
+    } catch (error) {
+      Alert.alert("Withdrawal failed", error instanceof Error ? error.message : "Unable to withdraw payout.");
+    }
   }
 
   async function loadNotifications() {
@@ -169,6 +205,7 @@ export default function App() {
       if (!token) return;
       setSignedIn(true);
       await refreshDriverState();
+      await loadPayoutAccount();
       const current = await driverApi("/api/driver/me");
       const docs = current.driver?.status === "APPROVED" ? await driverApi("/api/driver/documents") : null;
       if (current.driver?.status === "APPROVED" && docs?.documents?.some((d: { status: string }) => d.status === "APPROVED")) await goOnline();
@@ -189,6 +226,7 @@ export default function App() {
       await AsyncStorage.setItem("swiftdrop.driverAccessToken", data.accessToken);
       setSignedIn(true);
       await refreshDriverState();
+      await loadPayoutAccount();
       const current = await driverApi("/api/driver/me");
       if (current.driver?.status === "APPROVED") {
         const docs = await driverApi("/api/driver/documents");
@@ -481,10 +519,25 @@ export default function App() {
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.container}>
     <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop Driver</Text><Text style={styles.subtitle}>Deliver safely. Track every trip.</Text></View><Pressable onPress={() => setShowNotifications(v => !v)}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable></View>
 
+    <View style={styles.card}>
+      <Text style={styles.title}>Payout bank account</Text>
+      {payoutAccount ? <>
+        <Text>{payoutAccount.accountName}</Text>
+        <Text style={styles.muted}>Account ending ••••{payoutAccount.accountLast4} · Bank code {payoutAccount.bankCode}</Text>
+        <Text style={styles.done}>✓ Verified for Paystack payouts</Text>
+      </> : <>
+        <Text style={styles.muted}>Add the bank account where your courier earnings should be sent. SwiftDrop verifies the account before saving it.</Text>
+        <TextInput style={styles.input} placeholder="Bank code (e.g. 058)" value={bankCode} onChangeText={setBankCode} keyboardType="number-pad" />
+        <TextInput style={styles.input} placeholder="10-digit account number" value={accountNumber} onChangeText={setAccountNumber} keyboardType="number-pad" maxLength={10} />
+        <Pressable style={styles.primary} onPress={() => void savePayoutAccount()}><Text style={styles.primaryText}>Verify payout account</Text></Pressable>
+      </>}
+    </View>
+
     {payout && <View style={styles.card}>
       <Text style={styles.title}>Delivery payout</Text>
       <Text style={styles.earnings}>₦{(payout.amount_minor / 100).toLocaleString()}</Text>
       <Text style={styles.muted}>Status: {payout.status.replaceAll("_", " ")}</Text>
+      {payout.status === "ELIGIBLE" && payoutAccount ? <Pressable style={styles.primary} onPress={() => void withdrawPayout()}><Text style={styles.primaryText}>Withdraw to bank</Text></Pressable> : null}
     </View>}
 
     {showNotifications && <View style={styles.card}>
