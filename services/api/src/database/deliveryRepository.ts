@@ -61,7 +61,7 @@ export async function updatePaymentStatus(
 ): Promise<PaymentRecord | null> {
   if (!pool) return null;
   const result = await pool.query(
-    `UPDATE payments SET status=$2, provider_reference=COALESCE($3, provider_reference), updated_at=now()
+    `UPDATE payments SET status=$2, escrow_status=CASE WHEN $2='HELD' THEN 'HELD' WHEN $2='RELEASED' THEN 'RELEASED' WHEN $2='REFUNDED' THEN 'REFUNDED' ELSE escrow_status END, provider_reference=COALESCE($3, provider_reference), updated_at=now()
      WHERE delivery_id=$1 RETURNING *`,
     [deliveryId, status, providerReference ?? null]
   );
