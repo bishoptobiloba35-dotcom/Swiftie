@@ -102,6 +102,19 @@ export class SwiftDropApi {
     if (!response.ok) throw new Error(data.error ?? "Unable to register notification device");
   }
 
+  async notifications(): Promise<Array<{ id: string; delivery_id?: string | null; title: string; body: string; type: string; read_at?: string | null; created_at: string }>> {
+    const response = await fetch(this.baseUrl + "/api/notifications", { headers: this.headers() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to load notifications");
+    return data.notifications ?? [];
+  }
+
+  async markNotificationRead(id: string): Promise<void> {
+    const response = await fetch(this.baseUrl + "/api/notifications/" + encodeURIComponent(id) + "/read", { method: "POST", headers: this.headers() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to mark notification as read");
+  }
+
   async health(): Promise<{ ok: boolean }> {
     const response = await fetch(this.baseUrl + "/health");
     if (!response.ok) throw new Error("API health check failed");
