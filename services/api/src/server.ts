@@ -507,6 +507,12 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   if (signature !== expected) return res.status(401).end();
 
   const event = req.body as any;
+  const webhookHash = crypto.createHash("sha256").update(JSON.stringify(req.body)).digest("hex");
+  const webhookReference = String(event?.data?.reference ?? "");
+  if (databaseEnabled()) {
+    const claimed = await claimPaystackWebhookEvent({ payloadHash: webhookHash, eventType: String(event?.event ?? ""), providerReference: webhookReference || null });
+    if (!claimed) return res.status(200).json({ received: true, duplicate: true });
+  }
   if (event?.event === "transfer.success" || event?.event === "transfer.failed" || event?.event === "transfer.reversed") {
     const reference = String(event?.data?.reference ?? "");
     if (reference) {
