@@ -121,7 +121,9 @@ export default function App() {
   const [ratingStars, setRatingStars] = React.useState(0);
   const [ratingComment, setRatingComment] = React.useState("");
   const [ratingSubmitted, setRatingSubmitted] = React.useState(false);
-  const [payout, setPayout] = React.useState<{ amount_minor: number; currency: string; status: string } | null>(null);
+  const [payout, setPayout] = React.useState<{ amount_minor: number; currency: string; status: string; provider_status?: string | null; provider_reference?: string | null; failure_reason?: string | null } | null>(null);
+  const [payoutSummary, setPayoutSummary] = React.useState<{ eligibleMinor: number; processingMinor: number; releasedMinor: number; failedMinor: number }>({ eligibleMinor: 0, processingMinor: 0, releasedMinor: 0, failedMinor: 0 });
+  const [payoutHistory, setPayoutHistory] = React.useState<Array<{ id: string; amount_minor: number; currency: string; status: string; provider_reference?: string | null; failure_reason?: string | null }>>([]);
   const [payoutAccount, setPayoutAccount] = React.useState<{ bankCode: string; bankName?: string | null; accountName: string; accountLast4: string; recipientCode: string } | null>(null);
   const [bankCode, setBankCode] = React.useState("");
   const [accountNumber, setAccountNumber] = React.useState("");
@@ -138,6 +140,14 @@ export default function App() {
         token: token.data,
         platform: Platform.OS === "ios" ? "IOS" : "ANDROID"
       });
+    } catch {}
+  }
+
+  async function loadPayoutHistory() {
+    try {
+      const data = await driverApi("/api/driver/payouts");
+      setPayoutSummary(data.summary ?? { eligibleMinor: 0, processingMinor: 0, releasedMinor: 0, failedMinor: 0 });
+      setPayoutHistory(data.payouts ?? []);
     } catch {}
   }
 
@@ -168,6 +178,7 @@ export default function App() {
     try {
       const data = await driverApi("/api/deliveries/" + job.id + "/payout/withdraw", {});
       setPayout(data.payout ?? null);
+      await loadPayoutHistory();
       Alert.alert("Withdrawal started", "The transfer has been initiated. Your payout will change to Released after Paystack confirms the transfer.");
     } catch (error) {
       Alert.alert("Withdrawal failed", error instanceof Error ? error.message : "Unable to withdraw payout.");
@@ -206,6 +217,7 @@ export default function App() {
       setSignedIn(true);
       await refreshDriverState();
       await loadPayoutAccount();
+      await loadPayoutHistory();
       const current = await driverApi("/api/driver/me");
       const docs = current.driver?.status === "APPROVED" ? await driverApi("/api/driver/documents") : null;
       if (current.driver?.status === "APPROVED" && docs?.documents?.some((d: { status: string }) => d.status === "APPROVED")) await goOnline();
@@ -533,12 +545,32 @@ export default function App() {
       </>}
     </View>
 
+    <View style={styles.card}>
+      <Text style={styles.title}>Courier earnings</Text>
+      <Text style={styles.muted}>Available · ₦{(payoutSummary.eligibleMinor / 100).toLocaleString()} · Processing · ₦{(payoutSummary.processingMinor / 100).toLocaleString()}</Text>
+      <Text style={styles.muted}>Paid out · ₦{(payoutSummary.releasedMinor / 100).toLocaleString()} · Failed · ₦{(payoutSummary.failedMinor / 100).toLocaleString()}</Text>
+      <Pressable style={styles.primary} onPress={() => void loadPayoutHistory()}><Text style={styles.primaryText}>Refresh earnings</Text></Pressable>
+    </View>
+
     {payout && <View style={styles.card}>
-      <Text style={styles.title}>Delivery payout</Text>
+      <Text style={styles.title}>Current payout</Text>
       <Text style={styles.earnings}>₦{(payout.amount_minor / 100).toLocaleString()}</Text>
-      <Text style={styles.muted}>Status: {payout.status.replaceAll("_", " ")}</Text>
+      <Text style={styles.muted}>Status: {payout.status.replaceAll("_", " ")}{payout.provider_status ? " · Paystack: " + payout.provider_status : ""}</Text>
+      {payout.provider_reference ? <Text style={styles.muted}>Transfer: {payout.provider_reference}</Text> : null}
+      {payout.failure_reason ? <Text style={styles.muted}>Reason: {payout.failure_reason}</Text> : null}
       {payout.status === "ELIGIBLE" && payoutAccount ? <Pressable style={styles.primary} onPress={() => void withdrawPayout()}><Text style={styles.primaryText}>Withdraw to bank</Text></Pressable> : null}
     </View>}
+
+    <View style={styles.card}>
+      <Text style={styles.title}>Payout history</Text>
+      {payoutHistory.length === 0 ? <Text style={styles.muted}>No payouts yet.</Text> : payoutHistory.slice(0, 10).map(item => (
+        <View key={item.id} style={{ marginBottom: 10 }}>
+          <Text>₦{(item.amount_minor / 100).toLocaleString()} · {item.status.replaceAll("_", " ")}</Text>
+          <Text style={styles.muted}>{item.provider_reference ? "Paystack " + item.provider_reference : "Awaiting transfer"}</Text>
+          {item.failure_reason ? <Text style={styles.muted}>{item.failure_reason}</Text> : null}
+        </View>
+      ))}
+    </View>
 
     {showNotifications && <View style={styles.card}>
       <View style={styles.header}><Text style={styles.title}>Notifications</Text><Pressable onPress={() => void loadNotifications()}><Text>Refresh</Text></Pressable></View>
