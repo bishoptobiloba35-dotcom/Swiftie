@@ -268,6 +268,9 @@ export type PayoutRecord = {
   status: "PENDING" | "ELIGIBLE" | "PROCESSING" | "RELEASED" | "FAILED" | "CANCELLED";
   provider?: string | null;
   providerReference?: string | null;
+  providerStatus?: string | null;
+  failureReason?: string | null;
+  processedAt?: string | null;
 };
 
 function rowToPayout(row: any): PayoutRecord {
@@ -279,7 +282,10 @@ function rowToPayout(row: any): PayoutRecord {
     currency: row.currency,
     status: row.status,
     provider: row.provider ?? null,
-    providerReference: row.provider_reference ?? null
+    providerReference: row.provider_reference ?? null,
+    providerStatus: row.provider_status ?? null,
+    failureReason: row.failure_reason ?? null,
+    processedAt: row.processed_at ? new Date(row.processed_at).toISOString() : null
   };
 }
 
@@ -373,11 +379,16 @@ export async function updatePayoutProviderStatus(
   if (!pool) return null;
   const result = await pool.query(
     `UPDATE payouts
-     SET status=$2, provider='paystack', updated_at=now()
+     SET status=$2,
+         provider='paystack',
+         provider_status=$3,
+         failure_reason=CASE WHEN $2='FAILED' THEN COALESCE(failure_reason, 'Paystack transfer failed') ELSE failure_reason END,
+         processed_at=CASE WHEN $2 IN ('RELEASED','FAILED','CANCELLED') THEN COALESCE(processed_at, now()) ELSE processed_at END,
+         updated_at=now()
      WHERE provider_reference=$1
        AND status IN ('PROCESSING','ELIGIBLE','RELEASED')
      RETURNING *`,
-    [providerReference, status]
+    [providerReference, status, status === "RELEASED" ? "success" : status === "CANCELLED" ? "reversed" : "failed"]
   );
   return result.rows[0] ? rowToPayout(result.rows[0]) : null;
 }
