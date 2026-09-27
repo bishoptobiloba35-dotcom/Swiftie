@@ -19,7 +19,8 @@
           "isAndroidBackgroundLocationEnabled": false,
           "isIosBackgroundLocationEnabled": false
         }
-      ]
+      ],
+      "expo-notifications"
     ]
   }
 }
