@@ -479,6 +479,18 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   if (signature !== expected) return res.status(401).end();
 
   const event = req.body as any;
+  if (event?.event === "transfer.success" || event?.event === "transfer.failed" || event?.event === "transfer.reversed") {
+    const reference = String(event?.data?.reference ?? "");
+    if (reference) {
+      const status = event.event === "transfer.success" ? "RELEASED" : event.event === "transfer.failed" ? "FAILED" : "CANCELLED";
+      const payout = await updatePayoutProviderStatus(reference, status);
+      if (payout) {
+        await recordDeliveryEvent({ deliveryId: payout.deliveryId, eventType: "PAYOUT_" + status, metadata: { provider: "paystack", reference } });
+      }
+    }
+    return res.status(200).json({ received: true });
+  }
+
   if (event?.event !== "charge.success") return res.status(200).json({ received: true });
 
   const data = event.data;
