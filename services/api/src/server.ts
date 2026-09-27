@@ -11,7 +11,7 @@ import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, confirmReceiverAndReleaseEscrow } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
-import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, createDispute, findDispute, resolveDispute, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, markPayoutFailed, markPayoutReleased } from "./database/deliveryRepository.js";
+import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, createDispute, findDispute, resolveDispute, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -246,8 +246,12 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
     await markPayoutFailed(req.params.id);
     return res.status(502).json({ error: data.message ?? "Paystack transfer could not be initiated" });
   }
-  await markPayoutReleased(req.params.id, data.data.reference);
-  return res.json({ payout: await findPayout(req.params.id), providerStatus: data.data.status ?? "pending" });
+  await setPayoutProviderReference(req.params.id, data.data.reference);
+  return res.status(202).json({
+    payout: await findPayout(req.params.id),
+    providerStatus: data.data.status ?? "pending",
+    message: "Transfer initiated. Final payout status will be updated from Paystack's transfer webhook."
+  });
 });
 
 app.get("/api/drivers/:driverId/ratings", requireAuth(), async (req, res) => {
@@ -468,7 +472,7 @@ app.post("/api/deliveries/:id/payment", requireAuth("CUSTOMER"), async (req, res
 });
 
 app.post("/api/payments/paystack/webhook", async (req, res) => {
-  const secret = process.env.PAYMENT_WEBHOOK_SECRET;
+  const secret = process.env.PAYMENT_WEBHOOK_SECRET ?? process.env.PAYSTACK_SECRET_KEY;
   const signature = req.header("x-paystack-signature");
   if (!secret || !signature) return res.status(401).end();
 
@@ -483,7 +487,8 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
     const reference = String(event?.data?.reference ?? "");
     if (reference) {
       const status = event.event === "transfer.success" ? "RELEASED" : event.event === "transfer.failed" ? "FAILED" : "CANCELLED";
-      const payout = await updatePayoutProviderStatus(reference, status);
+      const failureReason = event?.data?.failures?.message ?? event?.data?.failures?.reason ?? event?.data?.reason ?? null;
+      const payout = await updatePayoutProviderStatus(reference, status, failureReason);
       if (payout) {
         await recordDeliveryEvent({ deliveryId: payout.deliveryId, eventType: "PAYOUT_" + status, metadata: { provider: "paystack", reference } });
       }
