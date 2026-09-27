@@ -103,6 +103,26 @@ export class SwiftDropApi {
     if (!response.ok) throw new Error(data.error ?? "Unable to register notification device");
   }
 
+  async rateDelivery(deliveryId: string, stars: number, comment?: string): Promise<void> {
+    const response = await fetch(this.baseUrl + `/api/deliveries/${encodeURIComponent(deliveryId)}/rating`, {
+      method: "POST",
+      headers: this.headers(true),
+      body: JSON.stringify({ stars, comment })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to save rating");
+  }
+
+  async rateSender(deliveryId: string, stars: number, comment?: string): Promise<void> {
+    const response = await fetch(this.baseUrl + `/api/deliveries/${encodeURIComponent(deliveryId)}/rating/driver`, {
+      method: "POST",
+      headers: this.headers(true),
+      body: JSON.stringify({ stars, comment })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to save rating");
+  }
+
   async notifications(): Promise<Array<{ id: string; delivery_id?: string | null; title: string; body: string; type: string; read_at?: string | null; created_at: string }>> {
     const response = await fetch(this.baseUrl + "/api/notifications", { headers: this.headers() });
     const data = await response.json();
