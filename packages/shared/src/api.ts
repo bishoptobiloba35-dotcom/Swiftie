@@ -92,6 +92,16 @@ export class SwiftDropApi {
     return data;
   }
 
+  async registerDeviceToken(token: string, platform: "IOS" | "ANDROID"): Promise<void> {
+    const response = await fetch(this.baseUrl + "/api/notifications/device-token", {
+      method: "POST",
+      headers: this.headers(true),
+      body: JSON.stringify({ token, platform })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to register notification device");
+  }
+
   async health(): Promise<{ ok: boolean }> {
     const response = await fetch(this.baseUrl + "/health");
     if (!response.ok) throw new Error("API health check failed");
