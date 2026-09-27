@@ -2,6 +2,8 @@ import React from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
 import * as Location from "expo-location";
+import * as Notifications from "expo-notifications";
+import Constants from "expo-constants";
 import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, ScrollView } from "react-native";
 import { SwiftDropApi, type ApiDelivery } from "../../packages/shared/src/api";
 
@@ -32,11 +34,24 @@ export default function App() {
   const [location, setLocation] = React.useState<ApiDelivery["latestLocation"]>(null);
   const socketRef = React.useRef<WebSocket | null>(null);
 
+  async function registerPushNotifications() {
+    try {
+      const permission = await Notifications.getPermissionsAsync();
+      let status = permission.status;
+      if (status !== "granted") status = (await Notifications.requestPermissionsAsync()).status;
+      if (status !== "granted") return;
+      const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
+      const token = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+      await api.registerDeviceToken(token.data, "IOS");
+    } catch {}
+  }
+
   React.useEffect(() => {
     AsyncStorage.getItem("swiftdrop.customerAccessToken").then(token => {
       if (token) {
         api.setAccessToken(token);
         setSignedIn(true);
+        void registerPushNotifications();
       }
     });
     return () => socketRef.current?.close();
@@ -48,6 +63,7 @@ export default function App() {
       if (data.user.role !== "CUSTOMER") throw new Error("This account is not a customer account.");
       await AsyncStorage.setItem("swiftdrop.customerAccessToken", data.accessToken);
       setSignedIn(true);
+      void registerPushNotifications();
     } catch (error) {
       Alert.alert("Sign in failed", error instanceof Error ? error.message : "Unable to sign in");
     }
