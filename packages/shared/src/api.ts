@@ -4,6 +4,9 @@ export type ApiDelivery = {
   senderId?: string;
   receiverName: string;
   receiverPhone: string;
+  weightKg: number;
+  dimensionsCm: { length: number; width: number; height: number };
+  isPerishable: boolean;
   pickup: { label: string; formattedAddress: string; location?: { latitude: number; longitude: number; recordedAt?: string } };
   dropoff: { label: string; formattedAddress: string; location?: { latitude: number; longitude: number; recordedAt?: string } };
   quote?: {
@@ -12,6 +15,9 @@ export type ApiDelivery = {
     durationSeconds: number;
     baseFareMinor: number;
     distanceFareMinor: number;
+    weightFareMinor: number;
+    sizeFareMinor: number;
+    perishableSurchargeMinor: number;
     serviceFeeMinor: number;
     totalMinor: number;
   };
@@ -50,6 +56,9 @@ export type CreateDeliveryInput = {
     durationSeconds: number;
     baseFareMinor: number;
     distanceFareMinor: number;
+    weightFareMinor: number;
+    sizeFareMinor: number;
+    perishableSurchargeMinor: number;
     serviceFeeMinor: number;
     totalMinor: number;
   };
