@@ -669,20 +669,26 @@ app.get("/api/deliveries/:id", requireAuth("CUSTOMER", "DRIVER", "ADMIN"), async
 });
 
 app.post("/api/track/session", async (req, res) => {
-  const code = String(req.body?.trackingCode ?? "").trim();
-  if (!code) return res.status(400).json({ error: "trackingCode is required" });
+  const code = String(req.body?.trackingCode ?? "").trim().toUpperCase();
+  const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
+  if (!code || !receiverPhone) return res.status(400).json({ error: "trackingCode and receiverPhone are required" });
   const delivery = databaseEnabled()
     ? await findByTrackingCode(code)
     : [...deliveries.values()].find(d => d.trackingCode === code) ?? null;
-  if (!delivery) return res.status(404).json({ error: "Tracking code not found" });
+  if (!delivery) return res.status(404).json({ error: "Tracking details not found" });
+  if (delivery.receiverPhone !== receiverPhone) return res.status(403).json({ error: "Tracking details could not be verified" });
   res.json({ deliveryId: delivery.id, trackingToken: issueTrackingToken(delivery.id) });
 });
 
 app.get("/api/track/:trackingCode", async (req, res) => {
+  const code = String(req.params.trackingCode ?? "").trim().toUpperCase();
+  const receiverPhone = String(req.query.receiverPhone ?? "").trim();
+  if (!receiverPhone) return res.status(400).json({ error: "receiverPhone is required" });
   const delivery = databaseEnabled()
-    ? await findByTrackingCode(req.params.trackingCode)
-    : [...deliveries.values()].find(d => d.trackingCode === req.params.trackingCode) ?? null;
-  if (!delivery) return res.status(404).json({ error: "Tracking code not found" });
+    ? await findByTrackingCode(code)
+    : [...deliveries.values()].find(d => d.trackingCode === code) ?? null;
+  if (!delivery) return res.status(404).json({ error: "Tracking details not found" });
+  if (delivery.receiverPhone !== receiverPhone) return res.status(403).json({ error: "Tracking details could not be verified" });
   const latestLocation = databaseEnabled() ? await latestPersistentLocation(delivery.id) : getLatestLocation(delivery.id);
   // Public tracking intentionally omits internal driver identity and other account data.
   res.json({
