@@ -18,9 +18,6 @@ import { identity } from "./requestIdentity.js";
 
 const app = express();
 
-if (databaseEnabled()) {
-  runMigrations().catch(error => console.error("Database migrations failed:", error));
-}
 const httpServer = createServer(app);
 const allowedOrigins = (process.env.CORS_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean);
 app.use(cors({
@@ -846,4 +843,13 @@ app.post("/api/deliveries/:id/complete", requireAuth("DRIVER"), async (req, res)
 
 attachRealtime(httpServer);
 const port = Number(process.env.API_PORT || 4000);
-httpServer.listen(port, () => console.log(`SwiftDrop API listening on port ${port}`));
+
+async function startServer() {
+  if (databaseEnabled()) await runMigrations();
+  httpServer.listen(port, () => console.log(`SwiftDrop API listening on port ${port}`));
+}
+
+startServer().catch(error => {
+  console.error("SwiftDrop API startup failed:", error);
+  process.exit(1);
+});
