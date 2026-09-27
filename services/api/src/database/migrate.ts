@@ -6,7 +6,8 @@ const migrations = [
   { id: "002_ratings", file: "002_ratings.sql" },
   { id: "003_delivery_pricing_confirmation", file: "003_delivery_pricing_confirmation.sql" },
   { id: "004_receiver_ratings", file: "004_receiver_ratings.sql" },
-  { id: "005_driver_payout_accounts", file: "005_driver_payout_accounts.sql" }
+  { id: "005_driver_payout_accounts", file: "005_driver_payout_accounts.sql" },
+  { id: "006_payout_provider_status", file: "006_payout_provider_status.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
