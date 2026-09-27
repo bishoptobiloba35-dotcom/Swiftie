@@ -30,6 +30,15 @@ export default function App() {
   const [receiver, setReceiver] = React.useState("");
   const [phone, setPhone] = React.useState("");
   const [receiverPin, setReceiverPin] = React.useState("");
+  const [weightKg, setWeightKg] = React.useState("");
+  const [lengthCm, setLengthCm] = React.useState("");
+  const [widthCm, setWidthCm] = React.useState("");
+  const [heightCm, setHeightCm] = React.useState("");
+  const [isPerishable, setIsPerishable] = React.useState(false);
+  const [receiverConfirmPin, setReceiverConfirmPin] = React.useState("");
+  const [receiverRatingStars, setReceiverRatingStars] = React.useState(0);
+  const [receiverRatingComment, setReceiverRatingComment] = React.useState("");
+  const [receiverRatingSubmitted, setReceiverRatingSubmitted] = React.useState(false);
   const [email, setEmail] = React.useState("");
   const [quote, setQuote] = React.useState<Awaited<ReturnType<typeof api.quote>> | null>(null);
   const [delivery, setDelivery] = React.useState<ApiDelivery | null>(null);
@@ -151,7 +160,7 @@ export default function App() {
   async function getQuote() {
     try {
       const coords = coordinates();
-      setQuote(await api.quote(coords));
+      setQuote(await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable }));
     } catch (error) {
       Alert.alert("Quote unavailable", error instanceof Error ? error.message : "Enter valid locations.");
     }
@@ -161,12 +170,16 @@ export default function App() {
     try {
       if (!pickup.trim() || !dropoff.trim() || !receiver.trim() || !phone.trim() || !email.trim() || !/^\d{6}$/.test(receiverPin)) throw new Error("Complete the delivery details and enter a 6-digit receiver PIN.");
       const coords = coordinates();
-      const serverQuote = await api.quote(coords);
+      if (![weightKg, lengthCm, widthCm, heightCm].every(value => Number(value) > 0)) throw new Error("Enter parcel weight and all three dimensions.");
+      const serverQuote = await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable });
       setQuote(serverQuote);
       const created = await api.createDelivery({
         receiverName: receiver.trim(),
         receiverPhone: phone.trim(),
         receiverPin,
+        weightKg: Number(weightKg),
+        dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) },
+        isPerishable,
         pickup: { label: "Pickup", formattedAddress: pickup.trim(), ...coords.pickup },
         dropoff: { label: "Drop-off", formattedAddress: dropoff.trim(), ...coords.dropoff },
         quote: { ...serverQuote, currency: "NGN" }
@@ -192,6 +205,33 @@ export default function App() {
       socketRef.current = api.connectToTracking(session.deliveryId, session.trackingToken, next => setLocation(next), update => setDelivery(prev => prev ? { ...prev, ...update } : prev));
     } catch (error) {
       Alert.alert("Tracking failed", error instanceof Error ? error.message : "Tracking code not found.");
+    }
+  }
+
+  async function confirmReceipt() {
+    if (!delivery || !trackingPhone.trim() || receiverConfirmPin.length !== 6) {
+      Alert.alert("Receipt confirmation", "Enter the receiver phone number and six-digit PIN.");
+      return;
+    }
+    try {
+      const result = await api.confirmReceiver(delivery.id, trackingPhone.trim(), receiverConfirmPin);
+      setDelivery(result.delivery);
+      Alert.alert("Receipt confirmed", "The delivery is complete and the held payment has been released for courier payout.");
+    } catch (error) {
+      Alert.alert("Confirmation failed", error instanceof Error ? error.message : "Unable to confirm receipt");
+    }
+  }
+
+  async function submitReceiverRating() {
+    if (!delivery || receiverRatingStars < 1) {
+      Alert.alert("Rating", "Please select a rating from 1 to 5 stars.");
+      return;
+    }
+    try {
+      await api.rateReceiverDelivery(delivery.id, trackingPhone.trim(), receiverConfirmPin, receiverRatingStars, receiverRatingComment.trim() || undefined);
+      setReceiverRatingSubmitted(true);
+    } catch (error) {
+      Alert.alert("Rating failed", error instanceof Error ? error.message : "Unable to save receiver rating");
     }
   }
 
@@ -244,7 +284,10 @@ export default function App() {
     <TextInput style={styles.input} placeholder="Receiver name" value={receiver} onChangeText={setReceiver} />
     <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
     <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={receiverPin} onChangeText={setReceiverPin} />
-    <Text style={styles.hint}>Give this PIN to the receiver. It is required to complete delivery.</Text>
+    <Text style={styles.hint}>Give this PIN to the receiver. The receiver must use it to confirm receipt before courier payout is released.</Text>
+    <TextInput style={styles.input} placeholder="Parcel weight (kg)" keyboardType="decimal-pad" value={weightKg} onChangeText={setWeightKg} />
+    <View style={styles.row}><TextInput style={[styles.input, styles.third]} placeholder="Length cm" keyboardType="decimal-pad" value={lengthCm} onChangeText={setLengthCm} /><TextInput style={[styles.input, styles.third]} placeholder="Width cm" keyboardType="decimal-pad" value={widthCm} onChangeText={setWidthCm} /><TextInput style={[styles.input, styles.third]} placeholder="Height cm" keyboardType="decimal-pad" value={heightCm} onChangeText={setHeightCm} /></View>
+    <Pressable style={styles.secondary} onPress={() => setIsPerishable(v => !v)}><Text>{isPerishable ? "✓ Perishable item (surcharge applied)" : "Mark as perishable / food item"}</Text></Pressable>
     <TextInput style={styles.input} placeholder="Payment email" keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
     <Pressable style={styles.secondary} onPress={() => void getQuote()}><Text style={styles.secondaryText}>Calculate delivery price</Text></Pressable>
     {quote && <Text style={styles.code}>Server quote: ₦{(quote.totalMinor / 100).toLocaleString()} · {(quote.distanceMeters / 1000).toFixed(1)} km</Text>}
@@ -294,7 +337,21 @@ export default function App() {
         <Text style={styles.eta}>Approx. ETA: {etaMinutes(haversineDistanceMeters(location, delivery.dropoff))} min</Text>
         <Text style={styles.muted}>Updated: {new Date(location.recordedAt).toLocaleTimeString()}</Text>
       </View> : <Text style={styles.muted}>Waiting for the driver to start the trip…</Text>}
-      {delivery.status === "DELIVERED" && <Text style={styles.done}>✓ Delivered and PIN verified</Text>}{delivery.status === "DELIVERED" && <View style={styles.ratingBox}>
+      {delivery.status === "ARRIVED" && <View style={styles.ratingBox}>
+        <Text style={styles.photoTitle}>Receiver confirmation</Text>
+        <Text style={styles.muted}>Only confirm after you have physically received the parcel. This releases the held courier payment.</Text>
+        <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} />
+        <Pressable style={styles.primary} onPress={() => void confirmReceipt()}><Text style={styles.primaryText}>I received the parcel & complete delivery</Text></Pressable>
+      </View>}
+      {delivery.status === "DELIVERED" && <Text style={styles.done}>✓ Delivered and PIN verified</Text>}
+      {delivery.status === "DELIVERED" && <View style={styles.ratingBox}>
+        <Text style={styles.photoTitle}>Receiver review</Text>
+        {receiverRatingSubmitted ? <Text style={styles.done}>✓ Receiver review submitted</Text> : <>
+          <View style={styles.starRow}>{[1,2,3,4,5].map(star => <Pressable key={star} onPress={() => setReceiverRatingStars(star)}><Text style={styles.star}>{star <= receiverRatingStars ? "★" : "☆"}</Text></Pressable>)}</View>
+          <TextInput style={styles.input} placeholder="Optional comment about the courier" value={receiverRatingComment} onChangeText={setReceiverRatingComment} maxLength={500} multiline />
+          <Pressable style={styles.primary} onPress={() => void submitReceiverRating()}><Text style={styles.primaryText}>Submit receiver review</Text></Pressable>
+        </>}
+      </View>{delivery.status === "DELIVERED" && <View style={styles.ratingBox}>
         <Text style={styles.photoTitle}>Rate your driver</Text>
         {ratingSubmitted ? <Text style={styles.done}>✓ Rating submitted</Text> : <>
           <View style={styles.starRow}>{[1,2,3,4,5].map(star => <Pressable key={star} onPress={() => setRatingStars(star)}><Text style={styles.star}>{star <= ratingStars ? "★" : "☆"}</Text></Pressable>)}</View>
@@ -310,6 +367,8 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#fff" },
   auth: { flex: 1, padding: 24, justifyContent: "center", gap: 14 },
   container: { padding: 24, gap: 12 },
+  row: { flexDirection: "row", gap: 8 },
+  third: { flex: 1 },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   headerActions: { flexDirection: "row", gap: 14, alignItems: "center" },
   logo: { fontSize: 32, fontWeight: "800", marginTop: 8 },
