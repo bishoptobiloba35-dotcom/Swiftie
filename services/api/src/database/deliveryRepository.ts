@@ -172,6 +172,9 @@ export async function createPersistentDelivery(input: {
   pickup: { label: string; formattedAddress: string; location: { latitude: number; longitude: number } };
   dropoff: { label: string; formattedAddress: string; location: { latitude: number; longitude: number } };
   receiverPin: string;
+  weightKg: number;
+  dimensionsCm: { length: number; width: number; height: number };
+  isPerishable: boolean;
   quote?: StoredDelivery["quote"];
 }): Promise<StoredDelivery> {
   if (!pool) throw new Error("DATABASE_URL is not configured");
