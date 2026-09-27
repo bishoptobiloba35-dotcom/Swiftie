@@ -407,6 +407,19 @@ export async function verifyReceiverPin(id: string, pin: string): Promise<boolea
   return Boolean(delivery && verifyPin(pin, delivery.receiverPinHash));
 }
 
+export async function confirmReceiverDelivery(id: string, receiverPhone: string, pin: string): Promise<StoredDelivery | null> {
+  if (!pool) return null;
+  const delivery = await findDelivery(id);
+  if (!delivery || delivery.receiverPhone !== receiverPhone || !verifyPin(pin, delivery.receiverPinHash)) return null;
+  const result = await pool.query(
+    `UPDATE deliveries SET status='DELIVERED', receiver_confirmed_at=now(), updated_at=now()
+     WHERE id=$1 AND receiver_phone=$2 AND status='ARRIVED'
+     RETURNING *`,
+    [id, receiverPhone]
+  );
+  return result.rows[0] ? rowToDelivery(result.rows[0]) : null;
+}
+
 export async function completeDelivery(id: string, driverId: string): Promise<StoredDelivery | null> {
   if (!pool) return null;
   const result = await pool.query(
