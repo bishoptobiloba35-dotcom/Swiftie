@@ -161,8 +161,8 @@ export async function createPersistentDelivery(input: {
   senderId: string;
   receiverName: string;
   receiverPhone: string;
-  pickup: { label: string; formattedAddress: string };
-  dropoff: { label: string; formattedAddress: string };
+  pickup: { label: string; formattedAddress: string; location: { latitude: number; longitude: number } };
+  dropoff: { label: string; formattedAddress: string; location: { latitude: number; longitude: number } };
   receiverPin: string;
   quote?: StoredDelivery["quote"];
 }): Promise<StoredDelivery> {
