@@ -365,9 +365,9 @@ app.post("/api/deliveries/:id/payment", requireAuth("CUSTOMER"), async (req, res
     : await getOne(req.params.id);
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
 
-  const amountMinor = Number(req.body?.amountMinor);
-  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
-    return res.status(400).json({ error: "A valid server-calculated amount is required" });
+  const amountMinor = delivery.quote?.totalMinor;
+  if (!amountMinor || !Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+    return res.status(409).json({ error: "Delivery does not have a valid server quote" });
   }
 
   if (!databaseEnabled()) {
@@ -805,7 +805,7 @@ app.get("/api/driver/:driverId/jobs", requireAuth("DRIVER"), async (req, res) =>
   if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
   if (req.params.driverId !== driverId) return res.status(403).json({ error: "Driver identity mismatch" });
   const jobs = databaseEnabled()
-    ? await listOpenJobs()
+    ? await listOpenJobs(driverId)
     : [...deliveries.values()].filter(d => !d.driverId && ["CREATED", "PAYMENT_AUTHORIZED"].includes(d.status));
   res.json({ driverId, jobs: jobs.map(safeDelivery) });
 });
@@ -814,8 +814,7 @@ app.post("/api/deliveries/:id/accept", requireAuth("DRIVER"), async (req, res) =
   const driverId = await authenticatedDriverId(req);
   if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
   if (databaseEnabled()) {
-    const updated = await transitionDelivery(req.params.id, "CREATED", "DRIVER_ASSIGNED", driverId)
-      ?? await transitionDelivery(req.params.id, "PAYMENT_AUTHORIZED", "DRIVER_ASSIGNED", driverId);
+    const updated = await transitionDelivery(req.params.id, "PAYMENT_AUTHORIZED", "DRIVER_ASSIGNED", driverId);
     if (!updated) return res.status(409).json({ error: "Delivery is no longer available" });
     await recordDeliveryEvent({ deliveryId: updated.id, eventType: "DRIVER_ASSIGNED", actorUserId: identity(req), metadata: { driverId } });
     await notificationForDelivery(updated.id, updated.senderId, "Driver assigned", "A driver has accepted your SwiftDrop delivery.", "DRIVER_ASSIGNED");
