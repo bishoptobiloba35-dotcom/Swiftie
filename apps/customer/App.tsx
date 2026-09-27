@@ -7,7 +7,6 @@ import Constants from "expo-constants";
 import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, ScrollView, Platform } from "react-native";
 import { SwiftDropApi, type ApiDelivery } from "../../packages/shared/src/api";
 import { haversineDistanceMeters, etaMinutes } from "./src/trackingMath";
-import { haversineDistanceMeters, etaMinutes } from "./src/trackingMath";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 const api = new SwiftDropApi(API_URL);
@@ -35,6 +34,9 @@ export default function App() {
   const [delivery, setDelivery] = React.useState<ApiDelivery | null>(null);
   const [trackingCode, setTrackingCode] = React.useState("");
   const [location, setLocation] = React.useState<ApiDelivery["latestLocation"]>(null);
+  const [ratingStars, setRatingStars] = React.useState(0);
+  const [ratingComment, setRatingComment] = React.useState("");
+  const [ratingSubmitted, setRatingSubmitted] = React.useState(false);
   const [notifications, setNotifications] = React.useState<Array<{ id: string; title: string; body: string; type: string; read_at?: string | null; created_at: string }>>([]);
   const [showNotifications, setShowNotifications] = React.useState(false);
   const socketRef = React.useRef<WebSocket | null>(null);
@@ -190,6 +192,20 @@ export default function App() {
     }
   }
 
+  async function submitRating() {
+    if (!delivery || ratingStars < 1) {
+      Alert.alert("Rating", "Please select a rating from 1 to 5 stars.");
+      return;
+    }
+    try {
+      await api.rateDelivery(delivery.id, ratingStars, ratingComment.trim() || undefined);
+      setRatingSubmitted(true);
+      Alert.alert("Thank you", "Your delivery rating has been saved.");
+    } catch (error) {
+      Alert.alert("Rating failed", error instanceof Error ? error.message : "Unable to save rating.");
+    }
+  }
+
   async function signOut() {
     socketRef.current?.close();
     await AsyncStorage.removeItem("swiftdrop.customerAccessToken");
@@ -243,7 +259,14 @@ export default function App() {
       <Text>Pickup: {delivery.pickup.formattedAddress}</Text>
       <Text>Drop-off: {delivery.dropoff.formattedAddress}</Text>
       {location ? <View style={styles.locationBox}><Text style={styles.photoTitle}>Live driver position</Text><Text>Latitude: {location.latitude.toFixed(6)}</Text><Text>Longitude: {location.longitude.toFixed(6)}</Text><Text style={styles.eta}>Approx. ETA: {etaMinutes(haversineDistanceMeters(location, delivery.dropoff))} min</Text><Text style={styles.muted}>Updated: {new Date(location.recordedAt).toLocaleTimeString()}</Text></View> : <Text style={styles.muted}>Waiting for the driver to start the trip…</Text>}
-      {delivery.status === "DELIVERED" && <Text style={styles.done}>✓ Delivered and PIN verified</Text>}
+      {delivery.status === "DELIVERED" && <Text style={styles.done}>✓ Delivered and PIN verified</Text>}{delivery.status === "DELIVERED" && <View style={styles.ratingBox}>
+        <Text style={styles.photoTitle}>Rate your driver</Text>
+        {ratingSubmitted ? <Text style={styles.done}>✓ Rating submitted</Text> : <>
+          <View style={styles.starRow}>{[1,2,3,4,5].map(star => <Pressable key={star} onPress={() => setRatingStars(star)}><Text style={styles.star}>{star <= ratingStars ? "★" : "☆"}</Text></Pressable>)}</View>
+          <TextInput style={styles.input} placeholder="Optional comment" value={ratingComment} onChangeText={setRatingComment} maxLength={500} multiline />
+          <Pressable style={styles.primary} onPress={() => void submitRating()}><Text style={styles.primaryText}>Submit rating</Text></Pressable>
+        </>}
+      </View>}
     </View>}
   </ScrollView></SafeAreaView>;
 }
@@ -277,5 +300,8 @@ const styles = StyleSheet.create({
   done: { fontSize: 17, fontWeight: "800", marginTop: 6 },
   eta: { fontSize: 18, fontWeight: "800", marginTop: 6 },
   notification: { borderTopWidth: 1, borderTopColor: "#eee", paddingTop: 10, gap: 4 },
-  notificationTitle: { fontWeight: "800" }
+  notificationTitle: { fontWeight: "800" },
+  ratingBox: { borderTopWidth: 1, borderTopColor: "#eee", paddingTop: 12, marginTop: 8, gap: 10 },
+  starRow: { flexDirection: "row", gap: 8 },
+  star: { fontSize: 34 }
 });
