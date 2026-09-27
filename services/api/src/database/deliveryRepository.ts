@@ -242,7 +242,15 @@ export async function findByTrackingCode(code: string): Promise<StoredDelivery |
 export async function setDriverOnline(driverId: string, online: boolean): Promise<boolean> {
   if (!pool) return false;
   const result = await pool.query(
-    `UPDATE drivers SET online=$2 WHERE id=$1 AND status='APPROVED' RETURNING id`,
+    `UPDATE drivers d
+     SET online=$2
+     WHERE d.id=$1
+       AND d.status='APPROVED'
+       AND EXISTS (
+         SELECT 1 FROM driver_documents dd
+         WHERE dd.driver_id=d.id AND dd.status='APPROVED'
+       )
+     RETURNING d.id`,
     [driverId, online]
   );
   return result.rowCount === 1;
@@ -357,6 +365,13 @@ export async function markPayoutReleased(deliveryId: string, providerReference: 
 
 export async function assignNextDeliveryToDriver(driverId: string): Promise<StoredDelivery | null> {
   if (!pool) return null;
+  const verified = await pool.query(
+    `SELECT 1 FROM drivers d
+     WHERE d.id=$1 AND d.status='APPROVED'
+       AND EXISTS (SELECT 1 FROM driver_documents dd WHERE dd.driver_id=d.id AND dd.status='APPROVED')`,
+    [driverId]
+  );
+  if (!verified.rowCount) return null;
   const result = await pool.query(
     `WITH candidate AS (
        SELECT id
