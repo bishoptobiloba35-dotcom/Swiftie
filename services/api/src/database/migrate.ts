@@ -3,7 +3,8 @@ import path from "node:path";
 import { pool } from "./db.js";
 
 const migrations = [
-  { id: "002_ratings", file: "002_ratings.sql" }
+  { id: "002_ratings", file: "002_ratings.sql" },
+  { id: "003_delivery_pricing_confirmation", file: "003_delivery_pricing_confirmation.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
