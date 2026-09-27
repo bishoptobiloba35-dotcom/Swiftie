@@ -200,7 +200,7 @@ export class SwiftDropApi {
     return response.json();
   }
 
-  async paymentStatus(deliveryId: string): Promise<{ payment: { status: string; amountMinor: number; currency: string; providerReference?: string | null } }> {
+  async paymentStatus(deliveryId: string): Promise<{ payment: { status: string; escrowStatus?: string; amountMinor: number; currency: string; providerReference?: string | null } }> {
     const response = await fetch(this.baseUrl + `/api/deliveries/${deliveryId}/payment/status`, {
       headers: this.headers()
     });
