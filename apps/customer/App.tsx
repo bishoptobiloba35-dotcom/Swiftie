@@ -159,6 +159,7 @@ export default function App() {
 
   async function getQuote() {
     try {
+      if (![weightKg, lengthCm, widthCm, heightCm].every(value => Number(value) > 0)) throw new Error("Enter parcel weight and all three dimensions first.");
       const coords = coordinates();
       setQuote(await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable }));
     } catch (error) {
@@ -290,7 +291,17 @@ export default function App() {
     <Pressable style={styles.secondary} onPress={() => setIsPerishable(v => !v)}><Text>{isPerishable ? "✓ Perishable item (surcharge applied)" : "Mark as perishable / food item"}</Text></Pressable>
     <TextInput style={styles.input} placeholder="Payment email" keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
     <Pressable style={styles.secondary} onPress={() => void getQuote()}><Text style={styles.secondaryText}>Calculate delivery price</Text></Pressable>
-    {quote && <Text style={styles.code}>Server quote: ₦{(quote.totalMinor / 100).toLocaleString()} · {(quote.distanceMeters / 1000).toFixed(1)} km</Text>}
+    {quote && <View style={styles.card}>
+      <Text style={styles.photoTitle}>Delivery price</Text>
+      <Text>Distance: {(quote.distanceMeters / 1000).toFixed(1)} km</Text>
+      <Text>Base fare: ₦{(quote.baseFareMinor / 100).toLocaleString()}</Text>
+      <Text>Distance: ₦{(quote.distanceFareMinor / 100).toLocaleString()}</Text>
+      <Text>Weight: ₦{(quote.weightFareMinor / 100).toLocaleString()}</Text>
+      <Text>Size/handling: ₦{(quote.sizeFareMinor / 100).toLocaleString()}</Text>
+      {quote.perishableSurchargeMinor > 0 && <Text>Perishable/food surcharge: ₦{(quote.perishableSurchargeMinor / 100).toLocaleString()}</Text>}
+      <Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
+      <Text style={styles.code}>Total: ₦{(quote.totalMinor / 100).toLocaleString()}</Text>
+    </View>}
     <Pressable style={styles.primary} onPress={() => void createDelivery()}><Text style={styles.primaryText}>Create & continue to payment</Text></Pressable>
     {delivery?.status === "PAYMENT_AUTHORIZED" && <Text style={styles.done}>✓ Payment verified — driver matching can begin.</Text>}
     {delivery && <Text style={styles.code}>Tracking code: {delivery.trackingCode}</Text>}
