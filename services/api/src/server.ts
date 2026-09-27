@@ -8,7 +8,7 @@ import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
-import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus } from "./database/deliveryRepository.js";
+import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, confirmReceiverAndReleaseEscrow } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
 import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, createDispute, findDispute, resolveDispute } from "./database/deliveryRepository.js";
@@ -731,7 +731,7 @@ async function authenticatedDriverId(req: express.Request): Promise<string | nul
   const userId = identity(req as express.Request & { user?: { userId: string; role: "CUSTOMER" | "DRIVER" | "ADMIN" } });
   if (!databaseEnabled()) return userId;
   const driver = await driverForUser(userId);
-  return driver?.id ?? null;
+  return driver?.status === "APPROVED" ? driver.id : null;
 }
 
 app.post("/api/driver/availability", requireAuth("DRIVER"), async (req, res) => {
@@ -915,39 +915,43 @@ app.post("/api/deliveries/:id/arrived", requireAuth("DRIVER"), async (req, res) 
 
 app.post("/api/deliveries/:id/complete", requireAuth("DRIVER"), async (req, res) => {
   const driverId = await authenticatedDriverId(req);
-  const pin = String(req.body?.receiverPin ?? "");
-  if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
-  if (databaseEnabled()) {
-    const current = await findDelivery(req.params.id);
-    if (!current || current.driverId !== driverId) return res.status(403).json({ error: "Driver is not assigned to this delivery" });
-    if (!["IN_TRANSIT", "ARRIVED"].includes(current.status)) return res.status(409).json({ error: "Delivery is not ready for completion" });
-    if (!await verifyReceiverPin(req.params.id, pin)) return res.status(401).json({ error: "Invalid receiver PIN" });
-    const updated = await completeDelivery(req.params.id, driverId);
-    if (!updated) return res.status(409).json({ error: "Delivery is not ready or driver is not assigned" });
-    const payment = await findPayment(updated.id);
-    const payoutPercent = Math.min(100, Math.max(0, Number(process.env.DRIVER_PAYOUT_PERCENT ?? 90)));
-    const payoutAmount = payment?.amountMinor ? Math.max(0, Math.floor(payment.amountMinor * payoutPercent / 100)) : 0;
-    if (payoutAmount > 0) {
-      await createEligiblePayout(updated.id, driverId, payoutAmount);
-      await recordDeliveryEvent({
-        deliveryId: updated.id,
-        eventType: "PAYOUT_ELIGIBLE",
-        actorUserId: identity(req),
-        metadata: { amountMinor: payoutAmount, currency: payment?.currency ?? "NGN" }
-      });
+  if (!driverId) return res.status(403).json({ error: "Only KYC-verified drivers can manage deliveries" });
+  const current = databaseEnabled() ? await findDelivery(req.params.id) : deliveries.get(req.params.id);
+  if (!current || current.driverId !== driverId) return res.status(403).json({ error: "Driver is not assigned to this delivery" });
+  if (current.status !== "ARRIVED") return res.status(409).json({ error: "Driver must mark the parcel arrived before receiver confirmation" });
+  return res.status(409).json({ error: "Receiver confirmation is required to complete delivery and release payment" });
+});
+
+app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Receiver confirmation requires the production database" });
+  const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
+  const receiverPin = String(req.body?.receiverPin ?? "").trim();
+  if (!receiverPhone || !/^\d{6}$/.test(receiverPin)) return res.status(400).json({ error: "Receiver phone and six-digit PIN are required" });
+  const payment = await findPayment(req.params.id);
+  if (!payment || payment.status !== "HELD") return res.status(409).json({ error: "Payment is not currently held for delivery release" });
+  try {
+    const result = await confirmReceiverAndReleaseEscrow(
+      req.params.id,
+      receiverPhone,
+      receiverPin,
+      Number(process.env.DRIVER_PAYOUT_PERCENT ?? 90)
+    );
+    if (!result) return res.status(403).json({ error: "Receiver details could not be verified or delivery is not awaiting confirmation" });
+    await recordDeliveryEvent({
+      deliveryId: result.delivery.id,
+      eventType: "RECEIVER_CONFIRMED_DELIVERY",
+      metadata: { receiverPhoneVerified: true, escrowReleased: true, payoutEligible: result.payoutAmountMinor > 0 }
+    });
+    await notificationForDelivery(result.delivery.id, result.delivery.senderId, "Delivery confirmed", "The receiver confirmed receipt. Your held payment has been released for courier payout.", "DELIVERED");
+    if (result.delivery.driverId) {
+      const driver = await driverForUser(result.delivery.driverId);
+      if (driver) await notificationForDelivery(result.delivery.id, driver.userId, "Payment released", "The receiver confirmed receipt. Your courier payout is now eligible.", "PAYOUT_ELIGIBLE");
     }
-    await recordDeliveryEvent({ deliveryId: updated.id, eventType: "DELIVERED", actorUserId: identity(req), metadata: { receiverPinVerified: true } });
-    await notificationForDelivery(updated.id, updated.senderId, "Delivery completed", "Your parcel was delivered successfully using the receiver PIN.", "DELIVERED");
-    return res.json(safeDelivery(updated));
+    publishDeliveryUpdate(result.delivery.id, safeDelivery(result.delivery));
+    return res.json({ delivery: safeDelivery(result.delivery), payoutAmountMinor: result.payoutAmountMinor, escrowStatus: "RELEASED" });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to confirm delivery" });
   }
-  const delivery = deliveries.get(req.params.id);
-  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
-  if (delivery.driverId !== driverId) return res.status(403).json({ error: "Driver is not assigned to this delivery" });
-  if (!["IN_TRANSIT", "ARRIVED"].includes(delivery.status)) return res.status(409).json({ error: "Delivery is not ready for completion" });
-  if (pin !== delivery.receiverPin) return res.status(401).json({ error: "Invalid receiver PIN" });
-  delivery.status = "DELIVERED"; delivery.updatedAt = new Date().toISOString();
-  publishDeliveryUpdate(delivery.id, safeDelivery(delivery));
-  res.json(safeDelivery(delivery));
 });
 
 attachRealtime(httpServer);
