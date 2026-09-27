@@ -31,7 +31,9 @@ export default function App() {
   const [quote, setQuote] = React.useState<Awaited<ReturnType<typeof api.quote>> | null>(null);
   const [delivery, setDelivery] = React.useState<ApiDelivery | null>(null);
   const [trackingCode, setTrackingCode] = React.useState("");
-  const [location, setLocation] = React.useState<ApiDelivery["latestLocation"]>(null);\n  const [notifications, setNotifications] = React.useState<Array<{ id: string; title: string; body: string; type: string; read_at?: string | null; created_at: string }>>([]);\n  const [showNotifications, setShowNotifications] = React.useState(false);
+  const [location, setLocation] = React.useState<ApiDelivery["latestLocation"]>(null);
+  const [notifications, setNotifications] = React.useState<Array<{ id: string; title: string; body: string; type: string; read_at?: string | null; created_at: string }>>([]);
+  const [showNotifications, setShowNotifications] = React.useState(false);
   const socketRef = React.useRef<WebSocket | null>(null);
 
   async function registerPushNotifications() {
@@ -80,12 +82,22 @@ export default function App() {
       });
       await AsyncStorage.setItem("swiftdrop.customerAccessToken", data.accessToken);
       setSignedIn(true);
+      void registerPushNotifications();
+      void loadNotifications();
     } catch (error) {
       Alert.alert("Registration failed", error instanceof Error ? error.message : "Unable to register");
     }
   }
 
-  async function loadNotifications() {\n    try { setNotifications(await api.notifications()); } catch {}\n  }\n\n  async function markNotificationRead(id: string) {\n    try { await api.markNotificationRead(id); setNotifications(items => items.map(item => item.id === id ? { ...item, read_at: new Date().toISOString() } : item)); } catch {}\n  }\n\n  async function searchAddress(query: string, target: "pickup" | "dropoff") {
+  async function loadNotifications() {
+    try { setNotifications(await api.notifications()); } catch {}
+  }
+
+  async function markNotificationRead(id: string) {
+    try { await api.markNotificationRead(id); setNotifications(items => items.map(item => item.id === id ? { ...item, read_at: new Date().toISOString() } : item)); } catch {}
+  }
+
+  async function searchAddress(query: string, target: "pickup" | "dropoff") {
     try {
       if (query.trim().length < 3) {
         target === "pickup" ? setPickupResults([]) : setDropoffResults([]);
@@ -194,7 +206,8 @@ export default function App() {
   }
 
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.container}>
-    <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.subtitle}>Send it. Track it. Receive it.</Text></View><View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View></View>\n    {showNotifications && <View style={styles.card}><View style={styles.header}><Text style={styles.heading}>Notifications</Text><Pressable onPress={() => void loadNotifications()}><Text>Refresh</Text></Pressable></View>{notifications.length === 0 ? <Text style={styles.muted}>No notifications.</Text> : notifications.map(item => <Pressable key={item.id} style={styles.notification} onPress={() => void markNotificationRead(item.id)}><Text style={styles.notificationTitle}>{item.title}</Text><Text>{item.body}</Text><Text style={styles.muted}>{new Date(item.created_at).toLocaleString()} · {item.read_at ? "Read" : "Tap to mark read"}</Text></Pressable>)}</View>}
+    <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.subtitle}>Send it. Track it. Receive it.</Text></View><View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View></View>
+    {showNotifications && <View style={styles.card}><View style={styles.header}><Text style={styles.heading}>Notifications</Text><Pressable onPress={() => void loadNotifications()}><Text>Refresh</Text></Pressable></View>{notifications.length === 0 ? <Text style={styles.muted}>No notifications.</Text> : notifications.map(item => <Pressable key={item.id} style={styles.notification} onPress={() => void markNotificationRead(item.id)}><Text style={styles.notificationTitle}>{item.title}</Text><Text>{item.body}</Text><Text style={styles.muted}>{new Date(item.created_at).toLocaleString()} · {item.read_at ? "Read" : "Tap to mark read"}</Text></Pressable>)}</View>}
     <Text style={styles.heading}>Create a delivery</Text>
     <TextInput style={styles.input} placeholder="Pickup address" value={pickup} onChangeText={value => { setPickup(value); void searchAddress(value, "pickup"); }} />
     {pickupResults.map((result, index) => <Pressable key={"pickup-" + index} style={styles.suggestion} onPress={() => chooseAddress(result, "pickup")}><Text>{result.formattedAddress}</Text></Pressable>)}
@@ -232,7 +245,8 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#fff" },
   auth: { flex: 1, padding: 24, justifyContent: "center", gap: 14 },
   container: { padding: 24, gap: 12 },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },\n  headerActions: { flexDirection: "row", gap: 14, alignItems: "center" },
+  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  headerActions: { flexDirection: "row", gap: 14, alignItems: "center" },
   logo: { fontSize: 32, fontWeight: "800", marginTop: 8 },
   subtitle: { color: "#666", marginBottom: 12 },
   heading: { fontSize: 20, fontWeight: "700", marginTop: 8 },
@@ -253,5 +267,7 @@ const styles = StyleSheet.create({
   locationBox: { borderWidth: 1, borderColor: "#eee", borderRadius: 10, padding: 12, gap: 4 },
   photoTitle: { fontWeight: "700" },
   muted: { color: "#666" },
-  done: { fontSize: 17, fontWeight: "800", marginTop: 6 },\n  notification: { borderTopWidth: 1, borderTopColor: "#eee", paddingTop: 10, gap: 4 },\n  notificationTitle: { fontWeight: "800" }
+  done: { fontSize: 17, fontWeight: "800", marginTop: 6 },
+  notification: { borderTopWidth: 1, borderTopColor: "#eee", paddingTop: 10, gap: 4 },
+  notificationTitle: { fontWeight: "800" }
 });
