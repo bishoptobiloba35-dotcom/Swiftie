@@ -45,7 +45,8 @@ const notificationForDelivery = async (deliveryId: string, userId: string, title
 
 
 const createDeliverySchema = z.object({
-  senderId: z.string().uuid(), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
+  senderId: z.string().uuid().optional(), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
+  receiverPin: z.string().regex(/^\d{6}$/, "Receiver PIN must be exactly 6 digits"),
   pickup: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   dropoff: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   quote: z.object({
@@ -183,7 +184,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
     return res.status(500).json({ error: "Unable to calculate delivery quote" });
   }
   parsed.data.quote = quote;
-  const pin = String(Math.floor(100000 + Math.random() * 900000));
+  const pin = parsed.data.receiverPin;
   try {
     if (databaseEnabled()) {
       const created = await createPersistentDelivery({ ...input, receiverPin: pin });
