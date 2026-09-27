@@ -335,7 +335,8 @@ export default function App() {
       <Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
       <Text style={styles.code}>Total: ₦{(quote.totalMinor / 100).toLocaleString()}</Text>
     </View>}
-    <Pressable style={styles.primary} onPress={() => void createDelivery()}><Text style={styles.primaryText}>Create & continue to payment</Text></Pressable>
+    <Text style={styles.hint}>Escrow protection: your payment is held after successful payment and is only released for courier payout after the receiver confirms receipt.</Text>
+    <Pressable style={styles.primary} onPress={() => void createDelivery()}><Text style={styles.primaryText}>Create & continue to escrow payment</Text></Pressable>
     {delivery?.status === "PAYMENT_AUTHORIZED" && <Text style={styles.done}>✓ Payment verified — driver matching can begin.</Text>}
     {delivery && <Text style={styles.code}>Tracking code: {delivery.trackingCode}</Text>}
 
