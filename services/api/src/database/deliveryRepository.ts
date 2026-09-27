@@ -78,6 +78,10 @@ export type StoredDelivery = {
   driverId?: string;
   pickupPhotoUrl?: string;
   receiverPinHash: string;
+  weightKg?: number;
+  dimensionsCm?: { length: number; width: number; height: number };
+  isPerishable: boolean;
+  receiverConfirmedAt?: string;
   quote?: {
     currency: string;
     distanceMeters: number;
@@ -104,6 +108,10 @@ function rowToDelivery(row: any): StoredDelivery {
     driverId: row.driver_id ?? undefined,
     pickupPhotoUrl: row.pickup_photo_url ?? undefined,
     receiverPinHash: row.receiver_pin_hash,
+    weightKg: row.weight_kg == null ? undefined : Number(row.weight_kg),
+    dimensionsCm: row.length_cm == null ? undefined : { length: Number(row.length_cm), width: Number(row.width_cm), height: Number(row.height_cm) },
+    isPerishable: Boolean(row.is_perishable),
+    receiverConfirmedAt: row.receiver_confirmed_at ? new Date(row.receiver_confirmed_at).toISOString() : undefined,
     quote: row.quote_total_minor == null ? undefined : {
       currency: row.quote_currency ?? "NGN",
       distanceMeters: Number(row.quote_distance_meters),
@@ -173,14 +181,15 @@ export async function createPersistentDelivery(input: {
     `INSERT INTO deliveries
       (id, tracking_code, sender_id, receiver_name, receiver_phone,
        pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, status, receiver_pin_hash,
+       weight_kg, length_cm, width_cm, height_cm, is_perishable,
        quote_distance_meters, quote_duration_seconds, quote_base_fare_minor,
        quote_distance_fare_minor, quote_service_fee_minor, quote_total_minor, quote_currency)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'CREATED',$12,$13,$14,$15,$16,$17,$18,$19)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'CREATED',$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
      RETURNING *`,
     [id, code, input.senderId, input.receiverName, input.receiverPhone,
       input.pickup.formattedAddress, input.pickup.location.latitude, input.pickup.location.longitude,
       input.dropoff.formattedAddress, input.dropoff.location.latitude, input.dropoff.location.longitude,
-      hashPin(input.receiverPin), input.quote?.distanceMeters ?? null, input.quote?.durationSeconds ?? null,
+      hashPin(input.receiverPin), input.weightKg ?? null, input.dimensionsCm?.length ?? null, input.dimensionsCm?.width ?? null, input.dimensionsCm?.height ?? null, input.isPerishable ?? false, input.quote?.distanceMeters ?? null, input.quote?.durationSeconds ?? null,
       input.quote?.baseFareMinor ?? null, input.quote?.distanceFareMinor ?? null,
       input.quote?.serviceFeeMinor ?? null, input.quote?.totalMinor ?? null, input.quote?.currency ?? "NGN"]
   );
