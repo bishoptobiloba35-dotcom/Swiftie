@@ -27,6 +27,7 @@ export default function App() {
   const [dropoffLng, setDropoffLng] = React.useState("");
   const [receiver, setReceiver] = React.useState("");
   const [phone, setPhone] = React.useState("");
+  const [receiverPin, setReceiverPin] = React.useState("");
   const [email, setEmail] = React.useState("");
   const [quote, setQuote] = React.useState<Awaited<ReturnType<typeof api.quote>> | null>(null);
   const [delivery, setDelivery] = React.useState<ApiDelivery | null>(null);
@@ -152,14 +153,14 @@ export default function App() {
 
   async function createDelivery() {
     try {
-      if (!pickup.trim() || !dropoff.trim() || !receiver.trim() || !phone.trim() || !email.trim()) throw new Error("Complete the delivery details.");
+      if (!pickup.trim() || !dropoff.trim() || !receiver.trim() || !phone.trim() || !email.trim() || !/^\d{6}$/.test(receiverPin)) throw new Error("Complete the delivery details and enter a 6-digit receiver PIN.");
       const coords = coordinates();
       const serverQuote = await api.quote(coords);
       setQuote(serverQuote);
       const created = await api.createDelivery({
-        senderId: "00000000-0000-4000-8000-000000000000",
         receiverName: receiver.trim(),
         receiverPhone: phone.trim(),
+        receiverPin,
         pickup: { label: "Pickup", formattedAddress: pickup.trim(), ...coords.pickup },
         dropoff: { label: "Drop-off", formattedAddress: dropoff.trim(), ...coords.dropoff },
         quote: { ...serverQuote, currency: "NGN" }
@@ -221,6 +222,8 @@ export default function App() {
     <View style={styles.row}><TextInput style={styles.half} placeholder="Drop-off latitude" value={dropoffLat} onChangeText={setDropoffLat} keyboardType="decimal-pad" /><TextInput style={styles.half} placeholder="Drop-off longitude" value={dropoffLng} onChangeText={setDropoffLng} keyboardType="decimal-pad" /></View>
     <TextInput style={styles.input} placeholder="Receiver name" value={receiver} onChangeText={setReceiver} />
     <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
+    <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={receiverPin} onChangeText={setReceiverPin} />
+    <Text style={styles.hint}>Give this PIN to the receiver. It is required to complete delivery.</Text>
     <TextInput style={styles.input} placeholder="Payment email" keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
     <Pressable style={styles.secondary} onPress={() => void getQuote()}><Text style={styles.secondaryText}>Calculate delivery price</Text></Pressable>
     {quote && <Text style={styles.code}>Server quote: ₦{(quote.totalMinor / 100).toLocaleString()} · {(quote.distanceMeters / 1000).toFixed(1)} km</Text>}
