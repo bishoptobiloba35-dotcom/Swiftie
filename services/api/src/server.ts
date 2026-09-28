@@ -15,7 +15,7 @@ import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
 import { validateProductionConfig } from "./productionConfig.js";
-import { ensureAiDefaults, getAiPermission, updateAiPermission, auditAiAction, evaluateAiPayment, reserveAiSpend, releaseAiSpend, type AiMode } from "./aiPolicy.js";
+import { ensureAiDefaults, getAiPermission, updateAiPermission, auditAiAction, evaluateAiPayment, reserveAiSpend, releaseAiSpend, getAiAccess, consumeAiChatCredit, type AiMode } from "./aiPolicy.js";
 import { executeAiAction } from "./aiExecutor.js";
 import { getPrivateObject, objectStorageEnabled, putPrivateObject } from "./storage.js";
 import { enqueueNotification, processNotificationOutbox, processNotificationPushReceipts } from "./notificationOutbox.js";
@@ -259,6 +259,55 @@ app.post("/api/business/dispatch/run", requireAuth("CUSTOMER"), async (req, res)
     return res.status(500).json({ error: "Unable to run business dispatch" });
   }
 });
+app.get("/api/ai/access", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "AI access requires the production database" });
+  try {
+    return res.json({ access: await getAiAccess(identity(req)) });
+  } catch {
+    return res.status(500).json({ error: "Unable to load AI access" });
+  }
+});
+
+app.post("/api/ai/chat", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "AI chat requires the production database" });
+  const message = String(req.body?.message ?? "").trim();
+  if (message.length < 1 || message.length > 2000) return res.status(400).json({ error: "A message between 1 and 2000 characters is required" });
+  try {
+    const access = await getAiAccess(identity(req));
+    if (access.remainingChatCredits <= 0) return res.status(429).json({
+      error: "Your Swift AI chat credits are used up for this month",
+      plan: access.plan,
+      monthlyChatCredits: access.monthlyChatCredits
+    });
+    const credit = await consumeAiChatCredit(identity(req));
+    const normalized = message.toLowerCase();
+    let suggestedAction: string | null = null;
+    if (/(track|where.*parcel|where.*delivery|location|moving)/.test(normalized)) suggestedAction = "GET_TRACKING";
+    else if (/(status|delivered|delivery.*status)/.test(normalized)) suggestedAction = "GET_DELIVERY_STATUS";
+    else if (/(support|help|problem|issue)/.test(normalized)) suggestedAction = "CONTACT_SUPPORT";
+    else if (/(reschedule|change.*delivery.*time)/.test(normalized)) suggestedAction = "RESCHEDULE_DELIVERY";
+    else if (/(pay|payment|pay for)/.test(normalized)) suggestedAction = "PAY_DELIVERY";
+
+    const premiumOnly = suggestedAction === "PAY_DELIVERY" || suggestedAction === "RESCHEDULE_DELIVERY";
+    if (premiumOnly && access.plan === "BASIC") {
+      return res.json({
+        reply: "That Swift AI tool is available on Individual Premium. On Basic, I can help you track deliveries, check delivery status, and contact support.",
+        suggestedAction: null,
+        access: { ...access, remainingChatCredits: credit.remaining }
+      });
+    }
+    return res.json({
+      reply: suggestedAction
+        ? `I can help with that. Choose the suggested Swift AI action to continue.`
+        : "I can help you track a delivery, check its status, or contact SwiftDrop support. Individual Premium also adds rescheduling and payment actions.",
+      suggestedAction,
+      access: { ...access, remainingChatCredits: credit.remaining }
+    });
+  } catch (error) {
+    return res.status(429).json({ error: error instanceof Error ? error.message : "Unable to use AI chat" });
+  }
+});
+
 app.get("/api/ai/permissions", requireAuth("CUSTOMER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "AI permissions require the production database" });
   if (!await hasIndividualPremium(identity(req))) return res.status(403).json({ error: "Individual Premium is required for Swift AI" });
@@ -296,7 +345,11 @@ app.patch("/api/ai/permissions", requireAuth("CUSTOMER"), async (req, res) => {
 
 app.post("/api/ai/actions", requireAuth("CUSTOMER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "AI actions require the production database" });
-  if (!await hasIndividualPremium(identity(req))) return res.status(403).json({ error: "Individual Premium is required for Swift AI" });
+  const aiAccess = await getAiAccess(identity(req));
+  const actionProbe = String(req.body?.actionType ?? "").trim().toUpperCase();
+  if (!aiAccess.allowedActions.includes(actionProbe)) {
+    return res.status(403).json({ error: "This Swift AI tool is not available on your current plan", plan: aiAccess.plan, allowedActions: aiAccess.allowedActions });
+  }
   const parsed = z.object({
     actionType: z.string().trim().min(2).max(80),
     amountMinor: z.number().int().positive().max(500_000_000).optional(),
