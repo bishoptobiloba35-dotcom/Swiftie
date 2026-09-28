@@ -534,6 +534,145 @@ export async function setPayoutProviderReference(deliveryId: string, providerRef
   return result.rows[0] ? rowToPayout(result.rows[0]) : null;
 }
 
+export type AdminCaseAuditRecord = {
+  id: string;
+  deliveryId?: string | null;
+  disputeId?: string | null;
+  adminUserId?: string | null;
+  action: string;
+  note?: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+export async function recordAdminCaseAudit(input: {
+  deliveryId?: string | null;
+  disputeId?: string | null;
+  adminUserId?: string | null;
+  action: string;
+  note?: string | null;
+  metadata?: Record<string, unknown>;
+}): Promise<AdminCaseAuditRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `INSERT INTO admin_case_audit (delivery_id, dispute_id, admin_user_id, action, note, metadata)
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb)
+     RETURNING id, delivery_id, dispute_id, admin_user_id, action, note, metadata, created_at`,
+    [
+      input.deliveryId ?? null,
+      input.disputeId ?? null,
+      input.adminUserId ?? null,
+      input.action,
+      input.note ?? null,
+      JSON.stringify(input.metadata ?? {})
+    ]
+  );
+  const row = result.rows[0];
+  return row ? {
+    id: row.id,
+    deliveryId: row.delivery_id ?? null,
+    disputeId: row.dispute_id ?? null,
+    adminUserId: row.admin_user_id ?? null,
+    action: row.action,
+    note: row.note ?? null,
+    metadata: row.metadata ?? {},
+    createdAt: new Date(row.created_at).toISOString()
+  } : null;
+}
+
+export async function listAdminCaseAudit(deliveryId: string): Promise<AdminCaseAuditRecord[]> {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT id, delivery_id, dispute_id, admin_user_id, action, note, metadata, created_at
+       FROM admin_case_audit
+      WHERE delivery_id=$1
+      ORDER BY created_at DESC
+      LIMIT 100`,
+    [deliveryId]
+  );
+  return result.rows.map((row: any) => ({
+    id: row.id,
+    deliveryId: row.delivery_id ?? null,
+    disputeId: row.dispute_id ?? null,
+    adminUserId: row.admin_user_id ?? null,
+    action: row.action,
+    note: row.note ?? null,
+    metadata: row.metadata ?? {},
+    createdAt: new Date(row.created_at).toISOString()
+  }));
+}
+
+export async function markDisputeUnderReview(deliveryId: string): Promise<DisputeRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `UPDATE disputes SET status='UNDER_REVIEW', updated_at=now()
+      WHERE delivery_id=$1 AND status='OPEN'
+      RETURNING *`,
+    [deliveryId]
+  );
+  return result.rows[0] ? rowToDispute(result.rows[0]) : null;
+}
+
+export async function prepareRefund(deliveryId: string, refundAmountMinor: number): Promise<{ payment: PaymentRecord; payout: PayoutRecord | null; dispute: DisputeRecord } | null> {
+  if (!pool) return null;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const paymentResult = await client.query(
+      `SELECT p.*, d.id AS delivery_id
+         FROM payments p
+         JOIN deliveries d ON d.id=p.delivery_id
+        WHERE p.delivery_id=$1
+        FOR UPDATE`,
+      [deliveryId]
+    );
+    const paymentRow = paymentResult.rows[0];
+    if (!paymentRow || paymentRow.provider !== 'paystack' || !paymentRow.provider_reference) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const amountMinor = Number(paymentRow.amount_minor);
+    if (!Number.isInteger(refundAmountMinor) || refundAmountMinor < 1 || refundAmountMinor > amountMinor) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    if (['REFUNDED'].includes(paymentRow.status) || ['processed','processing','pending'].includes(String(paymentRow.refund_status ?? ''))) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const disputeResult = await client.query(
+      `SELECT * FROM disputes
+        WHERE delivery_id=$1 AND status IN ('OPEN','UNDER_REVIEW')
+        FOR UPDATE`,
+      [deliveryId]
+    );
+    const disputeRow = disputeResult.rows[0];
+    if (!disputeRow) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const payoutResult = await client.query(
+      `UPDATE payouts
+          SET status='CANCELLED', updated_at=now()
+        WHERE delivery_id=$1 AND status IN ('PENDING','ELIGIBLE')
+        RETURNING *`,
+      [deliveryId]
+    );
+    const payoutRow = payoutResult.rows[0] ?? null;
+    await client.query('COMMIT');
+    return {
+      payment: paymentFromRow(paymentRow),
+      payout: payoutRow ? rowToPayout(payoutRow) : null,
+      dispute: rowToDispute(disputeRow)
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function assignNextDeliveryToDriver(driverId: string): Promise<StoredDelivery | null> {
   if (!pool) return null;
   const verified = await pool.query(
