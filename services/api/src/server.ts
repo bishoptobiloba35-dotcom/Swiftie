@@ -42,6 +42,24 @@ app.use(express.json({
     (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buffer);
   }
 }));
+
+app.use((req, res, next) => {
+  const requestId = randomUUID();
+  const startedAt = process.hrtime.bigint();
+  res.setHeader("x-request-id", requestId);
+  res.on("finish", () => {
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    console.log(JSON.stringify({
+      event: "http_request",
+      requestId,
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      durationMs: Math.round(durationMs * 100) / 100
+    }));
+  });
+  next();
+});
 app.use("/api/auth", authRoutes);
 
 type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED";
@@ -1550,6 +1568,22 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to confirm delivery" });
   }
+});
+
+app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const requestId = res.getHeader("x-request-id");
+  console.error(JSON.stringify({
+    event: "http_error",
+    requestId: typeof requestId === "string" ? requestId : undefined,
+    method: req.method,
+    path: req.path,
+    error: error instanceof Error ? error.message : "Unhandled request error"
+  }));
+  if (res.headersSent) return;
+  return res.status(500).json({
+    error: "Internal server error",
+    requestId: typeof requestId === "string" ? requestId : undefined
+  });
 });
 
 attachRealtime(httpServer);
