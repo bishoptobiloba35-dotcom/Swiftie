@@ -11,7 +11,7 @@ import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
-import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus } from "./database/deliveryRepository.js";
+import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -919,6 +919,8 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
   if (status === "RESOLVED_REFUND") {
     if (!databaseEnabled()) return res.status(503).json({ error: "Refunds require the production database and Paystack" });
     const payment = await findPayment(req.params.id);
+    const payout = await findPayout(req.params.id);
+    if (payout && ["PROCESSING", "RELEASED"].includes(payout.status)) return res.status(409).json({ error: "This dispute cannot be refunded automatically because the courier payout is already processing or released" });
     const secret = process.env.PAYSTACK_SECRET_KEY;
     if (!payment || payment.provider !== "paystack" || !payment.providerReference) return res.status(409).json({ error: "No refundable Paystack payment was found" });
     if (!secret) return res.status(503).json({ error: "Paystack refund configuration is not ready" });
@@ -937,6 +939,7 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
     if (!response.ok || !payload.status) {
       return res.status(502).json({ error: payload.message ?? "Paystack could not initiate the refund" });
     }
+    await cancelEligiblePayoutForRefund(req.params.id);
     const refundReference = String(payload.data?.refund_reference ?? payload.data?.id ?? "");
     const refundStatus = String(payload.data?.status ?? "pending");
     await markPaymentRefund(req.params.id, refundReference, refundStatus, Number(payload.data?.amount ?? payment.amountMinor));
