@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pool } from "./database/db.js";
 import { requireAuth } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
+import { driverForUser } from "./database/deliveryRepository.js";
 import { canCreatePersonalBuyOrder, canDispatchBusiness, canManageBusiness, canUseAiAction } from "./aiPolicy.js";
 
 const router = Router();
