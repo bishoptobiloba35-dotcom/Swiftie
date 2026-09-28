@@ -15,6 +15,7 @@ import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, find
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
+import { validateProductionConfig } from "./productionConfig.js";
 
 const app = express();
 
@@ -1449,6 +1450,7 @@ attachRealtime(httpServer);
 const port = Number(process.env.API_PORT || 4000);
 
 async function startServer() {
+  validateProductionConfig();
   if (databaseEnabled()) await runMigrations();
   httpServer.listen(port, () => console.log(`SwiftDrop API listening on port ${port}`));
 }
