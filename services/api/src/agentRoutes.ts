@@ -216,7 +216,7 @@ router.post("/buy-orders/:id/create-delivery", requireAuth("AGENT"), async (req,
     if(!order.receiver_name||!order.receiver_phone||!order.receiver_pin_hash||!order.destination_address||order.destination_lat==null||order.destination_lng==null){
       await client.query("ROLLBACK");return res.status(409).json({error:"Receiver and delivery destination details are incomplete",code:"DESTINATION_INCOMPLETE"});
     }
-    const deliveryId=crypto.randomUUID();
+    const deliveryId=randomUUID();
     const trackingCode="SD-"+crypto.randomUUID().replaceAll("-","").slice(0,8).toUpperCase();
     const pickupAddress=String(order.merchant_address||order.merchant_name||"Merchant pickup");
     const pickupLat=order.merchant_lat==null?order.destination_lat:order.merchant_lat;
@@ -228,7 +228,7 @@ router.post("/buy-orders/:id/create-delivery", requireAuth("AGENT"), async (req,
        RETURNING id,tracking_code,status`,
       [deliveryId,trackingCode,order.customer_user_id,order.receiver_name,order.receiver_phone,pickupAddress,pickupLat,pickupLng,order.destination_address,order.destination_lat,order.destination_lng,order.receiver_pin_hash,order.currency||"NGN"]
     )).rows[0];
-    await client.query("UPDATE buy_orders SET delivery_id=$2,status='IN_TRANSIT',updated_at=now() WHERE id=$1",[id,deliveryId]);
+    await client.query("UPDATE buy_orders SET delivery_id=$2,updated_at=now() WHERE id=$1",[id,deliveryId]);
     await client.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'DELIVERY_CREATED',$3::jsonb)",[id,identity(req),JSON.stringify({deliveryId,trackingCode})]);
     await client.query("INSERT INTO delivery_events(delivery_id,event_type,actor_user_id,metadata) VALUES($1,'BUY_AND_DELIVER_CREATED',$2,$3::jsonb)",[deliveryId,identity(req),JSON.stringify({buyOrderId:id,agentId:agent.id})]);
     await client.query("COMMIT");
