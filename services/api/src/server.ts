@@ -131,6 +131,21 @@ app.get("/health", async (_req, res) => {
   res.json({ ok: true, service: "swiftdrop-api", database });
 });
 
+app.get("/ready", async (_req, res) => {
+  if (!databaseEnabled()) {
+    return process.env.NODE_ENV === "production"
+      ? res.status(503).json({ ready: false, reason: "production database is not configured" })
+      : res.json({ ready: true, database: false });
+  }
+  try {
+    const database = await pingDatabase();
+    if (!database) return res.status(503).json({ ready: false, reason: "database unavailable" });
+    return res.json({ ready: true, database: true });
+  } catch {
+    return res.status(503).json({ ready: false, reason: "database unavailable" });
+  }
+});
+
 app.post("/api/deliveries/:id/rating", requireAuth(), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Ratings require the production database" });
   const userId = identity(req);
