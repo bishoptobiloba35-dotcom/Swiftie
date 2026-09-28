@@ -20,6 +20,7 @@ import { executeAiAction } from "./aiExecutor.js";
 import { getPrivateObject, objectStorageEnabled, putPrivateObject } from "./storage.js";
 import { enqueueNotification, processNotificationOutbox, processNotificationPushReceipts } from "./notificationOutbox.js";
 import { createShoppingTask, addShoppingItem, listShoppingItems, findShoppingTaskForUser, listCustomerShoppingTasks, applyAsShopper, getShopperForUser, assignShoppingTask, authorizeShoppingTask, updateShoppingItem, recordShoppingEvidence, setShoppingActual, approveShoppingOverage, reconcileShoppingTask, completeShoppingTask } from "./database/shopperRepository.js";
+import { approveAgentApplication, getAgentForUser, listAgents, createAgentShipment, updateAgentShipment, addAgentEvidence, listAgentShipments } from "./database/agentRepository.js";
 
 const app = express();
 
@@ -90,6 +91,45 @@ async function hasBusinessPremium(userId: string): Promise<boolean> {
   return result.rows.length > 0;
 }
 
+
+app.get("/api/agents", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Agent network requires the production database"});
+ return res.json({agents:await listAgents()});
+});
+app.get("/api/agent/profile", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Agent profile requires the production database"});
+ return res.json({agent:await getAgentForUser(identity(req))});
+});
+app.get("/api/agent/shipments", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Agent shipments require the production database"});
+ const a=await getAgentForUser(identity(req));if(!a)return res.status(403).json({error:"Active Agent account required"});
+ return res.json({shipments:await listAgentShipments(a.id)});
+});
+app.post("/api/admin/agents/:applicationId/approve", requireAuth("ADMIN"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Agent administration requires the production database"});
+ try{const a=await approveAgentApplication(routeParam(req.params.id,"applicationId"));return a?res.json({agent:a}):res.status(409).json({error:"Application is not awaiting approval"});}
+ catch{return res.status(500).json({error:"Unable to approve Agent application"});}
+});
+app.post("/api/agent/shipments", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Agent handover requires the production database"});
+ const a=await getAgentForUser(identity(req));if(!a)return res.status(403).json({error:"Active Agent account required"});
+ const p=z.object({deliveryId:z.string().uuid(),action:z.enum(["DROP_OFF","PICKUP","RELEASE"]),verificationCode:z.string().trim().min(4).max(20).optional(),conditionNote:z.string().trim().max(1000).optional()}).safeParse(req.body);
+ if(!p.success)return res.status(400).json({error:p.error.flatten()});
+ try{const s=await createAgentShipment({agentId:a.id,userId:identity(req),...p.data});return s?res.status(201).json({shipment:s}):res.status(409).json({error:"Unable to create Agent handover"});}
+ catch{return res.status(500).json({error:"Unable to create Agent handover"});}
+});
+app.post("/api/agent/shipments/:id/status", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Agent handover requires the production database"});
+ const p=z.object({status:z.enum(["ACCEPTED","RELEASED","REJECTED"]),verificationCode:z.string().optional()}).safeParse(req.body);if(!p.success)return res.status(400).json({error:p.error.flatten()});
+ try{const s=await updateAgentShipment(routeParam(req.params.id,"id"),identity(req),p.data.status,p.data.verificationCode);return s?res.json({shipment:s}):res.status(409).json({error:"Handover cannot be updated or verification failed"});}
+ catch{return res.status(500).json({error:"Unable to update Agent handover"});}
+});
+app.post("/api/agent/shipments/:id/evidence", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Agent evidence requires the production database"});
+ const p=z.object({evidenceType:z.enum(["PARCEL_CONDITION","HANDOVER","QR_SCAN"]),objectKey:z.string().min(1).max(500),contentType:z.string().min(1).max(100)}).safeParse(req.body);if(!p.success)return res.status(400).json({error:p.error.flatten()});
+ const taskId=routeParam(req.params.id,"id");if(!p.data.objectKey.startsWith("agents/"+taskId+"/"))return res.status(400).json({error:"Evidence must use the private Agent shipment namespace"});
+ const e=await addAgentEvidence(taskId,identity(req),p.data.evidenceType,p.data.objectKey,p.data.contentType);return e?res.status(201).json({evidence:e}):res.status(404).json({error:"Agent shipment not found"});
+});
 
 app.post("/api/shopper/apply", requireAuth("CUSTOMER"), async (req,res)=>{
  if(!databaseEnabled()) return res.status(503).json({error:"Shopper onboarding requires the production database"});
