@@ -127,6 +127,10 @@ export default function App() {
   const [payoutAccount, setPayoutAccount] = React.useState<{ bankCode: string; bankName?: string | null; accountName: string; accountLast4: string; recipientCode: string } | null>(null);
   const [bankCode, setBankCode] = React.useState("");
   const [accountNumber, setAccountNumber] = React.useState("");
+  const [showSupport, setShowSupport] = React.useState(false);
+  const [supportCategory, setSupportCategory] = React.useState<"ORDER"|"APP">("ORDER");
+  const [supportSubject, setSupportSubject] = React.useState("");
+  const [supportMessage, setSupportMessage] = React.useState("");
 
   async function registerPushNotifications() {
     try {
@@ -183,6 +187,15 @@ export default function App() {
     } catch (error) {
       Alert.alert("Withdrawal failed", error instanceof Error ? error.message : "Unable to withdraw payout.");
     }
+  }
+
+  async function submitSupportTicket() {
+    try {
+      if (supportSubject.trim().length < 3 || supportMessage.trim().length < 5) throw new Error("Enter a clear subject and message.");
+      await driverApi("/api/support/tickets", { category: supportCategory, subject: supportSubject.trim(), message: supportMessage.trim(), deliveryId: supportCategory === "ORDER" ? job?.id : undefined });
+      setSupportSubject(""); setSupportMessage("");
+      Alert.alert("Support request sent", "SwiftDrop support will review your request.");
+    } catch (error) { Alert.alert("Support request failed", error instanceof Error ? error.message : "Unable to contact support"); }
   }
 
   async function loadNotifications() {
@@ -529,7 +542,9 @@ export default function App() {
   }
 
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.container}>
-    <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop Driver</Text><Text style={styles.subtitle}>Deliver safely. Track every trip.</Text></View><Pressable onPress={() => setShowNotifications(v => !v)}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable></View>
+    <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop Driver</Text><Text style={styles.subtitle}>Deliver safely. Track every trip.</Text></View><View style={styles.headerActions}><Pressable onPress={() => setShowNotifications(v => !v)}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => setShowSupport(v => !v)}><Text style={styles.link}>Support</Text></Pressable></View></View>
+
+    {showSupport && <View style={styles.card}><View style={styles.header}><Text style={styles.title}>Support</Text><Pressable onPress={() => setShowSupport(false)}><Text style={styles.link}>Close</Text></Pressable></View><Text style={styles.muted}>Get help with a delivery or the SwiftDrop app.</Text><View style={styles.row}><Pressable style={[styles.choice,supportCategory==="ORDER"&&styles.choiceActive]} onPress={()=>setSupportCategory("ORDER")}><Text>Order help</Text></Pressable><Pressable style={[styles.choice,supportCategory==="APP"&&styles.choiceActive]} onPress={()=>setSupportCategory("APP")}><Text>App help</Text></Pressable></View><TextInput style={styles.input} placeholder="Subject" value={supportSubject} onChangeText={setSupportSubject}/><TextInput style={[styles.input,styles.multiline]} placeholder="Describe the issue" value={supportMessage} onChangeText={setSupportMessage} multiline/><Pressable style={styles.primary} onPress={()=>void submitSupportTicket()}><Text style={styles.primaryText}>Contact support</Text></Pressable></View>}
 
     <View style={styles.card}>
       <Text style={styles.title}>Payout bank account</Text>
@@ -587,9 +602,12 @@ export default function App() {
     {job?.status === "DELIVERED" && <View style={styles.card}>
       <Text style={styles.title}>Rate the sender</Text>
       {ratingSubmitted ? <Text style={styles.done}>✓ Rating submitted</Text> : <>
-        <View style={styles.starRow}>{[1,2,3,4,5].map(star => <Pressable key={star} onPress={() => setRatingStars(star)}><Text style={styles.star}>{star <= ratingStars ? "★" : "☆"}</Text></Pressable>)}</View>
-        <TextInput style={styles.input} placeholder="Optional comment" value={ratingComment} onChangeText={setRatingComment} maxLength={500} multiline />
-        <Pressable style={styles.primary} onPress={() => void submitSenderRating()}><Text style={styles.primaryText}>Submit sender rating</Text></Pressable>
+        <Text style={styles.muted}>Choose one review level:</Text>
+        <View style={styles.reviewRow}>
+          <Pressable style={[styles.reviewButton,styles.reviewBad]} onPress={()=>void driverApi("/api/deliveries/"+job!.id+"/rating/driver",{stars:1}).then(()=>setRatingSubmitted(true)).catch(error=>Alert.alert("Rating failed",error instanceof Error?error.message:"Unable to save review"))}><Text style={styles.reviewButtonText}>Bad</Text></Pressable>
+          <Pressable style={[styles.reviewButton,styles.reviewFair]} onPress={()=>void driverApi("/api/deliveries/"+job!.id+"/rating/driver",{stars:3}).then(()=>setRatingSubmitted(true)).catch(error=>Alert.alert("Rating failed",error instanceof Error?error.message:"Unable to save review"))}><Text style={styles.reviewButtonText}>Fair</Text></Pressable>
+          <Pressable style={[styles.reviewButton,styles.reviewExcellent]} onPress={()=>void driverApi("/api/deliveries/"+job!.id+"/rating/driver",{stars:5}).then(()=>setRatingSubmitted(true)).catch(error=>Alert.alert("Rating failed",error instanceof Error?error.message:"Unable to save review"))}><Text style={styles.reviewButtonText}>Excellent</Text></Pressable>
+        </View>
       </>}
     </View>}
 
@@ -630,12 +648,12 @@ export default function App() {
 
 const styles = StyleSheet.create({
   safe:{flex:1,backgroundColor:"#F6F8F5"}, auth:{flex:1,padding:24,justifyContent:"center",gap:14}, container:{padding:20,gap:14},
-  header:{flexDirection:"row",justifyContent:"space-between",alignItems:"center"}, logo:{fontSize:30,fontWeight:"900",color:"#123D2A",letterSpacing:-.8,marginTop:8},
+  header:{flexDirection:"row",justifyContent:"space-between",alignItems:"center"}, headerActions:{flexDirection:"row",gap:14,alignItems:"center"}, logo:{fontSize:30,fontWeight:"900",color:"#123D2A",letterSpacing:-.8,marginTop:8},
   subtitle:{fontSize:14,color:"#66716A",lineHeight:20}, title:{fontSize:18,fontWeight:"900",color:"#16221B"}, status:{fontSize:18,fontWeight:"900",color:"#123D2A"},
   card:{borderWidth:1,borderColor:"#DDE5DF",backgroundColor:"#FFFFFF",borderRadius:20,padding:16,gap:12}, input:{borderWidth:1,borderColor:"#D9E0DB",borderRadius:14,padding:14},
   primary:{backgroundColor:"#123D2A",padding:15,borderRadius:14,alignItems:"center"}, primaryText:{color:"#fff",fontWeight:"700"},
   secondary:{borderWidth:1,borderColor:"#BFD0C5",backgroundColor:"#FFFFFF",padding:13,borderRadius:14,alignItems:"center"}, link:{fontWeight:"700"},
   muted:{color:"#68736C"}, job:{borderTopWidth:1,borderTopColor:"#E7ECE8",paddingTop:12,gap:8}, done:{fontSize:18,fontWeight:"800"},
   preview:{width:"100%",height:220,borderRadius:12}, cameraCard:{gap:12}, camera:{height:420,borderRadius:16,overflow:"hidden"},
-  notification:{borderTopWidth:1,borderTopColor:"#eee",paddingTop:10,gap:4}, notificationTitle:{fontWeight:"800"}, fileCard:{borderWidth:1,borderColor:"#ddd",borderRadius:10,padding:12,gap:4}
+  notification:{borderTopWidth:1,borderTopColor:"#eee",paddingTop:10,gap:4}, row:{flexDirection:"row",gap:8}, choice:{flex:1,borderWidth:1,borderColor:"#D9E0DB",borderRadius:12,padding:13,alignItems:"center"},choiceActive:{borderColor:"#178A52",backgroundColor:"#EAF5EF"},multiline:{minHeight:110,textAlignVertical:"top"},reviewRow:{flexDirection:"row",gap:8},reviewButton:{flex:1,borderRadius:14,paddingVertical:15,alignItems:"center"},reviewButtonText:{color:"#fff",fontWeight:"900"},reviewBad:{backgroundColor:"#C53B3B"},reviewFair:{backgroundColor:"#D4A62A"},reviewExcellent:{backgroundColor:"#178A52"}, notificationTitle:{fontWeight:"800"}, fileCard:{borderWidth:1,borderColor:"#ddd",borderRadius:10,padding:12,gap:4}
 });
