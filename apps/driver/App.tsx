@@ -631,7 +631,7 @@ export default function App() {
 const styles = StyleSheet.create({
   safe:{flex:1,backgroundColor:"#F6F8F5"}, auth:{flex:1,padding:24,justifyContent:"center",gap:14}, container:{padding:20,gap:14},
   header:{flexDirection:"row",justifyContent:"space-between",alignItems:"center"}, logo:{fontSize:30,fontWeight:"900",color:"#123D2A",letterSpacing:-.8,marginTop:8},
-  subtitle:{fontSize:14,color:"#66716A",lineHeight:20}, title:{fontSize:18,fontWeight:"900",color:"#123D2A",color:"#16221B"}, status:{fontSize:18,fontWeight:"900",color:"#123D2A"},
+  subtitle:{fontSize:14,color:"#66716A",lineHeight:20}, title:{fontSize:18,fontWeight:"900",color:"#16221B"}, status:{fontSize:18,fontWeight:"900",color:"#123D2A"},
   card:{borderWidth:1,borderColor:"#DDE5DF",backgroundColor:"#FFFFFF",borderRadius:20,padding:16,gap:12}, input:{borderWidth:1,borderColor:"#D9E0DB",borderRadius:14,padding:14},
   primary:{backgroundColor:"#123D2A",padding:15,borderRadius:14,alignItems:"center"}, primaryText:{color:"#fff",fontWeight:"700"},
   secondary:{borderWidth:1,borderColor:"#BFD0C5",backgroundColor:"#FFFFFF",padding:13,borderRadius:14,alignItems:"center"}, link:{fontWeight:"700"},
