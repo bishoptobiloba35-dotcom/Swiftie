@@ -719,6 +719,23 @@ app.post("/api/admin/driver-documents/:documentId/review", requireAuth("ADMIN"),
   res.json({ document: result.rows[0] });
 });
 
+app.get("/api/admin/users", requireAuth("ADMIN"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Admin user management requires the production database" });
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 50)));
+  const search = String(req.query.search ?? "").trim();
+  const result = await pool!.query(
+    `SELECT u.id, u.role, u.full_name, u.phone, u.email, u.created_at,
+            d.id AS driver_id, d.status AS driver_status, d.online AS driver_online
+       FROM users u
+       LEFT JOIN drivers d ON d.user_id=u.id
+      WHERE ($1 = '' OR u.full_name ILIKE '%' || $1 || '%' OR u.phone ILIKE '%' || $1 || '%' OR COALESCE(u.email,'') ILIKE '%' || $1 || '%')
+      ORDER BY u.created_at DESC
+      LIMIT $2`,
+    [search, limit]
+  );
+  return res.json({ users: result.rows });
+});
+
 app.get("/api/admin/drivers", requireAuth("ADMIN"), async (_req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool!.query(
