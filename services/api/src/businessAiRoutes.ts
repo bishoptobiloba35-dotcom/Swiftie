@@ -387,7 +387,7 @@ router.get("/drop-off/locations", requireAuth("CUSTOMER","AGENT","ADMIN"), async
   if(!Number.isFinite(latitude)||!Number.isFinite(longitude))return res.status(400).json({error:"latitude and longitude are required"});
   const latDelta=radiusKm/111,lngDelta=radiusKm/(111*Math.max(.2,Math.cos(latitude*Math.PI/180)));
   const result=await pool.query("SELECT dl.*,ba.display_name AS business_name FROM drop_off_locations dl JOIN business_accounts ba ON ba.id=dl.business_id WHERE dl.status='ACTIVE' AND dl.verification_status='VERIFIED' AND dl.latitude BETWEEN $1 AND $2 AND dl.longitude BETWEEN $3 AND $4 LIMIT 200",[latitude-latDelta,latitude+latDelta,longitude-lngDelta,longitude+lngDelta]);
-  const locations=result.rows.map(row=>{const p1=latitude*Math.PI/180,p2=Number(row.latitude)*Math.PI/180,dp=(Number(row.latitude)-latitude)*Math.PI/180,dl=(Number(row.longitude)-longitude)*Math.PI/180,h=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return {...row,distanceKm:6371*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));}}).filter(row=>row.distanceKm<=radiusKm).sort((a,b)=>a.distanceKm-b.distanceKm);
+  const locations=result.rows.map(row=>{const p1=latitude*Math.PI/180,p2=Number(row.latitude)*Math.PI/180,dp=(Number(row.latitude)-latitude)*Math.PI/180,dl=(Number(row.longitude)-longitude)*Math.PI/180,h=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return {...row,distanceKm:6371*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h)}}).filter(row=>row.distanceKm<=radiusKm).sort((a,b)=>a.distanceKm-b.distanceKm);
   res.json({locations});
 });
 router.get("/drop-off/locations/mine", requireAuth("CUSTOMER","AGENT","ADMIN"), async(req,res)=>{
