@@ -10,7 +10,7 @@ import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, savePaymentAuthorization, markPaymentRefund, confirmReceiverAndReleaseEscrow, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
-import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, prepareRefund, releaseDisputeAndCreatePayout, recordFailedDeliveryAttempt, rescheduleDelivery, listDeliveryAttempts, createBusinessAccount, attachDeliveryToBusiness, listBusinessReadyDeliveries, dispatchBusinessDelivery } from "./database/deliveryRepository.js";
+import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, prepareRefund, releaseDisputeAndCreatePayout, recordFailedDeliveryAttempt, rescheduleDelivery, listDeliveryAttempts, createBusinessAccount, attachDeliveryToBusiness, listBusinessReadyDeliveries, dispatchBusinessDelivery, getBusinessAiRules, reserveBusinessSpend, releaseBusinessSpend } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -132,23 +132,132 @@ app.get("/api/me/product-profile", requireAuth("CUSTOMER", "DRIVER"), async (req
   }
 });
 
-app.post("/api/business/dispatch/run", requireAuth("CUSTOMER"), async(req,res)=>{
- if(!databaseEnabled())return res.status(503).json({error:"Business dispatch requires the production database"});
- if(!await hasBusinessPremium(identity(req)))return res.status(403).json({error:"Business Premium is required for AI dispatch"});
- const parsed=z.object({deliveryIds:z.array(z.string().uuid()).min(1).max(100)}).safeParse(req.body);
- if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
- try{
-  const b=await pool!.query("SELECT id FROM business_accounts WHERE owner_user_id=$1 AND status='ACTIVE' LIMIT 1",[identity(req)]);
-  if(!b.rows[0])return res.status(404).json({error:"Business profile not found"});
-  const ready=await listBusinessReadyDeliveries(b.rows[0].id), allowed=new Set(ready.map(x=>x.delivery.id)), results=[];
-  for(const id of parsed.data.deliveryIds){
-   if(!allowed.has(id)){results.push({deliveryId:id,status:"SKIPPED",reason:"Not ready or not eligible"});continue;}
-   const d=await dispatchBusinessDelivery(b.rows[0].id,id);
-   results.push(d?{deliveryId:id,status:"DISPATCHED",driverId:d.driverId}:{deliveryId:id,status:"SKIPPED",reason:"No eligible courier available"});
+app.post("/api/business/dispatch/run", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Business dispatch requires the production database" });
+  if (!await hasBusinessPremium(identity(req))) return res.status(403).json({ error: "Business Premium is required for AI dispatch" });
+  const parsed = z.object({
+    deliveryIds: z.array(z.string().uuid()).min(1).max(100),
+    approved: z.boolean().default(false)
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  try {
+    const businessResult = await pool!.query(
+      "SELECT id FROM business_accounts WHERE owner_user_id=$1 AND status='ACTIVE' LIMIT 1",
+      [identity(req)]
+    );
+    if (!businessResult.rows[0]) return res.status(404).json({ error: "Business profile not found" });
+
+    const businessId = businessResult.rows[0].id;
+    const rules = await getBusinessAiRules(businessId);
+    if (!rules) return res.status(409).json({ error: "Business AI rules are not configured" });
+
+    const ready = await listBusinessReadyDeliveries(businessId);
+    const readyMap = new Map(ready.map(item => [item.delivery.id, item]));
+    const results: Array<Record<string, unknown>> = [];
+    let estimatedTotal = 0;
+
+    for (const deliveryId of parsed.data.deliveryIds) {
+      const item = readyMap.get(deliveryId);
+      if (!item) {
+        results.push({ deliveryId, status: "SKIPPED", reason: "Not ready or not eligible" });
+        continue;
+      }
+      const amount = Number(item.delivery.quote?.totalMinor ?? 0);
+      if (!Number.isInteger(amount) || amount <= 0) {
+        results.push({ deliveryId, status: "SKIPPED", reason: "Delivery has no valid server quote" });
+        continue;
+      }
+      if (rules.maxDeliveryCostMinor != null && amount > rules.maxDeliveryCostMinor) {
+        results.push({ deliveryId, status: "SKIPPED", reason: "Exceeds Business AI maximum delivery cost" });
+        continue;
+      }
+      estimatedTotal += amount;
+    }
+
+    if (rules.approvalThresholdMinor > 0 && estimatedTotal > rules.approvalThresholdMinor && !parsed.data.approved) {
+      await auditAiAction({
+        userId: identity(req),
+        actionType: "BUSINESS_DISPATCH",
+        status: "PREPARED",
+        amountMinor: estimatedTotal,
+        targetType: "BUSINESS",
+        targetId: businessId,
+        details: { reason: "Approval threshold exceeded", deliveryIds: parsed.data.deliveryIds }
+      });
+      return res.status(202).json({ requiresApproval: true, estimatedTotalMinor: estimatedTotal, results });
+    }
+
+    const reserved = estimatedTotal === 0 || await reserveBusinessSpend(businessId, estimatedTotal);
+    if (!reserved) {
+      await auditAiAction({
+        userId: identity(req),
+        actionType: "BUSINESS_DISPATCH",
+        status: "REJECTED",
+        amountMinor: estimatedTotal,
+        targetType: "BUSINESS",
+        targetId: businessId,
+        details: { reason: "Daily Business AI spending limit would be exceeded" }
+      });
+      return res.status(403).json({ error: "Daily Business AI spending limit would be exceeded" });
+    }
+
+    let spent = 0;
+    try {
+      for (const deliveryId of parsed.data.deliveryIds) {
+        const item = readyMap.get(deliveryId);
+        if (!item) continue;
+        const amount = Number(item.delivery.quote?.totalMinor ?? 0);
+        if (!Number.isInteger(amount) || amount <= 0) continue;
+        if (rules.maxDeliveryCostMinor != null && amount > rules.maxDeliveryCostMinor) continue;
+
+        const delivery = await dispatchBusinessDelivery(businessId, deliveryId, rules.preferredVehicle ?? undefined);
+        if (delivery) {
+          spent += amount;
+          results.push({ deliveryId, status: "DISPATCHED", driverId: delivery.driverId });
+        } else {
+          results.push({ deliveryId, status: "SKIPPED", reason: "No eligible courier available" });
+        }
+      }
+
+      const unused = estimatedTotal - spent;
+      if (unused > 0) await releaseBusinessSpend(businessId, unused);
+
+      await auditAiAction({
+        userId: identity(req),
+        actionType: "BUSINESS_DISPATCH",
+        status: "EXECUTED",
+        amountMinor: spent,
+        targetType: "BUSINESS",
+        targetId: businessId,
+        details: {
+          results,
+          rules: {
+            preferredVehicle: rules.preferredVehicle,
+            maxDeliveryCostMinor: rules.maxDeliveryCostMinor,
+            approvalThresholdMinor: rules.approvalThresholdMinor
+          }
+        }
+      });
+      return res.json({ requiresApproval: false, estimatedTotalMinor: estimatedTotal, spentMinor: spent, results });
+    } catch (error) {
+      const unused = estimatedTotal - spent;
+      if (unused > 0) await releaseBusinessSpend(businessId, unused);
+      const message = error instanceof Error ? error.message : "Unable to run business dispatch";
+      await auditAiAction({
+        userId: identity(req),
+        actionType: "BUSINESS_DISPATCH",
+        status: "FAILED",
+        amountMinor: spent,
+        targetType: "BUSINESS",
+        targetId: businessId,
+        details: { error: message }
+      });
+      return res.status(500).json({ error: message });
+    }
+  } catch {
+    return res.status(500).json({ error: "Unable to run business dispatch" });
   }
-  await auditAiAction({userId:identity(req),actionType:"BUSINESS_DISPATCH",status:"EXECUTED",targetType:"BUSINESS",targetId:b.rows[0].id,details:{results}});
-  return res.json({results});
- }catch{return res.status(500).json({error:"Unable to run business dispatch"});}
 });
 app.get("/api/ai/permissions", requireAuth("CUSTOMER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "AI permissions require the production database" });
