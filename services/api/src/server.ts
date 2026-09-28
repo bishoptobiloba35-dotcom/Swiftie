@@ -10,7 +10,7 @@ import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, savePaymentAuthorization, markPaymentRefund, confirmReceiverAndReleaseEscrow, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
-import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, prepareRefund, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
+import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, prepareRefund, releaseDisputeAndCreatePayout, recordFailedDeliveryAttempt, rescheduleDelivery, listDeliveryAttempts } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -262,7 +262,7 @@ app.post("/api/agents/apply", requireAuth("CUSTOMER"), async (req, res) => {
   return res.status(201).json({ application: result.rows[0] });
 });
 
-type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED";
+type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "RESCHEDULED" | "DELIVERED" | "CANCELLED" | "DISPUTED";
 type DeliveryLocation = { latitude: number; longitude: number; recordedAt?: string };
 type DeliveryQuote = {
   currency: "NGN";
@@ -1848,6 +1848,50 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to confirm delivery" });
   }
+});
+
+app.post("/api/deliveries/:id/failed-attempt", requireAuth("DRIVER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Failed delivery handling requires the production database" });
+  const parsed = z.object({
+    outcome: z.enum(["RECEIVER_UNAVAILABLE","ACCESS_BLOCKED","ADDRESS_ISSUE","REFUSED","OTHER"]),
+    notes: z.string().trim().max(1000).optional(),
+    contactAttempted: z.boolean(),
+    waitMinutes: z.number().int().min(0).max(240),
+    action: z.enum(["RESCHEDULE","RETURN_TO_SENDER","SUPPORT"])
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const driver = await driverForUser(identity(req));
+  if (!driver) return res.status(404).json({ error: "Driver profile not found" });
+  try {
+    const result = await recordFailedDeliveryAttempt({ deliveryId: routeParam(req.params.id, "id"), driverId: driver.id, ...parsed.data });
+    if (!result) return res.status(409).json({ error: "Delivery is not eligible for a failed-delivery attempt" });
+    await recordDeliveryEvent({ deliveryId: result.delivery.id, eventType: "DELIVERY_ATTEMPT_FAILED", actorUserId: identity(req), metadata: { attemptId: result.attemptId, ...parsed.data } });
+    publishDeliveryUpdate(result.delivery.id, safeDelivery(result.delivery));
+    return res.status(201).json({ attemptId: result.attemptId, delivery: safeDelivery(result.delivery) });
+  } catch { return res.status(500).json({ error: "Unable to record failed delivery attempt" }); }
+});
+
+app.get("/api/deliveries/:id/attempts", requireAuth("CUSTOMER","DRIVER","ADMIN"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Delivery attempts require the production database" });
+  const role = (req as typeof req & { user?: { role: "CUSTOMER" | "DRIVER" | "ADMIN" } }).user!.role;
+  const delivery = await findDeliveryForUser(routeParam(req.params.id, "id"), identity(req), role);
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  return res.json({ attempts: await listDeliveryAttempts(delivery.id) });
+});
+
+app.post("/api/deliveries/:id/reschedule", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Rescheduling requires the production database" });
+  const parsed = z.object({ scheduledFor: z.string().datetime() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const delivery = await findDeliveryForUser(routeParam(req.params.id, "id"), identity(req), "CUSTOMER");
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  try {
+    const updated = await rescheduleDelivery({ deliveryId: delivery.id, userId: identity(req), scheduledFor: parsed.data.scheduledFor });
+    if (!updated) return res.status(409).json({ error: "Delivery cannot be rescheduled or has reached the reschedule limit" });
+    await recordDeliveryEvent({ deliveryId: updated.id, eventType: "DELIVERY_RESCHEDULED", actorUserId: identity(req), metadata: { scheduledFor: parsed.data.scheduledFor } });
+    publishDeliveryUpdate(updated.id, safeDelivery(updated));
+    return res.json({ delivery: safeDelivery(updated) });
+  } catch { return res.status(500).json({ error: "Unable to reschedule delivery" }); }
 });
 
 app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
