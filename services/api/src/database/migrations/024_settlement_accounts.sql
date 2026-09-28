@@ -31,6 +31,8 @@ ALTER TABLE buy_order_settlements ADD COLUMN IF NOT EXISTS transfer_reference TE
 ALTER TABLE buy_order_settlements ADD COLUMN IF NOT EXISTS provider_status TEXT;
 ALTER TABLE buy_order_settlements ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_buy_order_settlements_transfer_ref ON buy_order_settlements(transfer_reference) WHERE transfer_reference IS NOT NULL;
+ALTER TABLE drop_off_commission_ledger DROP CONSTRAINT IF EXISTS drop_off_commission_ledger_status_check;
+ALTER TABLE drop_off_commission_ledger ADD CONSTRAINT drop_off_commission_ledger_status_check CHECK (status IN ('PENDING','EARNED','AVAILABLE','PROCESSING','PAID','REVERSED','DISPUTED'));
 ALTER TABLE drop_off_commission_ledger ADD COLUMN IF NOT EXISTS provider_status TEXT;
 ALTER TABLE drop_off_commission_ledger ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_drop_off_commission_transfer_ref ON drop_off_commission_ledger(provider_reference) WHERE provider_reference IS NOT NULL;
