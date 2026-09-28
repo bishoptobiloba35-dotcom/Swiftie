@@ -546,6 +546,7 @@ export async function recordSupportAiAction(ticketId: string, actionType: string
     }
     const action = (await client.query(`INSERT INTO support_ai_actions (ticket_id, action_type, decision, reason, response) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [ticketId, actionType, decision, reason, response])).rows[0];
     await client.query(`UPDATE support_tickets SET ai_handled=true, ai_action_id=$2, human_required=$3, status=CASE WHEN $3 THEN 'IN_REVIEW' ELSE 'RESOLVED' END, resolution_note=$4, updated_at=now() WHERE id=$1 AND status IN ('OPEN','IN_REVIEW')`, [ticketId, action.id, decision === "ESCALATED", response]);
+    await client.query(`INSERT INTO support_ticket_messages (ticket_id, sender_type, message) VALUES ($1,'AI',$2)`, [ticketId, response]);
     await client.query("COMMIT");
     return { id: action.id, ticketId: action.ticket_id, actionType: action.action_type, decision: action.decision, reason: action.reason, response: action.response, actor: action.actor, createdAt: action.created_at };
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
