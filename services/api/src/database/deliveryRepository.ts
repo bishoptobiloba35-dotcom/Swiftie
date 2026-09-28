@@ -1020,7 +1020,7 @@ export async function dispatchBusinessDelivery(businessId: string, deliveryId: s
       `UPDATE deliveries SET driver_id=$2, status='DRIVER_ASSIGNED', updated_at=now()
         WHERE id=$1 AND driver_id IS NULL AND status='PAYMENT_AUTHORIZED' RETURNING *`, [deliveryId, driver.rows[0].id]);
     if (!updated.rowCount) { await client.query('ROLLBACK'); return null; }
-    await client.query(`UPDATE business_deliveries SET status='DISPATCHED', updated_at=now() WHERE business_id=$1 AND delivery_id=$2`, [businessId, deliveryId]);
+    await client.query(`UPDATE business_deliveries SET status='DISPATCHED', updated_at=now() WHERE business_id=$1 AND delivery_id=$2`, [businessId, deliveryId, preferredVehicle ?? null]);
     await client.query(`INSERT INTO business_dispatch_audit (business_id, delivery_id, action, status, details) VALUES ($1,$2,'DISPATCH','EXECUTED',$3::jsonb)`, [businessId, deliveryId, JSON.stringify({ driverId: driver.rows[0].id })]);
     await client.query('COMMIT');
     return rowToDelivery(updated.rows[0]);
