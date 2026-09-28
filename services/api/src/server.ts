@@ -670,6 +670,8 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
       providerReference: webhookReference || null
     }));
   }
+  if (duplicateWebhook) return res.status(200).json({ received: true, duplicate: true });
+
   if (typeof event?.event === "string" && event.event.startsWith("refund.")) {
     const transactionReference = String(event?.data?.transaction_reference ?? event?.data?.transaction?.reference ?? "");
     const refundReference = String(event?.data?.refund_reference ?? event?.data?.id ?? "");
