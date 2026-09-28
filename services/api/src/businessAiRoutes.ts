@@ -155,27 +155,86 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
     }
     const parsed = buyOrderSchema.safeParse(req.body?.input);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    let businessId = parsed.data.businessId;
-    if (businessId) {
-      const spend = await authorizeBusinessSpend(userId, businessId, parsed.data.purchaseBudgetMinor);
-      if (!spend.ok) {
-        await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: spend.reason, metadata: { businessId } });
-        return res.status(403).json({ error: "Business spending policy blocked this action", code: spend.reason });
+
+    const client = await pool!.connect();
+    try {
+      await client.query("BEGIN");
+      let businessMemberRow: any = null;
+      if (parsed.data.businessId) {
+        await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [parsed.data.businessId]);
+        const memberResult = await client.query(
+          `SELECT bm.member_role, bm.spend_limit_minor, ba.*
+             FROM business_members bm
+             JOIN business_accounts ba ON ba.id=bm.business_id
+            WHERE bm.business_id=$1 AND bm.user_id=$2 AND bm.active=true
+            FOR UPDATE OF ba`,
+          [parsed.data.businessId, userId]
+        );
+        businessMemberRow = memberResult.rows[0];
+        if (!businessMemberRow) {
+          await client.query("ROLLBACK");
+          await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "BUSINESS_MEMBERSHIP_REQUIRED", metadata: { businessId: parsed.data.businessId } });
+          return res.status(403).json({ error: "Active business membership is required", code: "BUSINESS_MEMBERSHIP_REQUIRED" });
+        }
+        if (!["OWNER", "ADMIN", "DISPATCHER"].includes(businessMemberRow.member_role)) {
+          await client.query("ROLLBACK");
+          await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "BUSINESS_ROLE_NOT_AUTHORIZED", metadata: { businessId: parsed.data.businessId } });
+          return res.status(403).json({ error: "Business role is not authorized to spend", code: "BUSINESS_ROLE_NOT_AUTHORIZED" });
+        }
+        if (businessMemberRow.status !== "ACTIVE") {
+          await client.query("ROLLBACK");
+          return res.status(403).json({ error: "Business account is not active", code: "BUSINESS_NOT_ACTIVE" });
+        }
+        if (Number(businessMemberRow.per_order_limit_minor) > 0 && parsed.data.purchaseBudgetMinor > Number(businessMemberRow.per_order_limit_minor)) {
+          await client.query("ROLLBACK");
+          return res.status(403).json({ error: "Purchase budget exceeds the business per-order limit", code: "PER_ORDER_LIMIT_EXCEEDED" });
+        }
+        if (Number(businessMemberRow.spend_limit_minor) > 0 && parsed.data.purchaseBudgetMinor > Number(businessMemberRow.spend_limit_minor)) {
+          await client.query("ROLLBACK");
+          return res.status(403).json({ error: "Purchase budget exceeds the member spending limit", code: "MEMBER_SPEND_LIMIT_EXCEEDED" });
+        }
+        const spendResult = await client.query(
+          "SELECT COALESCE(SUM(amount_minor),0) AS current_spend FROM business_spend_ledger WHERE business_id=$1 AND created_at >= date_trunc('month', now())",
+          [parsed.data.businessId]
+        );
+        const currentSpend = Number(spendResult.rows[0]?.current_spend ?? 0);
+        const monthlyLimit = Number(businessMemberRow.monthly_spend_limit_minor);
+        if (monthlyLimit > 0 && currentSpend + parsed.data.purchaseBudgetMinor > monthlyLimit) {
+          await client.query("ROLLBACK");
+          await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "MONTHLY_SPEND_LIMIT_EXCEEDED", metadata: { businessId: parsed.data.businessId, currentSpend, requested: parsed.data.purchaseBudgetMinor, monthlyLimit } });
+          return res.status(403).json({ error: "Monthly business spending limit would be exceeded", code: "MONTHLY_SPEND_LIMIT_EXCEEDED" });
+        }
       }
+
+      const result = await client.query(
+        `INSERT INTO buy_orders
+          (customer_user_id, business_id, item_description, merchant_name, merchant_address, purchase_budget_minor, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         RETURNING id, status, item_description, merchant_name, merchant_address, purchase_budget_minor, delivery_fee_minor, total_authorized_minor, currency, notes, created_at, updated_at`,
+        [userId, parsed.data.businessId ?? null, parsed.data.itemDescription, parsed.data.merchantName ?? null, parsed.data.merchantAddress ?? null, parsed.data.purchaseBudgetMinor, parsed.data.notes ?? null]
+      );
+
+      if (parsed.data.businessId) {
+        await client.query(
+          `INSERT INTO business_spend_ledger (business_id, user_id, reference_type, reference_id, amount_minor, currency)
+           VALUES ($1,$2,'BUY_ORDER_RESERVATION',$3,$4,'NGN')`,
+          [parsed.data.businessId, userId, result.rows[0].id, parsed.data.purchaseBudgetMinor]
+        );
+      }
+
+      await client.query(
+        "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'CREATED_BY_AI',$3::jsonb)",
+        [result.rows[0].id, userId, JSON.stringify({ plan, businessId: parsed.data.businessId ?? null })]
+      );
+      await client.query("COMMIT");
+      await audit({ userId, plan, capability: "ACTION", action, allowed: true, metadata: { buyOrderId: result.rows[0].id } });
+      return res.status(201).json({ buyOrder: result.rows[0] });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
     }
-    const result = await pool!.query(
-      `INSERT INTO buy_orders
-        (customer_user_id, business_id, item_description, merchant_name, merchant_address, purchase_budget_minor, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       RETURNING id, status, item_description, merchant_name, merchant_address, purchase_budget_minor, delivery_fee_minor, total_authorized_minor, currency, notes, created_at, updated_at`,
-      [userId, businessId ?? null, parsed.data.itemDescription, parsed.data.merchantName ?? null, parsed.data.merchantAddress ?? null, parsed.data.purchaseBudgetMinor, parsed.data.notes ?? null]
-    );
-    await pool!.query(
-      "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'CREATED_BY_AI',$3::jsonb)",
-      [result.rows[0].id, userId, JSON.stringify({ plan })]
-    );
-    await audit({ userId, plan, capability: "ACTION", action, allowed: true, metadata: { buyOrderId: result.rows[0].id } });
-    return res.status(201).json({ buyOrder: result.rows[0] });
   }
 
   if (action === "CREATE_BUSINESS") {
