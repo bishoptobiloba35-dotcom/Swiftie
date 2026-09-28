@@ -203,10 +203,53 @@ router.post("/buy-orders/:id/purchase", requireAuth("AGENT"), async (req, res) =
     [id, identity(req), JSON.stringify({ actualPurchaseMinor: parsed.data.actualPurchaseMinor, receiptAttached: Boolean(receiptKey), unusedAuthorizationMinor })]
   );
   if (unusedAuthorizationMinor > 0) {
-    await pool.query(
-      "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'UNUSED_AUTHORIZATION_RECONCILIATION_REQUIRED',$3::jsonb)",
-      [id, identity(req), JSON.stringify({ amountMinor: unusedAuthorizationMinor, currency: payment.currency ?? "NGN" })]
-    );
+    const paymentReference=(await pool.query("SELECT provider_reference FROM buy_order_payments WHERE id=$1",[payment.id])).rows[0]?.provider_reference as string|undefined;
+    if (paymentReference && process.env.PAYSTACK_SECRET_KEY) {
+      try {
+        const refundResponse=await fetch("https://api.paystack.co/refund",{
+          method:"POST",
+          headers:{authorization:"Bearer "+process.env.PAYSTACK_SECRET_KEY,"content-type":"application/json"},
+          body:JSON.stringify({
+            transaction:paymentReference,
+            amount:String(unusedAuthorizationMinor),
+            currency:payment.currency ?? "NGN",
+            customer_note:"Unused Buy & Deliver authorization",
+            merchant_note:"SwiftDrop unused Buy & Deliver authorization reconciliation"
+          })
+        });
+        const refundPayload=await refundResponse.json() as {status?:boolean;message?:string;data?:{id?:string;status?:string}};
+        if(refundResponse.ok&&refundPayload.status){
+          await pool.query(
+            "UPDATE buy_order_payments SET refund_status='PENDING',refund_amount_minor=$2,refund_reference=COALESCE(refund_reference,$3),updated_at=now() WHERE id=$1",
+            [payment.id,unusedAuthorizationMinor,refundPayload.data?.id??null]
+          );
+          await pool.query(
+            "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'UNUSED_AUTHORIZATION_REFUND_REQUESTED',$3::jsonb)",
+            [id,identity(req),JSON.stringify({amountMinor:unusedAuthorizationMinor,refundId:refundPayload.data?.id??null})]
+          );
+        } else {
+          await pool.query(
+            "UPDATE buy_order_payments SET refund_status='FAILED',refund_amount_minor=$2,updated_at=now() WHERE id=$1",
+            [payment.id,unusedAuthorizationMinor]
+          );
+          await pool.query(
+            "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'UNUSED_AUTHORIZATION_REFUND_FAILED',$3::jsonb)",
+            [id,identity(req),JSON.stringify({amountMinor:unusedAuthorizationMinor,message:refundPayload.message??"Paystack refund request failed"})]
+          );
+        }
+      } catch(error) {
+        await pool.query("UPDATE buy_order_payments SET refund_status='FAILED',refund_amount_minor=$2,updated_at=now() WHERE id=$1",[payment.id,unusedAuthorizationMinor]);
+        await pool.query(
+          "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'UNUSED_AUTHORIZATION_REFUND_FAILED',$3::jsonb)",
+          [id,identity(req),JSON.stringify({amountMinor:unusedAuthorizationMinor,message:error instanceof Error?error.message:"Paystack refund request failed"})]
+        );
+      }
+    } else {
+      await pool.query(
+        "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'UNUSED_AUTHORIZATION_RECONCILIATION_REQUIRED',$3::jsonb)",
+        [id,identity(req),JSON.stringify({amountMinor:unusedAuthorizationMinor,currency:payment.currency??"NGN"})]
+      );
+    }
   }
   await pool.query(
     "INSERT INTO agent_action_events (agent_id, buy_order_id, action, metadata) VALUES ($1,$2,'PURCHASE_RECORDED',$3::jsonb)",
