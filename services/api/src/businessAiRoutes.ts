@@ -621,7 +621,7 @@ router.get("/admin/drop-off/locations/:locationId/documents/:documentId", requir
 
 router.get("/admin/drop-off/commission", requireAuth("ADMIN"), async(_req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
-  const result=await pool.query("SELECT l.id AS location_id,l.name,l.address,ba.display_name AS business_name,c.status,c.currency,count(*)::int AS parcels,sum(c.amount_minor)::bigint AS amount_minor FROM drop_off_commission_ledger c JOIN drop_off_locations l ON l.id=c.location_id JOIN business_accounts ba ON ba.id=l.business_id GROUP BY l.id,l.name,l.address,ba.display_name,c.status,c.currency ORDER BY l.name,c.status");
+  const result=await pool.query("SELECT c.id,c.location_id,l.name,l.address,ba.display_name AS business_name,c.parcel_id,c.status,c.currency,c.amount_minor,c.provider_reference,c.provider_status,c.paid_at FROM drop_off_commission_ledger c JOIN drop_off_locations l ON l.id=c.location_id JOIN business_accounts ba ON ba.id=l.business_id ORDER BY c.created_at DESC LIMIT 500");
   return res.json({commission:result.rows});
 });
 
