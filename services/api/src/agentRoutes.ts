@@ -179,20 +179,35 @@ router.post("/buy-orders/:id/purchase", requireAuth("AGENT"), async (req, res) =
     await putPrivateObject(receiptKey, buffer, match[1]);
   }
 
+  const payment = (await pool.query(
+    "SELECT id, amount_minor, currency, status FROM buy_order_payments WHERE buy_order_id=$1",
+    [id]
+  )).rows[0];
+  if (!payment || !["HELD", "AUTHORIZED"].includes(payment.status)) {
+    return res.status(409).json({ error: "Customer payment record is unavailable for reconciliation", code: "PAYMENT_RECONCILIATION_REQUIRED" });
+  }
+  const unusedAuthorizationMinor = Math.max(0, Number(payment.amount_minor) - parsed.data.actualPurchaseMinor);
   const result = await pool.query(
     `UPDATE buy_orders
         SET actual_purchase_minor=$2, purchase_receipt_key=COALESCE($3,purchase_receipt_key),
+            unused_authorization_minor=$5,
             purchased_at=now(), status='PURCHASED', updated_at=now()
-      WHERE id=$1 AND agent_id=$4 AND status='PURCHASING'
+      WHERE id=$1 AND agent_id=$4 AND status='PURCHASING' AND payment_status='HELD'
       RETURNING *`,
-    [id, parsed.data.actualPurchaseMinor, receiptKey, agent.id]
+    [id, parsed.data.actualPurchaseMinor, receiptKey, agent.id, unusedAuthorizationMinor]
   );
   if (!result.rows[0]) return res.status(409).json({ error: "Order changed before purchase could be recorded" });
 
   await pool.query(
     "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'PURCHASE_RECORDED',$3::jsonb)",
-    [id, identity(req), JSON.stringify({ actualPurchaseMinor: parsed.data.actualPurchaseMinor, receiptAttached: Boolean(receiptKey) })]
+    [id, identity(req), JSON.stringify({ actualPurchaseMinor: parsed.data.actualPurchaseMinor, receiptAttached: Boolean(receiptKey), unusedAuthorizationMinor })]
   );
+  if (unusedAuthorizationMinor > 0) {
+    await pool.query(
+      "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'UNUSED_AUTHORIZATION_RECONCILIATION_REQUIRED',$3::jsonb)",
+      [id, identity(req), JSON.stringify({ amountMinor: unusedAuthorizationMinor, currency: payment.currency ?? "NGN" })]
+    );
+  }
   await pool.query(
     "INSERT INTO agent_action_events (agent_id, buy_order_id, action, metadata) VALUES ($1,$2,'PURCHASE_RECORDED',$3::jsonb)",
     [agent.id, id, JSON.stringify({ actualPurchaseMinor: parsed.data.actualPurchaseMinor })]
