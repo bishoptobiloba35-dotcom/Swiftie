@@ -795,6 +795,12 @@ app.post("/api/admin/driver-documents/:documentId/review", requireAuth("ADMIN"),
     [req.params.documentId, status, note || null]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Document not found" });
+  await recordAdminCaseAudit({
+    adminUserId: identity(req),
+    action: "KYC_DOCUMENT_REVIEWED",
+    note: note || null,
+    metadata: { documentId: result.rows[0].id, driverId: result.rows[0].driver_id, documentType: result.rows[0].document_type, status }
+  });
   res.json({ document: result.rows[0] });
 });
 
@@ -838,6 +844,7 @@ app.post("/api/admin/drivers/:driverId/approve", requireAuth("ADMIN"), async (re
     [req.params.driverId]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Pending driver not found" });
+  await recordAdminCaseAudit({ adminUserId: identity(req), action: "DRIVER_APPROVED", metadata: { driverId: result.rows[0].id } });
   res.json({ driver: result.rows[0] });
 });
 
@@ -848,6 +855,7 @@ app.post("/api/admin/drivers/:driverId/suspend", requireAuth("ADMIN"), async (re
     [req.params.driverId]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Driver not found" });
+  await recordAdminCaseAudit({ adminUserId: identity(req), action: "DRIVER_SUSPENDED", metadata: { driverId: result.rows[0].id } });
   res.json({ driver: result.rows[0] });
 });
 
