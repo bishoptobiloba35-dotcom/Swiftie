@@ -503,6 +503,21 @@ router.post("/admin/ai/users/:id/plan", requireAuth("ADMIN"), async(req,res)=>{
   finally{client.release();}
 });
 
+router.get("/admin/buy-order-settlements", requireAuth("ADMIN"), async(_req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const result=await pool.query("SELECT s.*,bo.item_description,bo.customer_user_id,ap.user_id AS agent_user_id,u.full_name AS agent_name FROM buy_order_settlements s JOIN buy_orders bo ON bo.id=s.buy_order_id JOIN agent_profiles ap ON ap.id=s.agent_id JOIN users u ON u.id=ap.user_id ORDER BY s.created_at DESC LIMIT 200");
+  return res.json({settlements:result.rows});
+});
+router.post("/admin/buy-order-settlements/:id/status", requireAuth("ADMIN"), async(req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const parsed=z.object({status:z.enum(["PROCESSING","PAID","FAILED","REVERSED"]),providerReference:z.string().trim().max(200).optional(),failureReason:z.string().trim().max(500).optional()}).safeParse(req.body);
+  if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
+  const result=await pool.query("UPDATE buy_order_settlements SET status=$2,provider_reference=COALESCE($3,provider_reference),failure_reason=COALESCE($4,failure_reason),updated_at=now() WHERE id=$1 RETURNING *",[String(req.params.id),parsed.data.status,parsed.data.providerReference??null,parsed.data.failureReason??null]);
+  if(!result.rows[0])return res.status(404).json({error:"Settlement not found"});
+  await pool.query("INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,'ADMIN','SETTLEMENT_STATUS','UPDATE',true,'Admin settlement status update',$2::jsonb)",[identity(req),JSON.stringify({settlementId:String(req.params.id),status:parsed.data.status})]);
+  return res.json({settlement:result.rows[0]});
+});
+
 router.get("/admin/drop-off/locations/:locationId/documents", requireAuth("ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const result=await pool.query("SELECT id,document_type,status,review_note,created_at,updated_at FROM drop_off_location_documents WHERE location_id=$1 ORDER BY created_at ASC",[String(req.params.locationId)]);
