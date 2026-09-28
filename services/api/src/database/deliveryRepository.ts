@@ -651,14 +651,25 @@ export async function prepareRefund(deliveryId: string, refundAmountMinor: numbe
       await client.query('ROLLBACK');
       return null;
     }
-    const payoutResult = await client.query(
-      `UPDATE payouts
-          SET status='CANCELLED', updated_at=now()
-        WHERE delivery_id=$1 AND status IN ('PENDING','ELIGIBLE')
-        RETURNING *`,
+    const payoutState = await client.query(
+      `SELECT * FROM payouts WHERE delivery_id=$1 FOR UPDATE`,
       [deliveryId]
     );
-    const payoutRow = payoutResult.rows[0] ?? null;
+    const existingPayout = payoutState.rows[0] ?? null;
+    if (!existingPayout || ['PROCESSING','RELEASED'].includes(existingPayout.status)) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    let payoutRow = existingPayout;
+    if (['PENDING','ELIGIBLE'].includes(existingPayout.status)) {
+      const payoutResult = await client.query(
+        `UPDATE payouts SET status='CANCELLED', updated_at=now()
+          WHERE id=$1
+          RETURNING *`,
+        [existingPayout.id]
+      );
+      payoutRow = payoutResult.rows[0] ?? existingPayout;
+    }
     await client.query('COMMIT');
     return {
       payment: paymentFromRow(paymentRow),
