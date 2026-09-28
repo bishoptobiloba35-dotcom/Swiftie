@@ -35,7 +35,7 @@ The backend is authoritative for delivery state, pricing, GPS events, pickup pro
 - Server-authoritative state transitions
 - Authenticated driver location updates
 - Role-based access control
-- Secure document/object storage
+- Secure private document/object storage (S3-compatible in production; local private storage in development)
 - Payment-provider abstraction
 - Audit events for sensitive actions
 - Secrets supplied through environment variables
@@ -49,3 +49,16 @@ The backend is authoritative for delivery state, pricing, GPS events, pickup pro
 - Both the sender and receiver can review the courier after delivery; drivers can also review senders.
 
 **Payment note:** the current release is an application-level held/release ledger around the Paystack payment flow. Actual automated bank transfer to a courier requires the courier's verified payout recipient details and the Paystack Transfers integration before production launch.
+
+
+## Production environment
+
+The API requires, in production, a PostgreSQL `DATABASE_URL`, strong `JWT_SECRET`, `PAYSTACK_SECRET_KEY`, HTTPS `CORS_ORIGINS`, and private S3-compatible object-storage credentials:
+
+- `OBJECT_STORAGE_BUCKET`
+- `OBJECT_STORAGE_REGION`
+- `OBJECT_STORAGE_ACCESS_KEY_ID`
+- `OBJECT_STORAGE_SECRET_ACCESS_KEY`
+- optional `OBJECT_STORAGE_ENDPOINT` for S3-compatible providers such as an S3-compatible private endpoint
+
+Pickup evidence and driver KYC files are never served from a public uploads directory.
