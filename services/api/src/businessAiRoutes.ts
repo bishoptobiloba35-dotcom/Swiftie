@@ -150,7 +150,7 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
   if (!plan) return;
 
   if (action === "CREATE_BUY_ORDER") {
-    if (!canCreatePersonalBuyOrder((req as any).user?.role)) {
+    if (!parsed.data.businessId && !canCreatePersonalBuyOrder((req as any).user?.role)) {
       await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "CUSTOMER_ONLY" });
       return res.status(403).json({ error: "Buy & Deliver orders must be created by a customer or authorized business member" });
     }
