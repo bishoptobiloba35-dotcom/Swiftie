@@ -132,6 +132,24 @@ app.get("/api/me/product-profile", requireAuth("CUSTOMER", "DRIVER"), async (req
   }
 });
 
+app.post("/api/business/dispatch/run", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Business dispatch requires the production database"});
+ if(!await hasBusinessPremium(identity(req)))return res.status(403).json({error:"Business Premium is required for AI dispatch"});
+ const parsed=z.object({deliveryIds:z.array(z.string().uuid()).min(1).max(100)}).safeParse(req.body);
+ if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
+ try{
+  const b=await pool!.query("SELECT id FROM business_accounts WHERE owner_user_id=$1 AND status='ACTIVE' LIMIT 1",[identity(req)]);
+  if(!b.rows[0])return res.status(404).json({error:"Business profile not found"});
+  const ready=await listBusinessReadyDeliveries(b.rows[0].id), allowed=new Set(ready.map(x=>x.delivery.id)), results=[];
+  for(const id of parsed.data.deliveryIds){
+   if(!allowed.has(id)){results.push({deliveryId:id,status:"SKIPPED",reason:"Not ready or not eligible"});continue;}
+   const d=await dispatchBusinessDelivery(b.rows[0].id,id);
+   results.push(d?{deliveryId:id,status:"DISPATCHED",driverId:d.driverId}:{deliveryId:id,status:"SKIPPED",reason:"No eligible courier available"});
+  }
+  await auditAiAction({userId:identity(req),actionType:"BUSINESS_DISPATCH",status:"EXECUTED",targetType:"BUSINESS",targetId:b.rows[0].id,details:{results}});
+  return res.json({results});
+ }catch{return res.status(500).json({error:"Unable to run business dispatch"});}
+});
 app.get("/api/ai/permissions", requireAuth("CUSTOMER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "AI permissions require the production database" });
   if (!await hasIndividualPremium(identity(req))) return res.status(403).json({ error: "Individual Premium is required for Swift AI" });
