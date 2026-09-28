@@ -903,25 +903,34 @@ app.get("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER", "ADMIN"
   res.json({ dispute });
 });
 
-app.get("/api/support/tickets", requireAuth("CUSTOMER", "DRIVER"), async (req, res) => {
+app.get("/api/support/tickets", requireAuth("CUSTOMER", "DRIVER", "AGENT"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Support requires the production database" });
   const tickets = await listSupportTickets(identity(req));
   return res.json({ tickets });
 });
 
-app.post("/api/support/tickets", requireAuth("CUSTOMER", "DRIVER"), async (req, res) => {
+app.post("/api/support/tickets", requireAuth("CUSTOMER", "DRIVER", "AGENT"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Support requires the production database" });
   const category = String(req.body?.category ?? "").toUpperCase();
   const subject = String(req.body?.subject ?? "").trim();
   const message = String(req.body?.message ?? "").trim();
   const deliveryId = req.body?.deliveryId ? String(req.body.deliveryId) : undefined;
+  const role = (req as any).user.role;
   if (category !== "ORDER" && category !== "APP") return res.status(400).json({ error: "Support category must be ORDER or APP" });
   if (subject.length < 3 || subject.length > 120 || message.length < 5 || message.length > 2000) {
     return res.status(400).json({ error: "Enter a subject and a message within the allowed length" });
   }
   if (deliveryId) {
-    const delivery = await findDeliveryForUser(deliveryId, identity(req), (req as any).user.role);
-    if (!delivery) return res.status(404).json({ error: "Order not found" });
+    if (role === "AGENT") {
+      const linked = await pool!.query(
+        "SELECT 1 FROM buy_orders WHERE delivery_id=$1 AND agent_id=(SELECT id FROM agent_profiles WHERE user_id=$2) LIMIT 1",
+        [deliveryId, identity(req)]
+      );
+      if (!linked.rows[0]) return res.status(404).json({ error: "Order not found" });
+    } else {
+      const delivery = await findDeliveryForUser(deliveryId, identity(req), role);
+      if (!delivery) return res.status(404).json({ error: "Order not found" });
+    }
   }
   const ticket = await createSupportTicket(identity(req), category, subject, message, deliveryId);
   if (!ticket) return res.status(503).json({ error: "Unable to create support request" });
