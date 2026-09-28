@@ -1,4 +1,5 @@
 import { Router } from "express";
+import crypto from "node:crypto";
 import { z } from "zod";
 import { pool } from "./database/db.js";
 import { requireAuth } from "./authMiddleware.js";
