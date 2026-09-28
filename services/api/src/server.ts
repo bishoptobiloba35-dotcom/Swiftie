@@ -11,7 +11,7 @@ import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
-import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus } from "./database/deliveryRepository.js";
+import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, prepareRefund } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -870,8 +870,71 @@ app.get("/api/admin/deliveries", requireAuth("ADMIN"), async (req, res) => {
 
 app.get("/api/admin/disputes", requireAuth("ADMIN"), async (_req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
-  const result = await pool!.query("SELECT id, delivery_id, opened_by, reason, description, status, resolution_note, created_at, updated_at FROM disputes ORDER BY updated_at DESC LIMIT 100");
+  const result = await pool!.query(
+    `SELECT dp.id, dp.delivery_id, dp.opened_by, dp.opened_by_phone, dp.opened_by_role,
+            dp.reason, dp.description, dp.status, dp.resolution_note, dp.created_at, dp.updated_at,
+            d.tracking_code, d.status AS delivery_status, d.receiver_name, d.receiver_phone,
+            d.driver_id, d.quote_total_minor, d.quote_currency,
+            p.status AS payment_status, p.refund_status, p.refund_amount_minor,
+            po.status AS payout_status
+       FROM disputes dp
+       JOIN deliveries d ON d.id=dp.delivery_id
+       LEFT JOIN payments p ON p.delivery_id=d.id
+       LEFT JOIN payouts po ON po.delivery_id=d.id
+      ORDER BY dp.updated_at DESC
+      LIMIT 100`
+  );
   res.json({ disputes: result.rows });
+});
+
+app.get("/api/admin/disputes/:deliveryId", requireAuth("ADMIN"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool!.query(
+    `SELECT d.id, d.tracking_code, d.sender_id, d.driver_id, d.receiver_name, d.receiver_phone,
+            d.status, d.pickup_address, d.dropoff_address, d.pickup_lat, d.pickup_lng, d.dropoff_lat, d.dropoff_lng,
+            d.pickup_photo_url, d.weight_kg, d.length_cm, d.width_cm, d.height_cm, d.is_perishable,
+            d.quote_total_minor, d.quote_currency, d.quote_distance_meters, d.quote_duration_seconds,
+            d.created_at, d.updated_at, d.receiver_confirmed_at,
+            dp.id AS dispute_id, dp.opened_by, dp.opened_by_phone, dp.opened_by_role, dp.reason,
+            dp.description AS dispute_description, dp.status AS dispute_status, dp.resolution_note,
+            dp.created_at AS dispute_created_at, dp.updated_at AS dispute_updated_at,
+            p.id AS payment_id, p.provider AS payment_provider, p.provider_reference,
+            p.amount_minor AS payment_amount_minor, p.currency AS payment_currency, p.status AS payment_status,
+            p.escrow_status, p.refund_reference, p.refund_status, p.refund_amount_minor, p.refund_updated_at,
+            po.id AS payout_id, po.amount_minor AS payout_amount_minor, po.currency AS payout_currency,
+            po.status AS payout_status, po.provider AS payout_provider, po.provider_reference AS payout_provider_reference,
+            po.provider_status AS payout_provider_status, po.failure_reason AS payout_failure_reason,
+            po.processed_at AS payout_processed_at,
+            su.full_name AS sender_name, su.phone AS sender_phone, su.email AS sender_email,
+            du.full_name AS driver_name, du.phone AS driver_phone, du.email AS driver_email
+       FROM deliveries d
+       LEFT JOIN disputes dp ON dp.delivery_id=d.id
+       LEFT JOIN payments p ON p.delivery_id=d.id
+       LEFT JOIN payouts po ON po.delivery_id=d.id
+       LEFT JOIN users su ON su.id=d.sender_id
+       LEFT JOIN drivers dr ON dr.id=d.driver_id
+       LEFT JOIN users du ON du.id=dr.user_id
+      WHERE d.id=$1`,
+    [req.params.deliveryId]
+  );
+  const row = result.rows[0];
+  if (!row) return res.status(404).json({ error: "Delivery not found" });
+  const [events, locations, audit] = await Promise.all([
+    pool!.query(`SELECT id, event_type, actor_user_id, metadata, created_at FROM delivery_events WHERE delivery_id=$1 ORDER BY created_at ASC LIMIT 200`, [req.params.deliveryId]),
+    pool!.query(`SELECT latitude::float AS latitude, longitude::float AS longitude, accuracy_meters::float AS accuracy_meters, recorded_at FROM location_events WHERE delivery_id=$1 ORDER BY recorded_at DESC LIMIT 100`, [req.params.deliveryId]),
+    listAdminCaseAudit(req.params.deliveryId)
+  ]);
+  return res.json({ case: row, events: events.rows, locations: locations.rows, audit });
+});
+
+app.post("/api/admin/disputes/:deliveryId/review", requireAuth("ADMIN"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const dispute = await markDisputeUnderReview(req.params.deliveryId);
+  if (!dispute) return res.status(409).json({ error: "Only open disputes can be moved to review" });
+  const note = String(req.body?.note ?? "").trim() || "Case moved to investigation";
+  await recordAdminCaseAudit({ deliveryId: req.params.deliveryId, disputeId: dispute.id, adminUserId: identity(req), action: "DISPUTE_UNDER_REVIEW", note });
+  await recordDeliveryEvent({ deliveryId: req.params.deliveryId, eventType: "DISPUTE_UNDER_REVIEW", actorUserId: identity(req), metadata: { disputeId: dispute.id } });
+  return res.json({ dispute });
 });
 
 app.get("/api/admin/support/tickets", requireAuth("ADMIN"), async (_req, res) => {
@@ -910,48 +973,54 @@ app.post("/api/admin/payouts/:deliveryId/retry", requireAuth("ADMIN"), async (re
 
 app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), async (req, res) => {
   const status = String(req.body?.resolution ?? "");
-  if (status !== "RESOLVED_REFUND" && status !== "RESOLVED_RELEASE") {
-    return res.status(400).json({ error: "Resolution must be RESOLVED_REFUND or RESOLVED_RELEASE" });
-  }
+  if (status !== "RESOLVED_REFUND" && status !== "RESOLVED_RELEASE") return res.status(400).json({ error: "Resolution must be RESOLVED_REFUND or RESOLVED_RELEASE" });
   const note = String(req.body?.note ?? "").trim();
-  if (!note) return res.status(400).json({ error: "Resolution note is required" });
+  if (note.length < 5 || note.length > 2000) return res.status(400).json({ error: "Resolution note must be between 5 and 2000 characters" });
 
   if (status === "RESOLVED_REFUND") {
     if (!databaseEnabled()) return res.status(503).json({ error: "Refunds require the production database and Paystack" });
-    const payment = await findPayment(req.params.id);
-    const payout = await findPayout(req.params.id);
-    if (payout && ["PROCESSING", "RELEASED"].includes(payout.status)) return res.status(409).json({ error: "This dispute cannot be refunded automatically because the courier payout is already processing or released" });
+    const paymentBefore = await findPayment(req.params.id);
+    if (!paymentBefore) return res.status(409).json({ error: "No payment was found for this delivery" });
+    const requestedAmount = Number(req.body?.refundAmountMinor);
+    const refundAmountMinor = Number.isInteger(requestedAmount) && requestedAmount > 0 ? requestedAmount : paymentBefore.amountMinor;
+    if (refundAmountMinor < 1 || refundAmountMinor > paymentBefore.amountMinor) return res.status(400).json({ error: "Refund amount must be a positive whole amount not greater than the original payment" });
     const secret = process.env.PAYSTACK_SECRET_KEY;
-    if (!payment || payment.provider !== "paystack" || !payment.providerReference) return res.status(409).json({ error: "No refundable Paystack payment was found" });
     if (!secret) return res.status(503).json({ error: "Paystack refund configuration is not ready" });
+
+    const prepared = await prepareRefund(req.params.id, refundAmountMinor);
+    if (!prepared) return res.status(409).json({ error: "This case is no longer refundable. Check the payment, existing refund and courier payout status." });
+
     const response = await fetch("https://api.paystack.co/refund", {
       method: "POST",
       headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
       body: JSON.stringify({
-        transaction: payment.providerReference,
-        amount: payment.amountMinor,
-        currency: payment.currency,
+        transaction: prepared.payment.providerReference,
+        amount: refundAmountMinor,
+        currency: prepared.payment.currency,
         customer_note: "SwiftDrop delivery dispute refund",
         merchant_note: note
       })
     });
     const payload = await response.json() as any;
     if (!response.ok || !payload.status) {
+      await recordAdminCaseAudit({ deliveryId: req.params.id, disputeId: prepared.dispute.id, adminUserId: identity(req), action: "REFUND_INITIATION_FAILED", note, metadata: { provider: "paystack", amountMinor: refundAmountMinor, error: payload.message ?? "Paystack refund failed" } });
       return res.status(502).json({ error: payload.message ?? "Paystack could not initiate the refund" });
     }
-    await cancelEligiblePayoutForRefund(req.params.id);
     const refundReference = String(payload.data?.refund_reference ?? payload.data?.id ?? "");
     const refundStatus = String(payload.data?.status ?? "pending");
-    await markPaymentRefund(req.params.id, refundReference, refundStatus, Number(payload.data?.amount ?? payment.amountMinor));
+    await markPaymentRefund(req.params.id, refundReference, refundStatus, refundAmountMinor);
     const dispute = await resolveDispute(req.params.id, status, note);
-    if (!dispute) return res.status(404).json({ error: "Open dispute not found" });
-    await recordDeliveryEvent({
+    if (!dispute) return res.status(409).json({ error: "The dispute could not be resolved after refund initiation. Review the audit trail before retrying." });
+    await recordAdminCaseAudit({
       deliveryId: req.params.id,
-      eventType: "REFUND_INITIATED",
-      actorUserId: identity(req),
-      metadata: { provider: "paystack", transactionReference: payment.providerReference, refundReference, refundStatus, amountMinor: payment.amountMinor }
+      disputeId: dispute.id,
+      adminUserId: identity(req),
+      action: "REFUND_INITIATED",
+      note,
+      metadata: { provider: "paystack", transactionReference: prepared.payment.providerReference, refundReference, refundStatus, amountMinor: refundAmountMinor, payoutCancelled: Boolean(prepared.payout) }
     });
-    return res.json({ dispute, refund: { status: refundStatus, reference: refundReference, amountMinor: payment.amountMinor } });
+    await recordDeliveryEvent({ deliveryId: req.params.id, eventType: "REFUND_INITIATED", actorUserId: identity(req), metadata: { provider: "paystack", transactionReference: prepared.payment.providerReference, refundReference, refundStatus, amountMinor: refundAmountMinor } });
+    return res.json({ dispute, refund: { status: refundStatus, reference: refundReference, amountMinor: refundAmountMinor } });
   }
 
   const dispute = await resolveDispute(req.params.id, status, note);
@@ -960,15 +1029,10 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
     const payment = await findPayment(req.params.id);
     if (payment && ["HELD", "AUTHORIZED"].includes(payment.status)) await updatePaymentStatus(req.params.id, "RELEASED");
   }
-  await recordDeliveryEvent({
-    deliveryId: req.params.id,
-    eventType: "DISPUTE_RESOLVED",
-    actorUserId: identity(req),
-    metadata: { resolution: status }
-  });
+  await recordAdminCaseAudit({ deliveryId: req.params.id, disputeId: dispute.id, adminUserId: identity(req), action: "DISPUTE_RELEASED", note, metadata: { resolution: status } });
+  await recordDeliveryEvent({ deliveryId: req.params.id, eventType: "DISPUTE_RESOLVED", actorUserId: identity(req), metadata: { resolution: status } });
   return res.json({ dispute });
 });
-
 app.get("/api/deliveries/:id/payout", requireAuth("DRIVER", "ADMIN"), async (req, res) => {
   const userId = identity(req);
   const role = (req as typeof req & { user?: { role: "DRIVER" | "ADMIN" } }).user!.role;
