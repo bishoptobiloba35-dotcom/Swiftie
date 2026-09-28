@@ -10,7 +10,7 @@ import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
-import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, prepareRefund, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
+import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, listSupportTicketMessages, recordAdminSupportMessage, prepareRefund, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -907,7 +907,14 @@ app.get("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER", "ADMIN"
 app.get("/api/support/tickets", requireAuth("CUSTOMER", "DRIVER", "AGENT"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Support requires the production database" });
   const tickets = await listSupportTickets(identity(req));
-  return res.json({ tickets });
+  const enriched = await Promise.all(tickets.map(async ticket => ({ ...ticket, messages: await listSupportTicketMessages(ticket.id, identity(req)) })));
+  return res.json({ tickets: enriched });
+});
+
+app.get("/api/support/tickets/:id/messages", requireAuth("CUSTOMER", "DRIVER", "AGENT"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Support requires the production database" });
+  const messages = await listSupportTicketMessages(routeParam(req.params.id, "id"), identity(req));
+  return res.json({ messages });
 });
 
 app.post("/api/support/tickets", requireAuth("CUSTOMER", "DRIVER", "AGENT"), async (req, res) => {
