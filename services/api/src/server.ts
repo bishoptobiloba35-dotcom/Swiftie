@@ -15,7 +15,8 @@ import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
 import { validateProductionConfig } from "./productionConfig.js";
-import { ensureAiDefaults, getAiPermission, updateAiPermission, auditAiAction, evaluateAiPayment, type AiMode } from "./aiPolicy.js";
+import { ensureAiDefaults, getAiPermission, updateAiPermission, auditAiAction, evaluateAiPayment, reserveAiSpend, releaseAiSpend, type AiMode } from "./aiPolicy.js";
+import { executeAiAction } from "./aiExecutor.js";
 import { getPrivateObject, objectStorageEnabled, putPrivateObject } from "./storage.js";
 import { enqueueNotification, processNotificationOutbox, processNotificationPushReceipts } from "./notificationOutbox.js";
 
@@ -151,37 +152,106 @@ app.post("/api/ai/actions", requireAuth("CUSTOMER"), async (req, res) => {
     amountMinor: z.number().int().positive().max(500_000_000).optional(),
     targetType: z.string().trim().max(80).optional(),
     targetId: z.string().uuid().optional(),
+    approved: z.boolean().default(false),
     details: z.record(z.string(), z.unknown()).default({})
   }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
   const userId = identity(req);
+  const actionType = parsed.data.actionType.trim().toUpperCase();
+  const paymentAction = actionType === "PAY_DELIVERY";
+
   try {
+    let effectiveAmount = parsed.data.amountMinor;
+    if (paymentAction) {
+      if (!parsed.data.targetId) return res.status(400).json({ error: "A delivery ID is required for PAY_DELIVERY" });
+      const delivery = await findDeliveryForUser(parsed.data.targetId, userId, "CUSTOMER");
+      if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+      effectiveAmount = delivery.quote?.totalMinor;
+      if (!effectiveAmount || !Number.isSafeInteger(effectiveAmount) || effectiveAmount <= 0) {
+        return res.status(409).json({ error: "Delivery does not have a valid server quote" });
+      }
+    } else if (parsed.data.amountMinor != null) {
+      return res.status(400).json({ error: "Payment amounts are only accepted for PAY_DELIVERY and are derived from the server quote" });
+    }
+
     const permissions = await getAiPermission(userId);
-    const payment = parsed.data.amountMinor == null
+    const payment = effectiveAmount == null
       ? { allowed: true, requiresApproval: permissions.mode === "ASSIST", reason: permissions.mode === "ASSIST" ? "AI is configured for assisted actions" : undefined }
-      : evaluateAiPayment(permissions, parsed.data.amountMinor);
+      : evaluateAiPayment(permissions, effectiveAmount);
+
     if (!payment.allowed) {
-      const audit = await auditAiAction({ userId, actionType: parsed.data.actionType, status: "REJECTED", amountMinor: parsed.data.amountMinor, targetType: parsed.data.targetType, targetId: parsed.data.targetId, details: { reason: payment.reason } });
+      const audit = await auditAiAction({
+        userId, actionType, status: "REJECTED", amountMinor: effectiveAmount,
+        targetType: parsed.data.targetType, targetId: parsed.data.targetId,
+        details: { reason: payment.reason }
+      });
       return res.status(403).json({ error: payment.reason ?? "AI action rejected", audit });
     }
-    if (!payment.requiresApproval && parsed.data.amountMinor != null) {
-      const reserved = await reserveAiSpend(userId, parsed.data.amountMinor);
-      if (!reserved) {
-        const audit = await auditAiAction({ userId, actionType: parsed.data.actionType, status: "REJECTED", amountMinor: parsed.data.amountMinor, targetType: parsed.data.targetType, targetId: parsed.data.targetId, details: { reason: "AI daily spending limit would be exceeded" } });
-        return res.status(403).json({ error: "AI daily spending limit would be exceeded", audit });
+
+    const requiresApproval = payment.requiresApproval && !parsed.data.approved;
+    if (requiresApproval) {
+      const audit = await auditAiAction({
+        userId, actionType, status: "PREPARED", amountMinor: effectiveAmount,
+        targetType: parsed.data.targetType, targetId: parsed.data.targetId,
+        details: { ...parsed.data.details, requiresApproval: true, reason: payment.reason }
+      });
+      return res.status(201).json({ action: audit, requiresApproval: true, reason: payment.reason });
+    }
+
+    let spendReserved = false;
+    let shouldReserveSpend = false;
+    if (paymentAction && effectiveAmount != null && !payment.requiresApproval) {
+      const existing = await findPayment(parsed.data.targetId!);
+      shouldReserveSpend = !(existing?.status === "PENDING" && Boolean(existing.authorizationUrl) && Boolean(existing.providerReference));
+      if (shouldReserveSpend) {
+        spendReserved = await reserveAiSpend(userId, effectiveAmount);
+        if (!spendReserved) {
+          const audit = await auditAiAction({
+            userId, actionType, status: "REJECTED", amountMinor: effectiveAmount,
+            targetType: parsed.data.targetType, targetId: parsed.data.targetId,
+            details: { reason: "AI daily spending limit would be exceeded" }
+          });
+          return res.status(403).json({ error: "AI daily spending limit would be exceeded", audit });
+        }
       }
     }
-    const status = payment.requiresApproval ? "PREPARED" : "EXECUTED";
-    const audit = await auditAiAction({
-      userId,
-      actionType: parsed.data.actionType,
-      status,
-      amountMinor: parsed.data.amountMinor,
-      targetType: parsed.data.targetType,
-      targetId: parsed.data.targetId,
-      details: { ...parsed.data.details, requiresApproval: payment.requiresApproval, reason: payment.reason, spendReserved: !payment.requiresApproval && parsed.data.amountMinor != null }
-    });
-    return res.status(201).json({ action: audit, requiresApproval: payment.requiresApproval, reason: payment.reason });
+
+    try {
+      const execution = await executeAiAction({
+        userId,
+        actionType,
+        targetId: parsed.data.targetId,
+        details: parsed.data.details,
+        approved: parsed.data.approved
+      });
+
+      if (!execution.executed) {
+        if (spendReserved) await releaseAiSpend(userId, effectiveAmount!);
+        const audit = await auditAiAction({
+          userId, actionType, status: "PREPARED", amountMinor: effectiveAmount,
+          targetType: parsed.data.targetType, targetId: parsed.data.targetId,
+          details: { ...parsed.data.details, requiresApproval: true, result: execution.result }
+        });
+        return res.status(201).json({ action: audit, requiresApproval: true });
+      }
+
+      const audit = await auditAiAction({
+        userId, actionType, status: "EXECUTED", amountMinor: execution.amountMinor ?? effectiveAmount,
+        targetType: parsed.data.targetType, targetId: execution.targetId ?? parsed.data.targetId,
+        details: { ...parsed.data.details, requiresApproval: false, spendReserved, result: execution.result }
+      });
+      return res.status(201).json({ action: audit, requiresApproval: false, result: execution.result });
+    } catch (error) {
+      if (spendReserved) await releaseAiSpend(userId, effectiveAmount!);
+      const message = error instanceof Error ? error.message : "AI action execution failed";
+      const audit = await auditAiAction({
+        userId, actionType, status: "FAILED", amountMinor: effectiveAmount,
+        targetType: parsed.data.targetType, targetId: parsed.data.targetId,
+        details: { ...parsed.data.details, error: message, spendReleased: spendReserved }
+      });
+      return res.status(409).json({ error: message, audit });
+    }
   } catch {
     return res.status(500).json({ error: "Unable to evaluate AI action" });
   }
