@@ -682,11 +682,11 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
         const amountMinor=Number(event?.data?.amount??0);
         if(refundStatus==="processed"){
           await pool!.query(
-            "UPDATE buy_order_payments SET refund_status='PROCESSED',refund_reference=COALESCE(refund_reference,$2),refund_amount_minor=$3,total_refunded_minor=GREATEST(total_refunded_minor,$3),status=CASE WHEN total_refunded_minor+$3>=amount_minor THEN 'REFUNDED' ELSE status END,updated_at=now() WHERE id=$1",
+            "UPDATE buy_order_payments SET refund_status='PROCESSED',refund_reference=COALESCE(refund_reference,$2),refund_amount_minor=$3,total_refunded_minor=total_refunded_minor+$3,status=CASE WHEN total_refunded_minor+$3>=amount_minor THEN 'REFUNDED' ELSE status END,updated_at=now() WHERE id=$1",
             [buyPayment.id,refundReference||null,amountMinor]
           );
           await pool!.query(
-            "UPDATE buy_orders SET refunded_minor=GREATEST(refunded_minor,$2),payment_status=CASE WHEN payment_status<>'REFUNDED' AND $2>=COALESCE((SELECT amount_minor FROM buy_order_payments WHERE id=$1),0) THEN 'REFUNDED' ELSE payment_status END,updated_at=now() WHERE id=$3",
+            "UPDATE buy_orders SET refunded_minor=refunded_minor+$2,payment_status=CASE WHEN payment_status<>'REFUNDED' AND $2>=COALESCE((SELECT amount_minor FROM buy_order_payments WHERE id=$1),0) THEN 'REFUNDED' ELSE payment_status END,updated_at=now() WHERE id=$3",
             [buyPayment.id,amountMinor,buyPayment.buy_order_id]
           );
         }else if(refundStatus==="failed"){
