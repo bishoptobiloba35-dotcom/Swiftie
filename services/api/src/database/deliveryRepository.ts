@@ -126,10 +126,34 @@ export async function updatePaymentStatus(
   providerReference?: string
 ): Promise<PaymentRecord | null> {
   if (!pool) return null;
+
+  // Financial state changes must be monotonic and explicitly allowed. Webhooks can
+  // be retried, so a same-state update remains idempotent, but a terminal state
+  // must never be moved backwards by a late or forged callback.
+  const allowedFrom: Record<PaymentRecord["status"], PaymentRecord["status"][]> = {
+    PENDING: ["PENDING"],
+    AUTHORIZED: ["PENDING", "AUTHORIZED"],
+    HELD: ["PENDING", "AUTHORIZED", "HELD"],
+    RELEASED: ["HELD", "RELEASED"],
+    REFUNDED: ["PENDING", "AUTHORIZED", "HELD", "RELEASED", "REFUNDED"],
+    FAILED: ["PENDING", "AUTHORIZED", "FAILED"]
+  };
+
   const result = await pool.query(
-    `UPDATE payments SET status=$2, escrow_status=CASE WHEN $2='HELD' THEN 'HELD' WHEN $2='RELEASED' THEN 'RELEASED' WHEN $2='REFUNDED' THEN 'REFUNDED' ELSE escrow_status END, provider_reference=COALESCE($3, provider_reference), updated_at=now()
-     WHERE delivery_id=$1 RETURNING *`,
-    [deliveryId, status, providerReference ?? null]
+    `UPDATE payments
+        SET status=$2,
+            escrow_status=CASE
+              WHEN $2='HELD' THEN 'HELD'
+              WHEN $2='RELEASED' THEN 'RELEASED'
+              WHEN $2='REFUNDED' THEN 'REFUNDED'
+              ELSE escrow_status
+            END,
+            provider_reference=COALESCE($3, provider_reference),
+            updated_at=now()
+      WHERE delivery_id=$1
+        AND status = ANY($4::text[])
+      RETURNING *`,
+    [deliveryId, status, providerReference ?? null, allowedFrom[status]]
   );
   return result.rows[0] ? paymentFromRow(result.rows[0]) : null;
 }
