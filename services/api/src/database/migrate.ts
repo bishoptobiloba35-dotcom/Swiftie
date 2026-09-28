@@ -15,7 +15,8 @@ const migrations = [
   { id: "012_notification_push_receipts", file: "012_notification_push_receipts.sql" },
   { id: "013_payment_refund_totals", file: "013_payment_refund_totals.sql" },
   { id: "014_payment_refund_events", file: "014_payment_refund_events.sql" },
-  { id: "015_business_agent_ai", file: "015_business_agent_ai.sql" }
+  { id: "015_business_agent_ai", file: "015_business_agent_ai.sql" },
+  { id: "016_buy_order_operations", file: "016_buy_order_operations.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
