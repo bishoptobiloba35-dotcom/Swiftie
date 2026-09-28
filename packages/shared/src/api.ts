@@ -53,6 +53,8 @@ export type CreateDeliveryInput = {
   isPerishable: boolean;
   pickup: { label: string; formattedAddress: string; latitude: number; longitude: number };
   dropoff: { label: string; formattedAddress: string; latitude: number; longitude: number };
+  pickupDropOffLocationId?: string;
+  dropoffDropOffLocationId?: string;
   quote: {
     currency: "NGN";
     distanceMeters: number;
