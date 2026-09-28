@@ -1,4 +1,5 @@
-import { describe, expect, it } from "node:test";
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
 import { canTransition, assertTransition } from "./deliveryState.js";
 
 describe("delivery state machine", () => {
@@ -12,12 +13,12 @@ describe("delivery state machine", () => {
       ["IN_TRANSIT", "ARRIVED"],
       ["ARRIVED", "DELIVERED"]
     ] as const;
-    for (const [from, to] of lifecycle) expect(canTransition(from, to)).toBe(true);
+    for (const [from, to] of lifecycle) assert.equal(canTransition(from, to), true);
   });
 
   it("rejects skipped and backwards transitions", () => {
-    expect(canTransition("PAYMENT_AUTHORIZED", "PICKED_UP")).toBe(false);
-    expect(canTransition("DELIVERED", "IN_TRANSIT")).toBe(false);
-    expect(() => assertTransition("CANCELLED", "DRIVER_ASSIGNED")).toThrow();
+    assert.equal(canTransition("PAYMENT_AUTHORIZED", "PICKED_UP"), false);
+    assert.equal(canTransition("DELIVERED", "IN_TRANSIT"), false);
+    assert.throws(() => assertTransition("CANCELLED", "DRIVER_ASSIGNED"));
   });
 });
