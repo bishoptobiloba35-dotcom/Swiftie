@@ -449,13 +449,72 @@ function rowToSupportTicket(row: any): SupportTicketRecord {
 
 export async function createSupportTicket(userId: string, category: "ORDER" | "APP", subject: string, message: string, deliveryId?: string): Promise<SupportTicketRecord | null> {
   if (!pool) return null;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `INSERT INTO support_tickets (user_id, delivery_id, category, subject, message)
+       VALUES ($1,$2,$3,$4,$5)
+       RETURNING *`,
+      [userId, deliveryId || null, category, subject, message]
+    );
+    const ticket = result.rows[0];
+    if (!ticket) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    await client.query(
+      `INSERT INTO support_ticket_messages (ticket_id, sender_type, sender_user_id, message)
+       VALUES ($1,'USER',$2,$3)`,
+      [ticket.id, userId, message]
+    );
+    await client.query("COMMIT");
+    return rowToSupportTicket(ticket);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function listSupportTicketMessages(ticketId: string, userId?: string): Promise<Array<{ id: string; ticketId: string; senderType: "USER" | "AI" | "ADMIN"; senderUserId?: string | null; message: string; createdAt: string }>> {
+  if (!pool) return [];
   const result = await pool.query(
-    `INSERT INTO support_tickets (user_id, delivery_id, category, subject, message)
-     VALUES ($1,$2,$3,$4,$5)
-     RETURNING *`,
-    [userId, deliveryId || null, category, subject, message]
+    `SELECT m.id, m.ticket_id, m.sender_type, m.sender_user_id, m.message, m.created_at
+       FROM support_ticket_messages m
+       JOIN support_tickets t ON t.id=m.ticket_id
+      WHERE m.ticket_id=$1 AND ($2::uuid IS NULL OR t.user_id=$2)
+      ORDER BY m.created_at ASC`,
+    [ticketId, userId ?? null]
   );
-  return result.rows[0] ? rowToSupportTicket(result.rows[0]) : null;
+  return result.rows.map(row => ({
+    id: row.id,
+    ticketId: row.ticket_id,
+    senderType: row.sender_type,
+    senderUserId: row.sender_user_id ?? null,
+    message: row.message,
+    createdAt: new Date(row.created_at).toISOString()
+  }));
+}
+
+export async function recordSupportAiMessage(ticketId: string, response: string): Promise<void> {
+  if (!pool) return;
+  await pool.query(
+    `INSERT INTO support_ticket_messages (ticket_id, sender_type, message)
+     VALUES ($1,'AI',$2)
+     ON CONFLICT DO NOTHING`,
+    [ticketId, response]
+  );
+}
+
+export async function recordAdminSupportMessage(ticketId: string, adminUserId: string, response: string): Promise<void> {
+  if (!pool) return;
+  await pool.query(
+    `INSERT INTO support_ticket_messages (ticket_id, sender_type, sender_user_id, message)
+     VALUES ($1,'ADMIN',$2,$3)`,
+    [ticketId, adminUserId, response]
+  );
 }
 
 export async function listSupportTickets(userId?: string): Promise<SupportTicketRecord[]> {
