@@ -98,7 +98,16 @@ export async function processSupportAiBatch(limit = 10): Promise<void> {
   );
 
   for (const ticket of result.rows) {
+    const workerClient = await pool.connect();
+    let locked = false;
     try {
+      const lockResult = await workerClient.query(
+        "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+        [ticket.id]
+      );
+      locked = Boolean(lockResult.rows[0]?.locked);
+      if (!locked) continue;
+
       const decision = await decideTicket(ticket);
       const action = await recordSupportAiAction(
         ticket.id,
@@ -127,6 +136,13 @@ export async function processSupportAiBatch(limit = 10): Promise<void> {
       } else {
         await resolveSupportTicket(ticket.id, "IN_REVIEW", response);
       }
+    } finally {
+      if (locked) {
+        try {
+          await workerClient.query("SELECT pg_advisory_unlock(hashtext($1))", [ticket.id]);
+        } catch {}
+      }
+      workerClient.release();
     }
   }
 }
