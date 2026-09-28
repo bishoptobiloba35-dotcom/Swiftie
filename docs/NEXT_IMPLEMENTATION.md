@@ -14,6 +14,7 @@
 - Notification records now use a database-backed outbox with retry/backoff and Expo push delivery; invalid device tokens are removed.
 - CI is a genuine quality gate: workspace builds and API tests must pass; failures are fixed at source/configuration level rather than suppressed.
 - The API test job does not depend on an npm lockfile cache until a reproducible lockfile is committed.
+- The latest CI source repairs corrected the driver earnings-style reference and customer tracking destination coordinates to use the nested `dropoff.location` model.
 
 ## Remaining production milestones
 
