@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { pool } from "./db.js";
 import { hashPin, verifyPin } from "../security.js";
 import { canTransition } from "../deliveryState.js";
+import { allowedPaymentSources } from "./paymentState.js";
 
 export type PaymentRecord = {
   id: string;
@@ -147,10 +148,27 @@ export async function updatePaymentStatus(
   providerReference?: string
 ): Promise<PaymentRecord | null> {
   if (!pool) return null;
+
+  // Financial state changes must be monotonic and explicitly allowed. Webhooks can
+  // be retried, so a same-state update remains idempotent, but a terminal state
+  // must never be moved backwards by a late or forged callback.
+  const allowedFrom = allowedPaymentSources(status);
+
   const result = await pool.query(
-    `UPDATE payments SET status=$2, escrow_status=CASE WHEN $2='HELD' THEN 'HELD' WHEN $2='RELEASED' THEN 'RELEASED' WHEN $2='REFUNDED' THEN 'REFUNDED' ELSE escrow_status END, provider_reference=COALESCE($3, provider_reference), updated_at=now()
-     WHERE delivery_id=$1 RETURNING *`,
-    [deliveryId, status, providerReference ?? null]
+    `UPDATE payments
+        SET status=$2,
+            escrow_status=CASE
+              WHEN $2='HELD' THEN 'HELD'
+              WHEN $2='RELEASED' THEN 'RELEASED'
+              WHEN $2='REFUNDED' THEN 'REFUNDED'
+              ELSE escrow_status
+            END,
+            provider_reference=COALESCE($3, provider_reference),
+            updated_at=now()
+      WHERE delivery_id=$1
+        AND status = ANY($4::text[])
+      RETURNING *`,
+    [deliveryId, status, providerReference ?? null, allowedFrom]
   );
   return result.rows[0] ? paymentFromRow(result.rows[0]) : null;
 }
@@ -452,13 +470,75 @@ function rowToSupportTicket(row: any): SupportTicketRecord {
 
 export async function createSupportTicket(userId: string, category: "ORDER" | "APP", subject: string, message: string, deliveryId?: string): Promise<SupportTicketRecord | null> {
   if (!pool) return null;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `INSERT INTO support_tickets (user_id, delivery_id, category, subject, message)
+       VALUES ($1,$2,$3,$4,$5)
+       RETURNING *`,
+      [userId, deliveryId || null, category, subject, message]
+    );
+    const ticket = result.rows[0];
+    if (!ticket) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    await client.query(
+      `INSERT INTO support_ticket_messages (ticket_id, sender_type, sender_user_id, message)
+       VALUES ($1,'USER',$2,$3)`,
+      [ticket.id, userId, message]
+    );
+    await client.query("COMMIT");
+    return rowToSupportTicket(ticket);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function listSupportTicketMessages(ticketId: string, userId?: string): Promise<Array<{ id: string; ticketId: string; senderType: "USER" | "AI" | "ADMIN"; senderUserId?: string | null; message: string; createdAt: string }>> {
+  if (!pool) return [];
   const result = await pool.query(
-    `INSERT INTO support_tickets (user_id, delivery_id, category, subject, message)
-     VALUES ($1,$2,$3,$4,$5)
-     RETURNING *`,
-    [userId, deliveryId || null, category, subject, message]
+    `SELECT m.id, m.ticket_id, m.sender_type, m.sender_user_id, m.message, m.created_at
+       FROM support_ticket_messages m
+       JOIN support_tickets t ON t.id=m.ticket_id
+      WHERE m.ticket_id=$1 AND ($2::uuid IS NULL OR t.user_id=$2)
+      ORDER BY m.created_at ASC`,
+    [ticketId, userId ?? null]
   );
-  return result.rows[0] ? rowToSupportTicket(result.rows[0]) : null;
+  return result.rows.map(row => ({
+    id: row.id,
+    ticketId: row.ticket_id,
+    senderType: row.sender_type,
+    senderUserId: row.sender_user_id ?? null,
+    message: row.message,
+    createdAt: new Date(row.created_at).toISOString()
+  }));
+}
+
+export async function recordSupportAiMessage(ticketId: string, response: string): Promise<void> {
+  if (!pool) return;
+  await pool.query(
+    `INSERT INTO support_ticket_messages (ticket_id, sender_type, message)
+     SELECT $1,'AI',$2
+     WHERE NOT EXISTS (
+       SELECT 1 FROM support_ticket_messages
+       WHERE ticket_id=$1 AND sender_type='AI' AND message=$2
+     )`,
+    [ticketId, response]
+  );
+}
+
+export async function recordAdminSupportMessage(ticketId: string, adminUserId: string, response: string): Promise<void> {
+  if (!pool) return;
+  await pool.query(
+    `INSERT INTO support_ticket_messages (ticket_id, sender_type, sender_user_id, message)
+     VALUES ($1,'ADMIN',$2,$3)`,
+    [ticketId, adminUserId, response]
+  );
 }
 
 export async function listSupportTickets(userId?: string): Promise<SupportTicketRecord[]> {
@@ -472,6 +552,57 @@ export async function listSupportTickets(userId?: string): Promise<SupportTicket
   return result.rows.map(rowToSupportTicket);
 }
 
+export type SupportAiActionRecord = {
+  id: string; ticketId: string; actionType: string;
+  decision: "AUTO_RESOLVED" | "ESCALATED" | "BLOCKED";
+  reason: string; response: string; actor: string; createdAt: string;
+};
+
+export async function recordSupportAiAction(ticketId: string, actionType: string, decision: SupportAiActionRecord["decision"], reason: string, response: string): Promise<SupportAiActionRecord | null> {
+  if (!pool) return null;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const ticket = (await client.query("SELECT ai_handled, status FROM support_tickets WHERE id=$1 FOR UPDATE", [ticketId])).rows[0];
+    if (!ticket || ticket.ai_handled || !["OPEN","IN_REVIEW"].includes(ticket.status)) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    const action = (await client.query(`INSERT INTO support_ai_actions (ticket_id, action_type, decision, reason, response) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [ticketId, actionType, decision, reason, response])).rows[0];
+    await client.query(`UPDATE support_tickets SET ai_handled=true, ai_action_id=$2, human_required=$3, status=CASE WHEN $3 THEN 'IN_REVIEW' ELSE 'RESOLVED' END, resolution_note=$4, updated_at=now() WHERE id=$1 AND status IN ('OPEN','IN_REVIEW')`, [ticketId, action.id, decision === "ESCALATED", response]);
+    await client.query(`INSERT INTO support_ticket_messages (ticket_id, sender_type, message) VALUES ($1,'AI',$2)`, [ticketId, response]);
+    await client.query("COMMIT");
+    return { id: action.id, ticketId: action.ticket_id, actionType: action.action_type, decision: action.decision, reason: action.reason, response: action.response, actor: action.actor, createdAt: action.created_at };
+  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+}
+
+export async function listOpenSupportAiTickets(limit = 20): Promise<SupportTicketRecord[]> {
+  if (!pool) return [];
+  const result = await pool.query(`SELECT * FROM support_tickets WHERE status='OPEN' AND ai_handled=false AND human_required=false ORDER BY created_at ASC LIMIT $1`, [Math.min(Math.max(limit, 1), 50)]);
+  return result.rows.map(rowToSupportTicket);
+}
+
+export async function notifyAdminsOfSupportAiAction(ticketId: string, actionId: string, decision: string, response: string): Promise<void> {
+  if (!pool) return;
+  const body = "Support AI " + decision.toLowerCase() + " ticket " + ticketId + ". Action " + actionId + ". " + response;
+  await pool.query(`INSERT INTO notifications (user_id, title, body, type, created_at) SELECT id, 'Support AI action', $1, 'SUPPORT_AI_ACTION', now() FROM users WHERE role='ADMIN'`, [body]);
+}
+
+export async function notifySupportUserOfAiAction(ticketId: string, actionId: string, decision: string, response: string): Promise<void> {
+  if (!pool) return;
+  const result = await pool.query(
+    `SELECT user_id FROM support_tickets WHERE id=$1`,
+    [ticketId]
+  );
+  const userId = result.rows[0]?.user_id;
+  if (!userId) return;
+  const title = decision === "AUTO_RESOLVED" ? "SwiftDrop Support replied" : "SwiftDrop Support needs human review";
+  await pool.query(
+    `INSERT INTO notifications (user_id, title, body, type, created_at)
+     VALUES ($1,$2,$3,'SUPPORT_AI_REPLY',now())`,
+    [userId, title, response + " (Support action: " + actionId + ")"]
+  );
+}
 export async function resolveSupportTicket(id: string, status: "IN_REVIEW" | "RESOLVED" | "CLOSED", note: string): Promise<SupportTicketRecord | null> {
   if (!pool) return null;
   const result = await pool.query(
