@@ -945,6 +945,15 @@ app.post("/api/support/tickets", requireAuth("CUSTOMER", "DRIVER", "AGENT"), asy
   return res.status(201).json({ ticket });
 });
 
+app.get("/api/admin/support/tickets/:id/messages", requireAuth("ADMIN"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Support requires the production database" });
+  const ticketId = routeParam(req.params.id, "id");
+  const ticket = await pool!.query("SELECT id FROM support_tickets WHERE id=$1", [ticketId]);
+  if (!ticket.rows[0]) return res.status(404).json({ error: "Support ticket not found" });
+  const messages = await listSupportTicketMessages(ticketId);
+  return res.json({ messages });
+});
+
 app.get("/api/admin/support/ai-actions", requireAuth("ADMIN"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Support AI audit requires the production database" });
   const result = await pool!.query(
