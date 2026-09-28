@@ -130,14 +130,7 @@ export async function updatePaymentStatus(
   // Financial state changes must be monotonic and explicitly allowed. Webhooks can
   // be retried, so a same-state update remains idempotent, but a terminal state
   // must never be moved backwards by a late or forged callback.
-  const allowedFrom: Record<PaymentRecord["status"], PaymentRecord["status"][]> = {
-    PENDING: ["PENDING"],
-    AUTHORIZED: ["PENDING", "AUTHORIZED"],
-    HELD: ["PENDING", "AUTHORIZED", "HELD"],
-    RELEASED: ["HELD", "RELEASED"],
-    REFUNDED: ["PENDING", "AUTHORIZED", "HELD", "RELEASED", "REFUNDED"],
-    FAILED: ["PENDING", "AUTHORIZED", "FAILED"]
-  };
+  const allowedFrom = allowedPaymentSources(status);
 
   const result = await pool.query(
     `UPDATE payments
