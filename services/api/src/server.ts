@@ -357,6 +357,11 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
   const secret = process.env.PAYSTACK_SECRET_KEY;
   if (!secret) { await markPayoutFailed(routeParam(req.params.id, "id")); return res.status(503).json({ error: "Paystack transfers are not configured" }); }
   const reference = "sd_payout_" + randomUUID().replaceAll("-", "");
+  const reserved = await setPayoutProviderReference(routeParam(req.params.id, "id"), reference);
+  if (!reserved) {
+    await markPayoutFailed(routeParam(req.params.id, "id"));
+    return res.status(409).json({ error: "Payout could not be reserved for transfer" });
+  }
   const response = await fetch("https://api.paystack.co/transfer", {
     method: "POST",
     headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
@@ -367,7 +372,9 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
     await markPayoutFailed(routeParam(req.params.id, "id"));
     return res.status(502).json({ error: data.message ?? "Paystack transfer could not be initiated" });
   }
-  await setPayoutProviderReference(routeParam(req.params.id, "id"), data.data.reference);
+  if (data.data.reference && data.data.reference !== reference) {
+    await setPayoutProviderReference(routeParam(req.params.id, "id"), data.data.reference);
+  }
   return res.status(202).json({
     payout: await findPayout(routeParam(req.params.id, "id")),
     providerStatus: data.data.status ?? "pending",
@@ -651,13 +658,15 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
         await markPaymentRefund(deliveryId, refundReference, refundStatus, amountMinor);
         if (refundStatus === "processed") {
           const payment = await findPayment(deliveryId);
-          if (payment && amountMinor >= payment.amountMinor) {
+          const totalRefundedMinor = payment?.totalRefundedMinor ?? 0;
+          const fullyRefunded = Boolean(payment && totalRefundedMinor >= payment.amountMinor);
+          if (fullyRefunded) {
             await updatePaymentStatus(deliveryId, "REFUNDED", transactionReference);
           }
           await recordDeliveryEvent({
             deliveryId,
             eventType: "REFUND_PROCESSED",
-            metadata: { provider: "paystack", transactionReference, refundReference, amountMinor, fullyRefunded: Boolean(payment && amountMinor >= payment.amountMinor) }
+            metadata: { provider: "paystack", transactionReference, refundReference, amountMinor, totalRefundedMinor, fullyRefunded }
           });
         } else if (refundStatus === "failed") {
           await recordDeliveryEvent({ deliveryId, eventType: "REFUND_FAILED", metadata: { provider: "paystack", transactionReference, refundReference } });
