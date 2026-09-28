@@ -502,8 +502,11 @@ export async function recordSupportAiMessage(ticketId: string, response: string)
   if (!pool) return;
   await pool.query(
     `INSERT INTO support_ticket_messages (ticket_id, sender_type, message)
-     VALUES ($1,'AI',$2)
-     ON CONFLICT DO NOTHING`,
+     SELECT $1,'AI',$2
+     WHERE NOT EXISTS (
+       SELECT 1 FROM support_ticket_messages
+       WHERE ticket_id=$1 AND sender_type='AI' AND message=$2
+     )`,
     [ticketId, response]
   );
 }
