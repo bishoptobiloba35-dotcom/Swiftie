@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { pool } from "./db.js";
 
 const migrations = [
@@ -28,8 +27,8 @@ export async function runMigrations(): Promise<void> {
     const exists = await pool.query("SELECT 1 FROM schema_migrations WHERE id=$1", [migration.id]);
     if (exists.rowCount) continue;
 
-    const filePath = path.join(process.cwd(), "services", "api", "src", "database", "migrations", migration.file);
-    const sql = await readFile(filePath, "utf8");
+    const migrationUrl = new URL("./migrations/" + migration.file, import.meta.url);
+    const sql = await readFile(migrationUrl, "utf8");
     await pool.query("BEGIN");
     try {
       await pool.query(sql);
