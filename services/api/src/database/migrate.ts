@@ -11,7 +11,8 @@ const migrations = [
   { id: "008_support_and_receiver_disputes", file: "008_support_and_receiver_disputes.sql" },
   { id: "009_payment_refunds", file: "009_payment_refunds.sql" },
   { id: "010_admin_case_audit", file: "010_admin_case_audit.sql" },
-  { id: "011_notification_outbox", file: "011_notification_outbox.sql" }
+  { id: "011_notification_outbox", file: "011_notification_outbox.sql" },
+  { id: "012_notification_push_receipts", file: "012_notification_push_receipts.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
