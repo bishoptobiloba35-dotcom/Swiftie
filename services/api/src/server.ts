@@ -721,6 +721,31 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
     return res.status(200).json({ received: true });
   }
 
+  const buyReference = String(event?.data?.reference ?? "");
+  if (buyReference && databaseEnabled() && (event?.event === "charge.success" || event?.event === "charge.failed")) {
+    const buyPaymentResult = await pool!.query(
+      "SELECT bop.*, bo.customer_user_id, bo.payment_status AS order_payment_status FROM buy_order_payments bop JOIN buy_orders bo ON bo.id=bop.buy_order_id WHERE bop.provider_reference=$1",
+      [buyReference]
+    );
+    const buyPayment = buyPaymentResult.rows[0];
+    if (buyPayment) {
+      if (event.event === "charge.failed") {
+        await pool!.query("UPDATE buy_order_payments SET status='FAILED', updated_at=now() WHERE id=$1 AND status NOT IN ('HELD','RELEASED','REFUNDED')", [buyPayment.id]);
+        await pool!.query("UPDATE buy_orders SET payment_status='FAILED', updated_at=now() WHERE id=$1 AND payment_status NOT IN ('HELD','REFUNDED')", [buyPayment.buy_order_id]);
+        return res.status(200).json({ received: true, duplicate: duplicateWebhook });
+      }
+      if (Number(event?.data?.amount) !== Number(buyPayment.amount_minor) || String(event?.data?.currency ?? "") !== String(buyPayment.currency)) {
+        await pool!.query("UPDATE buy_order_payments SET status='FAILED', updated_at=now() WHERE id=$1", [buyPayment.id]);
+        await pool!.query("UPDATE buy_orders SET payment_status='FAILED', updated_at=now() WHERE id=$1", [buyPayment.buy_order_id]);
+        return res.status(200).json({ received: true, duplicate: duplicateWebhook });
+      }
+      await pool!.query("UPDATE buy_order_payments SET status='HELD', updated_at=now() WHERE id=$1 AND status NOT IN ('RELEASED','REFUNDED')", [buyPayment.id]);
+      await pool!.query("UPDATE buy_orders SET payment_status='HELD', updated_at=now() WHERE id=$1 AND payment_status NOT IN ('REFUNDED')", [buyPayment.buy_order_id]);
+      await pool!.query("INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'PAYMENT_HELD',$3::jsonb)", [buyPayment.buy_order_id, buyPayment.customer_user_id, JSON.stringify({ provider: "paystack", reference: buyReference, amountMinor: Number(buyPayment.amount_minor) })]);
+      return res.status(200).json({ received: true, duplicate: duplicateWebhook });
+    }
+  }
+
   if (event?.event !== "charge.success") return res.status(200).json({ received: true });
 
   const data = event.data;
