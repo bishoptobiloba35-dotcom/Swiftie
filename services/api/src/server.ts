@@ -674,6 +674,30 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
 
   if (typeof event?.event === "string" && event.event.startsWith("refund.")) {
     const transactionReference = String(event?.data?.transaction_reference ?? event?.data?.transaction?.reference ?? "");
+    if(transactionReference&&databaseEnabled()){
+      const buyPayment=(await pool!.query("SELECT bop.*,bo.customer_user_id FROM buy_order_payments bop JOIN buy_orders bo ON bo.id=bop.buy_order_id WHERE bop.provider_reference=$1",[transactionReference])).rows[0];
+      if(buyPayment){
+        const refundStatus=String(event.event).replace("refund.","");
+        const refundReference=String(event?.data?.refund_reference??event?.data?.id??"");
+        const amountMinor=Number(event?.data?.amount??0);
+        if(refundStatus==="processed"){
+          await pool!.query(
+            "UPDATE buy_order_payments SET refund_status='PROCESSED',refund_reference=COALESCE(refund_reference,$2),refund_amount_minor=$3,total_refunded_minor=GREATEST(total_refunded_minor,$3),status=CASE WHEN total_refunded_minor+$3>=amount_minor THEN 'REFUNDED' ELSE status END,updated_at=now() WHERE id=$1",
+            [buyPayment.id,refundReference||null,amountMinor]
+          );
+          await pool!.query(
+            "UPDATE buy_orders SET refunded_minor=GREATEST(refunded_minor,$2),payment_status=CASE WHEN payment_status<>'REFUNDED' AND $2>=COALESCE((SELECT amount_minor FROM buy_order_payments WHERE id=$1),0) THEN 'REFUNDED' ELSE payment_status END,updated_at=now() WHERE id=$3",
+            [buyPayment.id,amountMinor,buyPayment.buy_order_id]
+          );
+        }else if(refundStatus==="failed"){
+          await pool!.query("UPDATE buy_order_payments SET refund_status='FAILED',updated_at=now() WHERE id=$1",[buyPayment.id]);
+        }else{
+          await pool!.query("UPDATE buy_order_payments SET refund_status=$2,updated_at=now() WHERE id=$1",[buyPayment.id,refundStatus.toUpperCase()]);
+        }
+        await pool!.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,$3,$4::jsonb)",[buyPayment.buy_order_id,buyPayment.customer_user_id,"REFUND_"+refundStatus.toUpperCase(),JSON.stringify({transactionReference,refundReference,amountMinor})]);
+        return res.status(200).json({received:true});
+      }
+    }
     const refundReference = String(event?.data?.refund_reference ?? event?.data?.id ?? "");
     if (transactionReference && databaseEnabled()) {
       const result = await pool!.query("SELECT delivery_id FROM payments WHERE provider_reference=$1", [transactionReference]);
