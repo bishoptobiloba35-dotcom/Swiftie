@@ -17,6 +17,7 @@ export type PaymentRecord = {
   refundStatus?: string;
   refundAmountMinor?: number;
   refundUpdatedAt?: string;
+  totalRefundedMinor: number;
   updatedAt: string;
 };
 
@@ -40,6 +41,7 @@ function paymentFromRow(row: any): PaymentRecord {
     refundStatus: row.refund_status ?? undefined,
     refundAmountMinor: row.refund_amount_minor == null ? undefined : Number(row.refund_amount_minor),
     refundUpdatedAt: row.refund_updated_at ? new Date(row.refund_updated_at).toISOString() : undefined,
+    totalRefundedMinor: Number(row.total_refunded_minor ?? 0),
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString()
   };
@@ -66,8 +68,18 @@ export async function createPayment(input: {
 export async function markPaymentRefund(deliveryId: string, refundReference: string, refundStatus: string, refundAmountMinor: number): Promise<PaymentRecord | null> {
   if (!pool) return null;
   const result = await pool.query(
-    `UPDATE payments SET refund_reference=$2, refund_status=$3, refund_amount_minor=$4, refund_updated_at=now(), updated_at=now()
-     WHERE delivery_id=$1 RETURNING *`,
+    `UPDATE payments
+        SET refund_reference=$2,
+            refund_status=$3,
+            refund_amount_minor=$4,
+            total_refunded_minor=CASE
+              WHEN $3='processed' THEN COALESCE(total_refunded_minor,0) + $4
+              ELSE COALESCE(total_refunded_minor,0)
+            END,
+            refund_updated_at=now(),
+            updated_at=now()
+      WHERE delivery_id=$1
+      RETURNING *`,
     [deliveryId, refundReference, refundStatus, refundAmountMinor]
   );
   return result.rows[0] ? paymentFromRow(result.rows[0]) : null;
@@ -637,7 +649,12 @@ export async function prepareRefund(deliveryId: string, refundAmountMinor: numbe
       await client.query('ROLLBACK');
       return null;
     }
-    if (['REFUNDED'].includes(paymentRow.status) || ['processed','processing','pending'].includes(String(paymentRow.refund_status ?? ''))) {
+    const totalRefundedMinor = Number(paymentRow.total_refunded_minor ?? 0);
+    if (paymentRow.status === 'REFUNDED' || ['processed','processing','pending'].includes(String(paymentRow.refund_status ?? ''))) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    if (totalRefundedMinor + refundAmountMinor > amountMinor) {
       await client.query('ROLLBACK');
       return null;
     }
