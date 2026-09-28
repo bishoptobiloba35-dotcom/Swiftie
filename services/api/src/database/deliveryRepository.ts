@@ -12,6 +12,10 @@ export type PaymentRecord = {
   status: "PENDING" | "AUTHORIZED" | "HELD" | "RELEASED" | "REFUNDED" | "FAILED";
   escrowStatus?: "PENDING" | "HELD" | "RELEASED" | "REFUNDED";
   createdAt: string;
+  refundReference?: string;
+  refundStatus?: string;
+  refundAmountMinor?: number;
+  refundUpdatedAt?: string;
   updatedAt: string;
 };
 
@@ -31,6 +35,10 @@ function paymentFromRow(row: any): PaymentRecord {
     currency: row.currency,
     status: row.status,
     escrowStatus: row.escrow_status ?? undefined,
+    refundReference: row.refund_reference ?? undefined,
+    refundStatus: row.refund_status ?? undefined,
+    refundAmountMinor: row.refund_amount_minor == null ? undefined : Number(row.refund_amount_minor),
+    refundUpdatedAt: row.refund_updated_at ? new Date(row.refund_updated_at).toISOString() : undefined,
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString()
   };
@@ -52,6 +60,16 @@ export async function createPayment(input: {
     [input.deliveryId, input.provider, input.amountMinor, input.currency ?? "NGN"]
   );
   return paymentFromRow(result.rows[0]);
+}
+
+export async function markPaymentRefund(deliveryId: string, refundReference: string, refundStatus: string, refundAmountMinor: number): Promise<PaymentRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `UPDATE payments SET refund_reference=$2, refund_status=$3, refund_amount_minor=$4, refund_updated_at=now(), updated_at=now()
+     WHERE delivery_id=$1 RETURNING *`,
+    [deliveryId, refundReference, refundStatus, refundAmountMinor]
+  );
+  return result.rows[0] ? paymentFromRow(result.rows[0]) : null;
 }
 
 export async function updatePaymentStatus(
