@@ -507,7 +507,7 @@ router.post("/drop-off/parcels", requireAuth("CUSTOMER","AGENT","ADMIN"), async(
 
 router.post("/drop-off/parcels/:id/intake", requireAuth("CUSTOMER","AGENT","ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
-  const parsed=z.object({intakeCode:z.string().min(6).max(20),storageReference:z.string().max(120).optional()}).safeParse(req.body);
+  const parsed=z.object({intakeCode:z.string().min(6).max(20),storageReference:z.string().max(120).optional(),parcelPhoto:z.string().optional()}).safeParse(req.body);
   if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
   const parcelId=String(req.params.id);
   const parcel=(await pool.query("SELECT p.*,dl.capacity,dl.commission_minor FROM drop_off_parcels p JOIN drop_off_locations dl ON dl.id=p.location_id WHERE p.id=$1",[parcelId])).rows[0];
@@ -518,15 +518,66 @@ router.post("/drop-off/parcels/:id/intake", requireAuth("CUSTOMER","AGENT","ADMI
   if(parcel.status!=="EXPECTED")return res.status(409).json({error:"Parcel is not awaiting intake"});
   const count=(await pool.query("SELECT count(*)::int AS count FROM drop_off_parcels WHERE location_id=$1 AND status IN ('AT_LOCATION','READY_FOR_COURIER')",[parcel.location_id])).rows[0].count;
   if(Number(count)>=parcel.capacity)return res.status(409).json({error:"Location capacity exceeded"});
+  let parcelPhotoKey:string|null=null;
+  if(parsed.data.parcelPhoto){
+    const m=parsed.data.parcelPhoto.match(/^data:image\/(jpeg|jpg|png);base64,(.+)$/i);
+    if(!m)return res.status(400).json({error:"parcelPhoto must be a JPEG or PNG data URL"});
+    const bytes=Buffer.from(m[2],"base64");
+    if(!bytes.length||bytes.length>8*1024*1024)return res.status(413).json({error:"Parcel photo must be between 1 byte and 8MB"});
+    const extension=m[1].toLowerCase()==="png"?"png":"jpg";
+    parcelPhotoKey="drop-off/"+parcel.location_id+"/parcels/"+parcelId+"/intake-"+crypto.randomUUID()+"."+extension;
+    await putPrivateObject(parcelPhotoKey,bytes,extension==="png"?"image/png":"image/jpeg");
+  }
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
-    const updated=await client.query("UPDATE drop_off_parcels SET status='READY_FOR_COURIER',storage_reference=COALESCE($2,storage_reference),received_by_user_id=$3,received_at=now(),updated_at=now() WHERE id=$1 AND status='EXPECTED' RETURNING *",[parcelId,parsed.data.storageReference??null,identity(req)]);
+    const updated=await client.query("UPDATE drop_off_parcels SET status='READY_FOR_COURIER',storage_reference=COALESCE($2,storage_reference),received_by_user_id=$3,received_at=now(),parcel_photo_key=COALESCE($4,parcel_photo_key),updated_at=now() WHERE id=$1 AND status='EXPECTED' RETURNING *",[parcelId,parsed.data.storageReference??null,identity(req),parcelPhotoKey]);
     if(!updated.rows[0]){await client.query("ROLLBACK");return res.status(409).json({error:"Parcel intake changed concurrently"});}
     await client.query("INSERT INTO drop_off_events(parcel_id,actor_user_id,event_type,metadata) VALUES($1,$2,'PARCEL_INTAKE','{}'::jsonb)",[parcelId,identity(req)]);
     await client.query("INSERT INTO drop_off_commission_ledger(location_id,parcel_id,amount_minor,status) VALUES($1,$2,$3,'EARNED') ON CONFLICT(parcel_id) DO NOTHING",[parcel.location_id,parcelId,parcel.commission_minor]);
     await client.query("COMMIT");res.status(201).json({parcel:updated.rows[0]});
   }catch(e){await client.query("ROLLBACK");throw e}finally{client.release();}
+});
+
+router.get("/drop-off/parcels/:id", requireAuth("CUSTOMER","AGENT","DRIVER","ADMIN"), async(req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const parcelId=String(req.params.id);
+  const row=(await pool.query(
+    `SELECT p.*, d.sender_id, d.driver_id, d.tracking_code, d.status AS delivery_status,
+            dl.name AS location_name, dl.address AS location_address, ba.display_name AS business_name
+       FROM drop_off_parcels p
+       JOIN deliveries d ON d.id=p.delivery_id
+       JOIN drop_off_locations dl ON dl.id=p.location_id
+       JOIN business_accounts ba ON ba.id=dl.business_id
+      WHERE p.id=$1`,[parcelId])).rows[0];
+  if(!row)return res.status(404).json({error:"Drop-off parcel not found"});
+  const user=(req as any).user;
+  let authorized=user?.role==="ADMIN";
+  if(user?.role==="CUSTOMER")authorized=row.sender_id===identity(req);
+  if(user?.role==="DRIVER")authorized=row.driver_id && (await driverForUser(identity(req)))?.id===row.driver_id;
+  if(user?.role==="AGENT")authorized=await managesDropOff(identity(req),row.location_id);
+  if(!authorized)return res.status(403).json({error:"Not authorized"});
+  const events=await pool.query("SELECT id,event_type,actor_user_id,metadata,created_at FROM drop_off_events WHERE parcel_id=$1 ORDER BY created_at ASC",[parcelId]);
+  return res.json({parcel:row,events:events.rows});
+});
+
+router.get("/drop-off/parcels/:id/photo", requireAuth("CUSTOMER","AGENT","DRIVER","ADMIN"), async(req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const parcelId=String(req.params.id);
+  const row=(await pool.query("SELECT p.parcel_photo_key,p.location_id,d.sender_id,d.driver_id FROM drop_off_parcels p JOIN deliveries d ON d.id=p.delivery_id WHERE p.id=$1",[parcelId])).rows[0];
+  if(!row?.parcel_photo_key)return res.status(404).json({error:"Parcel photo not found"});
+  const user=(req as any).user;
+  let authorized=user?.role==="ADMIN";
+  if(user?.role==="CUSTOMER")authorized=row.sender_id===identity(req);
+  if(user?.role==="DRIVER")authorized=row.driver_id && (await driverForUser(identity(req)))?.id===row.driver_id;
+  if(user?.role==="AGENT")authorized=await managesDropOff(identity(req),row.location_id);
+  if(!authorized)return res.status(403).json({error:"Not authorized"});
+  try{
+    const object=await getPrivateObject(row.parcel_photo_key);
+    res.setHeader("Content-Type",object.contentType??"image/jpeg");
+    res.setHeader("Cache-Control","private, no-store");
+    return res.send(object.body);
+  }catch{return res.status(404).json({error:"Parcel photo is unavailable"});}
 });
 
 router.post("/drop-off/parcels/:id/collect", requireAuth("DRIVER"), async(req,res)=>{
