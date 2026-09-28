@@ -709,7 +709,7 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   if (!deliveryId || !reference) return res.status(200).json({ received: true });
 
   const payment = await findPayment(deliveryId);
-  if (!payment || payment.provider !== "paystack" || payment.providerReference !== reference) {
+  if (!payment || payment.provider !== "paystack" || (payment.providerReference && payment.providerReference !== reference)) {
     return res.status(200).json({ received: true });
   }
 
