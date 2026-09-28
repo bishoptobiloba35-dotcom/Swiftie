@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, feature/swiftdrop-product-flows]
   pull_request:
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 concurrency:
