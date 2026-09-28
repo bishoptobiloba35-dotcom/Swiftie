@@ -17,3 +17,7 @@
 3. Add production observability: structured logs, error tracking, metrics, alerting, and health/readiness endpoints.
 4. Complete mobile push notification delivery and retry handling.
 5. Finish app-store production configuration, privacy disclosures, terms/acceptable-use flows, and release builds.
+
+
+## CI validation
+The repository CI matrix validates shared, API, admin, customer, and driver builds. Expo customer and driver apps use TypeScript no-emit checks in CI.
