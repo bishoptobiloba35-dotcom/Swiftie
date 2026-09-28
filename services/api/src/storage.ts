@@ -66,7 +66,7 @@ export async function getPrivateObject(key: string): Promise<{ body: Buffer; con
     };
   }
   const storage = requireStorage();
-  const response = await storage.client.send(new GetObjectCommand({ Bucket: storage.bucket, Key: key }));
+  const response = await storage.client.send(new GetObjectCommand({ Bucket: storage.bucket, Key: safeStorageKey(key) }));
   if (!response.Body) throw new Error("Stored object has no body");
   const bytes = await response.Body.transformToByteArray();
   return { body: Buffer.from(bytes), contentType: response.ContentType };
