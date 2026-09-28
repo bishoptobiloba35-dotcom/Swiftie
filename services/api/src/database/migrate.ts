@@ -8,7 +8,8 @@ const migrations = [
   { id: "004_receiver_ratings", file: "004_receiver_ratings.sql" },
   { id: "005_driver_payout_accounts", file: "005_driver_payout_accounts.sql" },
   { id: "006_payout_provider_status", file: "006_payout_provider_status.sql" },
-  { id: "007_paystack_webhook_events", file: "007_paystack_webhook_events.sql" }
+  { id: "007_paystack_webhook_events", file: "007_paystack_webhook_events.sql" },
+  { id: "008_support_and_receiver_disputes", file: "008_support_and_receiver_disputes.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
