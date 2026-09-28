@@ -503,6 +503,22 @@ export async function notifyAdminsOfSupportAiAction(ticketId: string, actionId: 
   const body = "Support AI " + decision.toLowerCase() + " ticket " + ticketId + ". Action " + actionId + ". " + response;
   await pool.query(`INSERT INTO notifications (user_id, title, body, type, created_at) SELECT id, 'Support AI action', $1, 'SUPPORT_AI_ACTION', now() FROM users WHERE role='ADMIN'`, [body]);
 }
+
+export async function notifySupportUserOfAiAction(ticketId: string, actionId: string, decision: string, response: string): Promise<void> {
+  if (!pool) return;
+  const result = await pool.query(
+    `SELECT user_id FROM support_tickets WHERE id=$1`,
+    [ticketId]
+  );
+  const userId = result.rows[0]?.user_id;
+  if (!userId) return;
+  const title = decision === "AUTO_RESOLVED" ? "SwiftDrop Support replied" : "SwiftDrop Support needs human review";
+  await pool.query(
+    `INSERT INTO notifications (user_id, title, body, type, created_at)
+     VALUES ($1,$2,$3,'SUPPORT_AI_REPLY',now())`,
+    [userId, title, response + " (Support action: " + actionId + ")"]
+  );
+}
 export async function resolveSupportTicket(id: string, status: "IN_REVIEW" | "RESOLVED" | "CLOSED", note: string): Promise<SupportTicketRecord | null> {
   if (!pool) return null;
   const result = await pool.query(
