@@ -480,6 +480,11 @@ export async function recordSupportAiAction(ticketId: string, actionType: string
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const ticket = (await client.query("SELECT ai_handled, status FROM support_tickets WHERE id=$1 FOR UPDATE", [ticketId])).rows[0];
+    if (!ticket || ticket.ai_handled || !["OPEN","IN_REVIEW"].includes(ticket.status)) {
+      await client.query("ROLLBACK");
+      return null;
+    }
     const action = (await client.query(`INSERT INTO support_ai_actions (ticket_id, action_type, decision, reason, response) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [ticketId, actionType, decision, reason, response])).rows[0];
     await client.query(`UPDATE support_tickets SET ai_handled=true, ai_action_id=$2, human_required=$3, status=CASE WHEN $3 THEN 'IN_REVIEW' ELSE 'RESOLVED' END, resolution_note=$4, updated_at=now() WHERE id=$1 AND status IN ('OPEN','IN_REVIEW')`, [ticketId, action.id, decision === "ESCALATED", response]);
     await client.query("COMMIT");
