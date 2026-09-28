@@ -503,6 +503,80 @@ router.post("/admin/ai/users/:id/plan", requireAuth("ADMIN"), async(req,res)=>{
   finally{client.release();}
 });
 
+router.get("/drop-off/settlement-account/:id", requireAuth("CUSTOMER","AGENT","ADMIN"), async(req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const id=String(req.params.id),role=(req as any).user?.role;
+  if(role!=="ADMIN"&&!await managesDropOff(identity(req),id))return res.status(403).json({error:"Not authorized"});
+  const result=await pool.query("SELECT id,bank_code,bank_name,account_name,account_last4,currency,active,verified_at,created_at,updated_at FROM drop_off_settlement_accounts WHERE location_id=$1",[id]);
+  res.json({account:result.rows[0]??null});
+});
+router.post("/drop-off/settlement-account/:id", requireAuth("CUSTOMER","AGENT","ADMIN"), async(req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const id=String(req.params.id),role=(req as any).user?.role;
+  if(role!=="ADMIN"&&!await managesDropOff(identity(req),id))return res.status(403).json({error:"Not authorized"});
+  const parsed=z.object({bankCode:z.string().regex(/^\\d{3,6}$/),accountNumber:z.string().regex(/^\\d{10}$/)}).safeParse(req.body);
+  if(!parsed.success)return res.status(400).json({error:"A valid Nigerian bank code and 10-digit account number are required"});
+  const secret=process.env.PAYSTACK_SECRET_KEY;if(!secret)return res.status(503).json({error:"Paystack transfers are not configured"});
+  const rr=await fetch("https://api.paystack.co/bank/resolve?account_number="+encodeURIComponent(parsed.data.accountNumber)+"&bank_code="+encodeURIComponent(parsed.data.bankCode),{headers:{authorization:"Bearer "+secret}});
+  const resolved=await rr.json() as any;
+  if(!rr.ok||!resolved.status||!resolved.data?.account_name)return res.status(400).json({error:resolved.message??"Unable to verify the bank account"});
+  const cr=await fetch("https://api.paystack.co/transferrecipient",{method:"POST",headers:{authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify({type:"nuban",name:resolved.data.account_name,account_number:parsed.data.accountNumber,bank_code:parsed.data.bankCode,currency:"NGN"})});
+  const recipient=await cr.json() as any;
+  if(!cr.ok||!recipient.status||!recipient.data?.recipient_code)return res.status(400).json({error:recipient.message??"Unable to create payout recipient"});
+  const saved=await pool.query(`INSERT INTO drop_off_settlement_accounts(location_id,recipient_code,bank_code,bank_name,account_name,account_last4,currency,active,verified_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,'NGN',true,now(),now())
+    ON CONFLICT(location_id) DO UPDATE SET recipient_code=EXCLUDED.recipient_code,bank_code=EXCLUDED.bank_code,bank_name=EXCLUDED.bank_name,account_name=EXCLUDED.account_name,account_last4=EXCLUDED.account_last4,active=true,verified_at=now(),updated_at=now()
+    RETURNING id,bank_code,bank_name,account_name,account_last4,currency,active,verified_at,created_at,updated_at`,
+    [id,recipient.data.recipient_code,parsed.data.bankCode,recipient.data.details?.bank_name??null,resolved.data.account_name,parsed.data.accountNumber.slice(-4)]);
+  res.status(201).json({account:saved.rows[0]});
+});
+router.post("/admin/buy-order-settlements/:id/pay", requireAuth("ADMIN"), async(req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const secret=process.env.PAYSTACK_SECRET_KEY;if(!secret)return res.status(503).json({error:"Paystack transfers are not configured"});
+  const id=String(req.params.id),client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const row=(await client.query("SELECT s.*,a.recipient_code,a.active AS account_active FROM buy_order_settlements s JOIN agent_settlement_accounts a ON a.agent_id=s.agent_id WHERE s.id=$1 FOR UPDATE",[id])).rows[0];
+    if(!row){await client.query("ROLLBACK");return res.status(404).json({error:"Settlement not found"});}
+    if(!["PENDING","FAILED"].includes(row.status)){await client.query("ROLLBACK");return res.status(409).json({error:"Settlement is not eligible for payout"});}
+    if(!row.account_active||Number(row.amount_minor)<=0){await client.query("ROLLBACK");return res.status(409).json({error:"Active payout account and positive settlement are required"});}
+    const reference="sd_buyset_"+randomUUID().replaceAll("-","");
+    await client.query("UPDATE buy_order_settlements SET status='PROCESSING',transfer_reference=$2,provider_status='pending',failure_reason=NULL,updated_at=now() WHERE id=$1",[id,reference]);
+    await client.query("COMMIT");
+    const response=await fetch("https://api.paystack.co/transfer",{method:"POST",headers:{authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify({source:"balance",amount:Number(row.amount_minor),recipient:row.recipient_code,reference,reason:"SwiftDrop Buy & Deliver agent settlement",currency:row.currency})});
+    const payload=await response.json() as any;
+    if(!response.ok||!payload.status||!payload.data?.reference){
+      await pool.query("UPDATE buy_order_settlements SET status='FAILED',provider_status='failed',failure_reason=$2,updated_at=now() WHERE id=$1 AND status='PROCESSING'",[id,payload.message??"Paystack transfer failed"]);
+      return res.status(502).json({error:payload.message??"Paystack transfer could not be initiated"});
+    }
+    if(payload.data.reference!==reference)await pool.query("UPDATE buy_order_settlements SET transfer_reference=$2,updated_at=now() WHERE id=$1",[id,payload.data.reference]);
+    return res.status(202).json({settlement:(await pool.query("SELECT * FROM buy_order_settlements WHERE id=$1",[id])).rows[0]});
+  }catch(error){try{await client.query("ROLLBACK")}catch{}throw error}finally{client.release();}
+});
+router.post("/admin/drop-off/commission/:id/pay", requireAuth("ADMIN"), async(req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const secret=process.env.PAYSTACK_SECRET_KEY;if(!secret)return res.status(503).json({error:"Paystack transfers are not configured"});
+  const id=String(req.params.id),client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const row=(await client.query("SELECT c.*,a.recipient_code,a.active AS account_active FROM drop_off_commission_ledger c JOIN drop_off_settlement_accounts a ON a.location_id=c.location_id WHERE c.id=$1 FOR UPDATE",[id])).rows[0];
+    if(!row){await client.query("ROLLBACK");return res.status(404).json({error:"Commission record not found"});}
+    if(row.status!=="AVAILABLE"){await client.query("ROLLBACK");return res.status(409).json({error:"Commission is not available for payout"});}
+    if(!row.account_active||Number(row.amount_minor)<=0){await client.query("ROLLBACK");return res.status(409).json({error:"Active payout account and positive commission are required"});}
+    const reference="sd_drop_"+randomUUID().replaceAll("-","");
+    await client.query("UPDATE drop_off_commission_ledger SET status='PROCESSING',provider_reference=$2,provider_status='pending',updated_at=now() WHERE id=$1 AND status='AVAILABLE'",[id,reference]);
+    await client.query("COMMIT");
+    const response=await fetch("https://api.paystack.co/transfer",{method:"POST",headers:{authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify({source:"balance",amount:Number(row.amount_minor),recipient:row.recipient_code,reference,reason:"SwiftDrop drop-off partner commission",currency:row.currency})});
+    const payload=await response.json() as any;
+    if(!response.ok||!payload.status||!payload.data?.reference){
+      await pool.query("UPDATE drop_off_commission_ledger SET status='AVAILABLE',provider_status='failed',provider_reference=NULL,updated_at=now() WHERE id=$1 AND status='PROCESSING'",[id]);
+      return res.status(502).json({error:payload.message??"Paystack transfer could not be initiated"});
+    }
+    if(payload.data.reference!==reference)await pool.query("UPDATE drop_off_commission_ledger SET provider_reference=$2,updated_at=now() WHERE id=$1",[id,payload.data.reference]);
+    return res.status(202).json({commission:(await pool.query("SELECT * FROM drop_off_commission_ledger WHERE id=$1",[id])).rows[0]});
+  }catch(error){try{await client.query("ROLLBACK")}catch{}throw error}finally{client.release();}
+});
+
 router.get("/admin/buy-order-settlements", requireAuth("ADMIN"), async(_req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const result=await pool.query("SELECT s.*,bo.item_description,bo.customer_user_id,ap.user_id AS agent_user_id,u.full_name AS agent_name FROM buy_order_settlements s JOIN buy_orders bo ON bo.id=s.buy_order_id JOIN agent_profiles ap ON ap.id=s.agent_id JOIN users u ON u.id=ap.user_id ORDER BY s.created_at DESC LIMIT 200");
