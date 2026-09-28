@@ -51,6 +51,38 @@ router.post("/agents/:id/status", requireAuth("ADMIN"), async (req, res) => {
   res.json({ agent: result.rows[0] });
 });
 
+router.get("/agent/settlement-account", requireAuth("AGENT"), async (req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const agent=await getAgent(identity(req)); if(!agent)return res.status(404).json({error:"Agent profile not found"});
+  const result=await pool.query("SELECT id,bank_code,bank_name,account_name,account_last4,currency,active,verified_at,created_at,updated_at FROM agent_settlement_accounts WHERE agent_id=$1",[agent.id]);
+  res.json({account:result.rows[0]??null});
+});
+router.post("/agent/settlement-account", requireAuth("AGENT"), async(req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const agent=await getAgent(identity(req)); if(!agent||agent.status!=="APPROVED")return res.status(403).json({error:"Approved agent status is required"});
+  const parsed=z.object({bankCode:z.string().regex(/^\\d{3,6}$/),accountNumber:z.string().regex(/^\\d{10}$/)}).safeParse(req.body);
+  if(!parsed.success)return res.status(400).json({error:"A valid Nigerian bank code and 10-digit account number are required"});
+  const secret=process.env.PAYSTACK_SECRET_KEY;if(!secret)return res.status(503).json({error:"Paystack transfers are not configured"});
+  const resolvedResponse=await fetch("https://api.paystack.co/bank/resolve?account_number="+encodeURIComponent(parsed.data.accountNumber)+"&bank_code="+encodeURIComponent(parsed.data.bankCode),{headers:{authorization:"Bearer "+secret}});
+  const resolved=await resolvedResponse.json() as any;
+  if(!resolvedResponse.ok||!resolved.status||!resolved.data?.account_name)return res.status(400).json({error:resolved.message??"Unable to verify the bank account"});
+  const recipientResponse=await fetch("https://api.paystack.co/transferrecipient",{method:"POST",headers:{authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify({type:"nuban",name:resolved.data.account_name,account_number:parsed.data.accountNumber,bank_code:parsed.data.bankCode,currency:"NGN"})});
+  const recipient=await recipientResponse.json() as any;
+  if(!recipientResponse.ok||!recipient.status||!recipient.data?.recipient_code)return res.status(400).json({error:recipient.message??"Unable to create payout recipient"});
+  const result=await pool.query(`INSERT INTO agent_settlement_accounts(agent_id,recipient_code,bank_code,bank_name,account_name,account_last4,currency,active,verified_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,'NGN',true,now(),now())
+    ON CONFLICT(agent_id) DO UPDATE SET recipient_code=EXCLUDED.recipient_code,bank_code=EXCLUDED.bank_code,bank_name=EXCLUDED.bank_name,account_name=EXCLUDED.account_name,account_last4=EXCLUDED.account_last4,currency='NGN',active=true,verified_at=now(),updated_at=now()
+    RETURNING id,bank_code,bank_name,account_name,account_last4,currency,active,verified_at,created_at,updated_at`,
+    [agent.id,recipient.data.recipient_code,parsed.data.bankCode,recipient.data.details?.bank_name??null,resolved.data.account_name,parsed.data.accountNumber.slice(-4)]);
+  res.status(201).json({account:result.rows[0]});
+});
+router.get("/agent/settlements", requireAuth("AGENT"), async(req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const agent=await getAgent(identity(req));if(!agent)return res.status(404).json({error:"Agent profile not found"});
+  const result=await pool.query("SELECT bos.id,bos.buy_order_id,bos.amount_minor,bos.currency,bos.status,bos.provider_reference,bos.provider_status,bos.failure_reason,bos.paid_at,bos.created_at,bos.updated_at FROM buy_order_settlements bos WHERE bos.agent_id=$1 ORDER BY bos.created_at DESC LIMIT 100",[agent.id]);
+  res.json({settlements:result.rows});
+});
+
 router.get("/agent/buy-orders", requireAuth("AGENT"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const agent = await getAgent(identity(req));
