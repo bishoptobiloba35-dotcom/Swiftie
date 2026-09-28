@@ -3,11 +3,17 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: swiftdrop-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   typecheck:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         project: [shared, api, admin, customer, driver]
     steps:
@@ -15,6 +21,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
       - run: npm install --ignore-scripts
       - run: npm run build --workspace=@swiftdrop/${{ matrix.project }}
+
+  api-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npm test --workspace=@swiftdrop/api
