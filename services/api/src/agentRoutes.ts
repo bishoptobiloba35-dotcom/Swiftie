@@ -218,20 +218,40 @@ router.get("/buy-orders/:id/receipt", requireAuth("CUSTOMER", "AGENT", "ADMIN"),
 
 router.post("/buy-orders/:id/cancel", requireAuth("CUSTOMER"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
-  const result = await pool.query(
-    `UPDATE buy_orders
-        SET status='CANCELLED', updated_at=now()
-      WHERE id=$1 AND customer_user_id=$2
-        AND status IN ('REQUESTED','APPROVED','AGENT_ASSIGNED')
-      RETURNING *`,
-    [orderId(req), identity(req)]
-  );
-  if (!result.rows[0]) return res.status(409).json({ error: "Order cannot be cancelled at its current stage" });
-  await pool.query(
-    "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'CANCELLED','{}'::jsonb)",
-    [orderId(req), identity(req)]
-  );
-  res.json({ buyOrder: result.rows[0] });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `UPDATE buy_orders
+          SET status='CANCELLED', updated_at=now()
+        WHERE id=$1 AND customer_user_id=$2
+          AND status IN ('REQUESTED','APPROVED','AGENT_ASSIGNED')
+        RETURNING *`,
+      [orderId(req), identity(req)]
+    );
+    if (!result.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Order cannot be cancelled at its current stage" });
+    }
+    if (result.rows[0].business_id) {
+      await client.query(
+        `INSERT INTO business_spend_ledger (business_id, user_id, reference_type, reference_id, amount_minor, currency)
+         VALUES ($1,$2,'BUY_ORDER_RESERVATION_RELEASE',$3,$4,'NGN')`,
+        [result.rows[0].business_id, identity(req), result.rows[0].id, -Number(result.rows[0].purchase_budget_minor)]
+      );
+    }
+    await client.query(
+      "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'CANCELLED','{}'::jsonb)",
+      [orderId(req), identity(req)]
+    );
+    await client.query("COMMIT");
+    return res.json({ buyOrder: result.rows[0] });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 });
 
 router.get("/buy-orders/:id", requireAuth("CUSTOMER", "AGENT", "ADMIN"), async (req, res) => {
