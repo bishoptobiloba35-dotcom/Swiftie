@@ -16,7 +16,7 @@ import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
 import { validateProductionConfig } from "./productionConfig.js";
 import { getPrivateObject, objectStorageEnabled, putPrivateObject } from "./storage.js";
-import { enqueueNotification, processNotificationOutbox } from "./notificationOutbox.js";
+import { enqueueNotification, processNotificationOutbox, processNotificationPushReceipts } from "./notificationOutbox.js";
 
 const app = express();
 
@@ -1560,10 +1560,15 @@ async function startServer() {
   if (databaseEnabled()) {
     await runMigrations();
     void processNotificationOutbox().catch(() => {});
+    void processNotificationPushReceipts().catch(() => {});
     const notificationWorker = setInterval(() => {
       void processNotificationOutbox().catch(() => {});
     }, 5000);
+    const notificationReceiptWorker = setInterval(() => {
+      void processNotificationPushReceipts().catch(() => {});
+    }, 60_000);
     notificationWorker.unref();
+    notificationReceiptWorker.unref();
   }
   httpServer.listen(port, () => console.log(`SwiftDrop API listening on port ${port}`));
 }
