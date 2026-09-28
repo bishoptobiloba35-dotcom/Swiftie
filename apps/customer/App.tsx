@@ -51,6 +51,14 @@ export default function App() {
   const [ratingSubmitted, setRatingSubmitted] = React.useState(false);
   const [notifications, setNotifications] = React.useState<Array<{ id: string; title: string; body: string; type: string; read_at?: string | null; created_at: string }>>([]);
   const [showNotifications, setShowNotifications] = React.useState(false);
+  const [showSupport, setShowSupport] = React.useState(false);
+  const [supportCategory, setSupportCategory] = React.useState<"ORDER" | "APP">("ORDER");
+  const [supportSubject, setSupportSubject] = React.useState("");
+  const [supportMessage, setSupportMessage] = React.useState("");
+  const [supportTickets, setSupportTickets] = React.useState<any[]>([]);
+  const [disputeReason, setDisputeReason] = React.useState("");
+  const [disputeDescription, setDisputeDescription] = React.useState("");
+  const [disputeSubmitted, setDisputeSubmitted] = React.useState(false);
   const socketRef = React.useRef<WebSocket | null>(null);
 
   async function registerPushNotifications() {
@@ -110,6 +118,20 @@ export default function App() {
 
   async function loadNotifications() {
     try { setNotifications(await api.notifications()); } catch {}
+  }
+
+  async function loadSupportTickets() {
+    try { setSupportTickets(await api.supportTickets()); } catch {}
+  }
+
+  async function submitSupportTicket() {
+    try {
+      if (supportSubject.trim().length < 3 || supportMessage.trim().length < 5) throw new Error("Enter a clear subject and describe the help you need.");
+      await api.createSupportTicket({ category: supportCategory, subject: supportSubject.trim(), message: supportMessage.trim(), deliveryId: supportCategory === "ORDER" ? delivery?.id : undefined });
+      setSupportSubject(""); setSupportMessage("");
+      await loadSupportTickets();
+      Alert.alert("Support request sent", "Our support team can now review your request and order details.");
+    } catch (error) { Alert.alert("Support request failed", error instanceof Error ? error.message : "Unable to contact support"); }
   }
 
   async function markNotificationRead(id: string) {
@@ -277,12 +299,23 @@ export default function App() {
           Alert.alert("Unable to complete", error instanceof Error ? error.message : "Please check the tracking details.");
         }
       })()}><Text style={styles.primaryText}>I received the parcel</Text></Pressable>
-      {delivery?.status === "DELIVERED" && <View style={styles.ratingBox}>
+            {delivery && !disputeSubmitted && <View style={styles.ratingBox}>
+        <Text style={styles.photoTitle}>Need help with this delivery?</Text>
+        <Text style={styles.muted}>If the parcel was not received or something went wrong, file a dispute for SwiftDrop to review. A refund may be considered based on the circumstances.</Text>
+        <TextInput style={styles.input} placeholder="Dispute reason" value={disputeReason} onChangeText={setDisputeReason} maxLength={120} />
+        <TextInput style={[styles.input, styles.multiline]} placeholder="Explain what happened" value={disputeDescription} onChangeText={setDisputeDescription} maxLength={2000} multiline />
+        <Pressable style={styles.dangerButton} onPress={() => void (async () => { try { await api.createReceiverDispute(trackingCode.trim().toUpperCase(), trackingPhone.trim(), receiverConfirmPin, disputeReason.trim(), disputeDescription.trim()); setDisputeSubmitted(true); Alert.alert("Dispute submitted", "SwiftDrop support will review the circumstances."); } catch (error) { Alert.alert("Dispute failed", error instanceof Error ? error.message : "Unable to file dispute"); } })()}><Text style={styles.primaryText}>File a delivery dispute</Text></Pressable>
+      </View>}
+      {disputeSubmitted && <Text style={styles.done}>✓ Dispute submitted for review</Text>}
+{delivery?.status === "DELIVERED" && <View style={styles.ratingBox}>
         <Text style={styles.photoTitle}>Review your courier</Text>
         {receiverRatingSubmitted ? <Text style={styles.done}>✓ Review submitted</Text> : <>
-          <View style={styles.starRow}>{[1,2,3,4,5].map(star => <Pressable key={star} onPress={() => setReceiverRatingStars(star)}><Text style={styles.star}>{star <= receiverRatingStars ? "★" : "☆"}</Text></Pressable>)}</View>
-          <TextInput style={styles.input} placeholder="Optional comment" value={receiverRatingComment} onChangeText={setReceiverRatingComment} maxLength={500} multiline />
-          <Pressable style={styles.primary} onPress={() => void submitReceiverRating()}><Text style={styles.primaryText}>Submit review</Text></Pressable>
+          <Text style={styles.muted}>Choose one review level:</Text>
+          <View style={styles.reviewRow}>
+            <Pressable style={[styles.reviewButton, styles.reviewBad]} onPress={() => { setReceiverRatingStars(1); void api.rateReceiverDelivery(delivery!.id, trackingPhone.trim(), receiverConfirmPin, 1).then(() => setReceiverRatingSubmitted(true)).catch(error => Alert.alert("Rating failed", error instanceof Error ? error.message : "Unable to save review")); }}><Text style={styles.reviewButtonText}>Bad</Text></Pressable>
+            <Pressable style={[styles.reviewButton, styles.reviewFair]} onPress={() => { setReceiverRatingStars(3); void api.rateReceiverDelivery(delivery!.id, trackingPhone.trim(), receiverConfirmPin, 3).then(() => setReceiverRatingSubmitted(true)).catch(error => Alert.alert("Rating failed", error instanceof Error ? error.message : "Unable to save review")); }}><Text style={styles.reviewButtonText}>Fair</Text></Pressable>
+            <Pressable style={[styles.reviewButton, styles.reviewExcellent]} onPress={() => { setReceiverRatingStars(5); void api.rateReceiverDelivery(delivery!.id, trackingPhone.trim(), receiverConfirmPin, 5).then(() => setReceiverRatingSubmitted(true)).catch(error => Alert.alert("Rating failed", error instanceof Error ? error.message : "Unable to save review")); }}><Text style={styles.reviewButtonText}>Excellent</Text></Pressable>
+          </View>
         </>}
       </View>}
       <Pressable style={styles.secondary} onPress={() => setReceiverMode(false)}><Text>Back to customer sign in</Text></Pressable>
@@ -304,8 +337,22 @@ export default function App() {
   }
 
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.container}>
-    <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.subtitle}>Send it. Track it. Receive it.</Text></View><View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View></View>
+    <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.subtitle}>Send it. Track it. Receive it.</Text></View><View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => { setShowSupport(v => !v); void loadSupportTickets(); }}><Text style={styles.link}>Support</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View></View>
     {showNotifications && <View style={styles.card}><View style={styles.header}><Text style={styles.heading}>Notifications</Text><Pressable onPress={() => void loadNotifications()}><Text>Refresh</Text></Pressable></View>{notifications.length === 0 ? <Text style={styles.muted}>No notifications.</Text> : notifications.map(item => <Pressable key={item.id} style={styles.notification} onPress={() => void markNotificationRead(item.id)}><Text style={styles.notificationTitle}>{item.title}</Text><Text>{item.body}</Text><Text style={styles.muted}>{new Date(item.created_at).toLocaleString()} · {item.read_at ? "Read" : "Tap to mark read"}</Text></Pressable>)}</View>}
+    {showSupport && <View style={styles.card}>
+      <View style={styles.header}><View><Text style={styles.eyebrow}>HELP CENTRE</Text><Text style={styles.heroTitle}>How can we help?</Text></View><Pressable onPress={() => setShowSupport(false)}><Text style={styles.link}>Close</Text></Pressable></View>
+      <Text style={styles.muted}>Get help with an order, payment, delivery, or the SwiftDrop app itself.</Text>
+      <View style={styles.row}>
+        <Pressable style={[styles.supportChoice, supportCategory === "ORDER" && styles.supportChoiceActive]} onPress={() => setSupportCategory("ORDER")}><Text style={styles.supportChoiceText}>Order help</Text></Pressable>
+        <Pressable style={[styles.supportChoice, supportCategory === "APP" && styles.supportChoiceActive]} onPress={() => setSupportCategory("APP")}><Text style={styles.supportChoiceText}>App help</Text></Pressable>
+      </View>
+      {supportCategory === "ORDER" && delivery && <Text style={styles.hint}>This request will be linked to tracking code {delivery.trackingCode}.</Text>}
+      <TextInput style={styles.input} placeholder={supportCategory === "ORDER" ? "Order issue (e.g. parcel not received)" : "What do you need help with?"} value={supportSubject} onChangeText={setSupportSubject} maxLength={120} />
+      <TextInput style={[styles.input, styles.multiline]} placeholder="Tell us what happened and what help you need." value={supportMessage} onChangeText={setSupportMessage} maxLength={2000} multiline />
+      <Pressable style={styles.primary} onPress={() => void submitSupportTicket()}><Text style={styles.primaryText}>Send to SwiftDrop Support</Text></Pressable>
+      <Text style={styles.heading}>Your support requests</Text>
+      {supportTickets.length === 0 ? <Text style={styles.muted}>No support requests yet.</Text> : supportTickets.map(ticket => <View key={ticket.id} style={styles.notification}><Text style={styles.notificationTitle}>{ticket.subject}</Text><Text>{ticket.message}</Text><Text style={styles.muted}>{ticket.category} · {ticket.status.replaceAll("_"," ")}</Text></View>)}
+    </View>}
     <Text style={styles.eyebrow}>SEND A PARCEL</Text><Text style={styles.heroTitle}>Where is your parcel going?</Text><Text style={styles.subtitle}>Book a trusted courier, pay securely and follow every movement.</Text>
     <TextInput style={styles.input} placeholder="Pickup address" value={pickup} onChangeText={value => { setPickup(value); void searchAddress(value, "pickup"); }} />
     {pickupResults.map((result, index) => <Pressable key={"pickup-" + index} style={styles.suggestion} onPress={() => chooseAddress(result, "pickup")}><Text>{result.formattedAddress}</Text></Pressable>)}
@@ -392,9 +439,12 @@ export default function App() {
       {delivery.status === "DELIVERED" && <View style={styles.ratingBox}>
         <Text style={styles.photoTitle}>Rate your driver</Text>
         {ratingSubmitted ? <Text style={styles.done}>✓ Rating submitted</Text> : <>
-          <View style={styles.starRow}>{[1,2,3,4,5].map(star => <Pressable key={star} onPress={() => setRatingStars(star)}><Text style={styles.star}>{star <= ratingStars ? "★" : "☆"}</Text></Pressable>)}</View>
-          <TextInput style={styles.input} placeholder="Optional comment" value={ratingComment} onChangeText={setRatingComment} maxLength={500} multiline />
-          <Pressable style={styles.primary} onPress={() => void submitRating()}><Text style={styles.primaryText}>Submit rating</Text></Pressable>
+          <Text style={styles.muted}>Choose one review level:</Text>
+          <View style={styles.reviewRow}>
+            <Pressable style={[styles.reviewButton, styles.reviewBad]} onPress={() => { setRatingStars(1); void api.rateDelivery(delivery!.id, 1).then(() => { setRatingSubmitted(true); Alert.alert("Review saved", "Thank you for your feedback."); }).catch(error => Alert.alert("Rating failed", error instanceof Error ? error.message : "Unable to save review")); }}><Text style={styles.reviewButtonText}>Bad</Text></Pressable>
+            <Pressable style={[styles.reviewButton, styles.reviewFair]} onPress={() => { setRatingStars(3); void api.rateDelivery(delivery!.id, 3).then(() => { setRatingSubmitted(true); Alert.alert("Review saved", "Thank you for your feedback."); }).catch(error => Alert.alert("Rating failed", error instanceof Error ? error.message : "Unable to save review")); }}><Text style={styles.reviewButtonText}>Fair</Text></Pressable>
+            <Pressable style={[styles.reviewButton, styles.reviewExcellent]} onPress={() => { setRatingStars(5); void api.rateDelivery(delivery!.id, 5).then(() => { setRatingSubmitted(true); Alert.alert("Review saved", "Thank you for your feedback."); }).catch(error => Alert.alert("Rating failed", error instanceof Error ? error.message : "Unable to save review")); }}><Text style={styles.reviewButtonText}>Excellent</Text></Pressable>
+          </View>
         </>}
       </View>}
     </View>}
