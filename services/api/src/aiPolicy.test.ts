@@ -1,26 +1,25 @@
-import { describe, expect, it } from "vitest";
+import test from "node:test";
+import assert from "node:assert/strict";
 import { canCreatePersonalBuyOrder, canDispatchBusiness, canManageBusiness, canUseAiAction } from "./aiPolicy.js";
 
-describe("SwiftDrop AI policy", () => {
-  it("allows informational AI for both plans but action capability only for Premium", () => {
-    expect(canUseAiAction("BASIC")).toBe(false);
-    expect(canUseAiAction("PREMIUM")).toBe(true);
-  });
+test("SwiftDrop AI policy: action capability is Premium-only", () => {
+  assert.equal(canUseAiAction("BASIC"), false);
+  assert.equal(canUseAiAction("PREMIUM"), true);
+});
 
-  it("does not let non-customer roles create personal Buy & Deliver orders", () => {
-    expect(canCreatePersonalBuyOrder("CUSTOMER")).toBe(true);
-    expect(canCreatePersonalBuyOrder("AGENT")).toBe(false);
-    expect(canCreatePersonalBuyOrder("DRIVER")).toBe(false);
-    expect(canCreatePersonalBuyOrder("ADMIN")).toBe(false);
-  });
+test("SwiftDrop AI policy: personal Buy & Deliver is customer-only", () => {
+  assert.equal(canCreatePersonalBuyOrder("CUSTOMER"), true);
+  assert.equal(canCreatePersonalBuyOrder("AGENT"), false);
+  assert.equal(canCreatePersonalBuyOrder("DRIVER"), false);
+  assert.equal(canCreatePersonalBuyOrder("ADMIN"), false);
+});
 
-  it("restricts business management and dispatch to the intended roles", () => {
-    expect(canManageBusiness("CUSTOMER")).toBe(true);
-    expect(canManageBusiness("ADMIN")).toBe(true);
-    expect(canManageBusiness("AGENT")).toBe(false);
-    expect(canDispatchBusiness("OWNER")).toBe(true);
-    expect(canDispatchBusiness("ADMIN")).toBe(true);
-    expect(canDispatchBusiness("DISPATCHER")).toBe(true);
-    expect(canDispatchBusiness("VIEWER")).toBe(false);
-  });
+test("SwiftDrop AI policy: business management and dispatch roles are restricted", () => {
+  assert.equal(canManageBusiness("CUSTOMER"), true);
+  assert.equal(canManageBusiness("ADMIN"), true);
+  assert.equal(canManageBusiness("AGENT"), false);
+  assert.equal(canDispatchBusiness("OWNER"), true);
+  assert.equal(canDispatchBusiness("ADMIN"), true);
+  assert.equal(canDispatchBusiness("DISPATCHER"), true);
+  assert.equal(canDispatchBusiness("VIEWER"), false);
 });
