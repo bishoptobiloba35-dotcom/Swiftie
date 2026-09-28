@@ -32,7 +32,7 @@ setInterval(() => {
 
 const schema = z.object({
   userId: z.string().uuid(),
-  role: z.enum(["CUSTOMER", "DRIVER", "ADMIN"])
+  role: z.enum(["CUSTOMER", "DRIVER", "AGENT", "ADMIN"])
 });
 
 
@@ -42,7 +42,7 @@ const registrationSchema = z.object({
   phone: z.string().trim().min(7).max(30),
   email: z.string().trim().email().optional(),
   password: z.string().min(8).max(128),
-  role: z.enum(["CUSTOMER", "DRIVER"]).default("CUSTOMER")
+  role: z.enum(["CUSTOMER", "DRIVER", "AGENT"]).default("CUSTOMER")
 });
 
 router.post("/register", rateLimitAuth(5), async (req, res) => {
@@ -61,6 +61,8 @@ router.post("/register", rateLimitAuth(5), async (req, res) => {
     const user = userResult.rows[0];
     if (role === "DRIVER") {
       await pool.query("INSERT INTO drivers (user_id) VALUES ($1)", [user.id]);
+    } else if (role === "AGENT") {
+      await pool.query("INSERT INTO agent_profiles (user_id) VALUES ($1)", [user.id]);
     }
     const accessToken = signAccessToken({ userId: user.id, role: user.role });
     res.status(201).json({ accessToken, user });
