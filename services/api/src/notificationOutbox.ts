@@ -64,10 +64,10 @@ async function sendToExpo(tokens: string[], title: string, body: string, data: R
     const payload = await response.json() as {
       data?: Array<{ status?: string; details?: { error?: string }; message?: string }>;
     };
-    for (const ticket of payload.data ?? []) {
+    for (let index = 0; index < (payload.data ?? []).length; index += 1) {
+      const ticket = payload.data![index];
+      const token = batch[index];
       if (ticket.status === "error" && ticket.details?.error === "DeviceNotRegistered") {
-        const message = ticket.message ?? "";
-        const token = batch.find(candidate => message.includes(candidate));
         if (token) invalidTokens.push(token);
       } else if (ticket.status === "error") {
         retry = true;
