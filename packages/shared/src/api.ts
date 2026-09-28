@@ -198,6 +198,18 @@ export class SwiftDropApi {
     return response.json() as Promise<{ ok: boolean }>;
   }
 
+  async nearbyDropOffLocations(latitude:number,longitude:number,radiusKm=25):Promise<any[]> {
+    const response=await fetch(this.baseUrl+"/api/drop-off/locations?latitude="+latitude+"&longitude="+longitude+"&radiusKm="+radiusKm,{headers:this.headers()});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error??"Unable to load drop-off locations"); return data.locations??[];
+  }
+  async applyDropOffLocation(input:any):Promise<any>{
+    const response=await fetch(this.baseUrl+"/api/drop-off/applications",{method:"POST",headers:this.headers(true),body:JSON.stringify(input)});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error??"Unable to submit drop-off application"); return data.location;
+  }
+  async uploadDropOffDocument(locationId:string,documentType:string,dataUrl:string):Promise<any>{
+    const response=await fetch(this.baseUrl+"/api/drop-off/locations/"+encodeURIComponent(locationId)+"/documents",{method:"POST",headers:this.headers(true),body:JSON.stringify({documentType,dataUrl})});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error??"Unable to upload document"); return data.document;
+  }
   async searchLocations(query: string): Promise<Array<{ id?: string; formattedAddress?: string; latitude: number; longitude: number }>> {
     const response = await fetch(this.baseUrl + "/api/locations/search?q=" + encodeURIComponent(query), {
       headers: this.headers()
