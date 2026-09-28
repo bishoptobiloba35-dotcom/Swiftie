@@ -1666,6 +1666,7 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
         "INSERT INTO delivery_events (delivery_id,event_type,actor_user_id,metadata) VALUES ($1,'RECEIVER_CONFIRMED_DELIVERY',$2,$3::jsonb)",
         [locked.delivery_id, identity(req), JSON.stringify({ buyOrderId: locked.id, escrowReleased: true })]
       );
+      await client.query("UPDATE drop_off_commission_ledger SET status='AVAILABLE', updated_at=now() WHERE parcel_id IN (SELECT id FROM drop_off_parcels WHERE delivery_id=$1) AND status='EARNED'", [locked.delivery_id]);
       await client.query("COMMIT");
       await notificationForDelivery(locked.delivery_id, locked.customer_user_id, "Delivery confirmed", "The receiver confirmed receipt. Your Buy & Deliver payment has been released.", "DELIVERED");
       publishDeliveryUpdate(locked.delivery_id, safeDelivery(updatedDelivery));
@@ -1703,6 +1704,10 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
       eventType: "RECEIVER_CONFIRMED_DELIVERY",
       metadata: { receiverPhoneVerified: true, escrowReleased: true, payoutEligible: result.payoutAmountMinor > 0 }
     });
+    await pool!.query(
+      "UPDATE drop_off_commission_ledger SET status='AVAILABLE', updated_at=now() WHERE parcel_id IN (SELECT id FROM drop_off_parcels WHERE delivery_id=$1) AND status='EARNED'",
+      [result.delivery.id]
+    );
     await notificationForDelivery(result.delivery.id, result.delivery.senderId, "Delivery confirmed", "The receiver confirmed receipt. Your held payment has been released for courier payout.", "DELIVERED");
     if (result.delivery.driverId) {
       const driver = await driverForUser(result.delivery.driverId);
