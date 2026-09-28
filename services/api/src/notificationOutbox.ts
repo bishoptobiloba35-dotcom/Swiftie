@@ -14,7 +14,7 @@ type PendingNotification = {
 };
 
 export function backoffSeconds(attempts: number): number {
-  return Math.min(900, Math.max(5, 5 * 2 ** Math.min(attempts - 1, 7)));
+  return Math.min(900, Math.max(5, 5 * 2 ** Math.min(attempts - 1, 8)));
 }
 
 export async function enqueueNotification(input: {
