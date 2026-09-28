@@ -134,7 +134,7 @@ function calculateQuote(
   pickup: { latitude: number; longitude: number },
   dropoff: { latitude: number; longitude: number },
   parcel: { weightKg: number; dimensionsCm: { length: number; width: number; height: number }; isPerishable: boolean }
-) {
+): DeliveryQuote {
   const earthRadius = 6371000;
   const lat1 = pickup.latitude * Math.PI / 180;
   const lat2 = dropoff.latitude * Math.PI / 180;
@@ -480,7 +480,18 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   const pin = parsed.data.receiverPin;
   try {
     if (databaseEnabled()) {
-      const created = await createPersistentDelivery({ ...input, receiverPin: pin });
+      const created = await createPersistentDelivery({
+        senderId: input.senderId,
+        receiverName: input.receiverName,
+        receiverPhone: input.receiverPhone,
+        pickup: { label: input.pickup.label, formattedAddress: input.pickup.formattedAddress, location: { latitude: input.pickup.latitude, longitude: input.pickup.longitude } },
+        dropoff: { label: input.dropoff.label, formattedAddress: input.dropoff.formattedAddress, location: { latitude: input.dropoff.latitude, longitude: input.dropoff.longitude } },
+        receiverPin: pin,
+        weightKg: input.weightKg,
+        dimensionsCm: input.dimensionsCm,
+        isPerishable: input.isPerishable,
+        quote: input.quote
+      });
       return res.status(201).json(safeDelivery(created));
     }
     const now = new Date().toISOString();
