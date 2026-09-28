@@ -417,6 +417,51 @@ app.post("/api/business/dispatch/run", requireAuth("CUSTOMER"), async (req, res)
     return res.status(500).json({ error: "Unable to run business dispatch" });
   }
 });
+app.post("/api/business/dispatch/plan/:planId/approve", requireAuth("CUSTOMER"), async (req,res)=>{
+  if(!databaseEnabled()) return res.status(503).json({error:"Business dispatch requires the production database"});
+  if(!await hasBusinessPremium(identity(req))) return res.status(403).json({error:"Business Premium is required for AI dispatch"});
+  try {
+    const b=await pool!.query("SELECT id FROM business_accounts WHERE owner_user_id=$1 AND status='ACTIVE' LIMIT 1",[identity(req)]);
+    if(!b.rows[0]) return res.status(404).json({error:"Business profile not found"});
+    const plan=await pool!.query("SELECT * FROM business_dispatch_plans WHERE id=$1 AND business_id=$2",[req.params.planId,b.rows[0].id]);
+    if(!plan.rows[0]) return res.status(404).json({error:"Dispatch plan not found"});
+    if(plan.rows[0].status!=="PREPARED") return res.status(409).json({error:"Dispatch plan is not awaiting approval"});
+    const updated=await pool!.query("UPDATE business_dispatch_plans SET status='APPROVED',approved_at=now() WHERE id=$1 RETURNING *",[req.params.planId]);
+    await auditAiAction({userId:identity(req),actionType:"BUSINESS_DISPATCH_PLAN_APPROVAL",status:"APPROVED",amountMinor:Number(plan.rows[0].estimated_total_minor),targetType:"BUSINESS_DISPATCH_PLAN",targetId:req.params.planId});
+    return res.json({plan:updated.rows[0]});
+  } catch { return res.status(500).json({error:"Unable to approve dispatch plan"}); }
+});
+
+app.post("/api/business/dispatch/plan/:planId/execute", requireAuth("CUSTOMER"), async (req,res)=>{
+  if(!databaseEnabled()) return res.status(503).json({error:"Business dispatch requires the production database"});
+  if(!await hasBusinessPremium(identity(req))) return res.status(403).json({error:"Business Premium is required for AI dispatch"});
+  try {
+    const b=await pool!.query("SELECT id FROM business_accounts WHERE owner_user_id=$1 AND status='ACTIVE' LIMIT 1",[identity(req)]);
+    if(!b.rows[0]) return res.status(404).json({error:"Business profile not found"});
+    const planResult=await pool!.query("SELECT * FROM business_dispatch_plans WHERE id=$1 AND business_id=$2 FOR UPDATE",[req.params.planId,b.rows[0].id]);
+    if(!planResult.rows[0]) return res.status(404).json({error:"Dispatch plan not found"});
+    const plan=planResult.rows[0];
+    if(plan.status!=="APPROVED") return res.status(409).json({error:"Dispatch plan must be approved before execution"});
+    const groups=Array.isArray(plan.groups)?plan.groups:JSON.parse(plan.groups??"[]");
+    const rules=await getBusinessAiRules(b.rows[0].id);
+    if(!rules) return res.status(409).json({error:"Business AI rules are not configured"});
+    const ids=groups.flatMap((g:any)=>Array.isArray(g.deliveryIds)?g.deliveryIds:[]);
+    const reserved=await reserveBusinessSpend(b.rows[0].id,Number(plan.estimated_total_minor));
+    if(!reserved) return res.status(403).json({error:"Daily Business AI spending limit would be exceeded"});
+    const results=[]; let spent=0;
+    for(const id of ids){
+      const delivery=await dispatchBusinessDelivery(b.rows[0].id,id,rules.preferredVehicle??undefined);
+      const amount=Number((await findDelivery(id))?.quote?.totalMinor??0);
+      if(delivery){spent+=amount;results.push({deliveryId:id,status:"DISPATCHED",driverId:delivery.driverId});}
+      else results.push({deliveryId:id,status:"SKIPPED",reason:"No eligible courier available"});
+    }
+    if(Number(plan.estimated_total_minor)>spent) await releaseBusinessSpend(b.rows[0].id,Number(plan.estimated_total_minor)-spent);
+    await pool!.query("UPDATE business_dispatch_plans SET status='EXECUTED',executed_at=now() WHERE id=$1",[plan.id]);
+    await auditAiAction({userId:identity(req),actionType:"BUSINESS_DISPATCH_PLAN_EXECUTION",status:"EXECUTED",amountMinor:spent,targetType:"BUSINESS_DISPATCH_PLAN",targetId:plan.id,details:{results}});
+    return res.json({planId:plan.id,spentMinor:spent,results});
+  } catch { return res.status(500).json({error:"Unable to execute dispatch plan"}); }
+});
+
 app.get("/api/ai/access", requireAuth("CUSTOMER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "AI access requires the production database" });
   try {
