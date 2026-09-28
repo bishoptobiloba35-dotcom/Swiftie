@@ -108,7 +108,7 @@ app.patch("/api/ai/permissions", requireAuth("CUSTOMER"), async (req, res) => {
     return res.status(400).json({ error: "Autonomous mode requires automatic payments to be explicitly enabled" });
   }
   try {
-    const permissions = await updateAiPermission(identity(req), parsed.data);
+    const permissions = await updateAiPermission(identity(req), { ...parsed.data, preferredVehicle: parsed.data.preferredVehicle ?? undefined, maxDeliveryCostMinor: parsed.data.maxDeliveryCostMinor ?? undefined, approvalThresholdMinor: parsed.data.approvalThresholdMinor ?? undefined });
     await auditAiAction({ userId: identity(req), actionType: "UPDATE_AI_PERMISSIONS", status: "EXECUTED", details: { mode: permissions.mode } });
     return res.json({ permissions });
   } catch {
