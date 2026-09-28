@@ -403,6 +403,23 @@ router.get("/drop-off/locations/mine", requireAuth("CUSTOMER","AGENT","ADMIN"), 
   const result=await pool.query("SELECT dl.*,ba.display_name AS business_name FROM drop_off_locations dl JOIN business_accounts ba ON ba.id=dl.business_id WHERE ba.owner_user_id=$1 OR EXISTS (SELECT 1 FROM business_members bm WHERE bm.business_id=ba.id AND bm.user_id=$1 AND bm.active=true AND bm.member_role IN ('OWNER','ADMIN')) ORDER BY dl.created_at DESC",[identity(req)]);
   res.json({locations:result.rows});
 });
+router.post("/drop-off/locations/:id/documents", requireAuth("CUSTOMER","AGENT","ADMIN"), async(req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const parsed=z.object({documentType:z.enum(["BUSINESS_REGISTRATION","PREMISES_EVIDENCE","IDENTITY","OTHER"]),dataUrl:z.string().min(20).max(8_000_000)}).safeParse(req.body);
+  if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
+  const locationId=String(req.params.id);
+  if((req as any).user?.role!=="ADMIN"&&!await managesDropOff(identity(req),locationId))return res.status(403).json({error:"Not authorized"});
+  const m=parsed.data.dataUrl.match(/^data:(application\/pdf|image\/(?:jpeg|jpg|png));base64,(.+)$/i);
+  if(!m)return res.status(400).json({error:"Document must be PDF, JPEG, JPG or PNG"});
+  const bytes=Buffer.from(m[2],"base64"); if(bytes.length>5*1024*1024)return res.status(400).json({error:"Document exceeds 5MB"});
+  const key="drop-off/"+locationId+"/documents/"+crypto.randomUUID();
+  try{
+    await putPrivateObject(key,bytes,m[1]);
+    const saved=await pool.query("INSERT INTO drop_off_location_documents(location_id,document_type,storage_key,status) VALUES($1,$2,$3,'PENDING') RETURNING id,document_type,status,created_at",[locationId,parsed.data.documentType,key]);
+    res.status(201).json({document:saved.rows[0]});
+  }catch(e){res.status(503).json({error:e instanceof Error?e.message:"Unable to store document"});}
+});
+
 router.get("/admin/drop-off/applications", requireAuth("ADMIN"), async(_req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const result=await pool.query("SELECT dl.*,ba.display_name AS business_name,(SELECT count(*) FROM drop_off_location_documents d WHERE d.location_id=dl.id) AS document_count FROM drop_off_locations dl JOIN business_accounts ba ON ba.id=dl.business_id ORDER BY dl.created_at DESC LIMIT 500");
