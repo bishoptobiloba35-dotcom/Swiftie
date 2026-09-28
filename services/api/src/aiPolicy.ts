@@ -101,3 +101,33 @@ export function evaluateAiPayment(permission: AiPermission, amountMinor: number)
   }
   return { allowed: true, requiresApproval: false };
 }
+
+
+export async function reserveAiSpend(userId: string, amountMinor: number): Promise<boolean> {
+  if (!pool || !Number.isInteger(amountMinor) || amountMinor <= 0) return false;
+  await ensureAiDefaults(userId);
+  const result = await pool.query(
+    `UPDATE ai_permissions
+        SET daily_spend_used_minor = daily_spend_used_minor + $2,
+            updated_at = now()
+      WHERE user_id=$1
+        AND daily_spend_date=CURRENT_DATE
+        AND (daily_spend_limit_minor = 0 OR daily_spend_used_minor + $2 <= daily_spend_limit_minor)
+      RETURNING daily_spend_used_minor`,
+    [userId, amountMinor]
+  );
+  return result.rowCount === 1;
+}
+
+export async function releaseAiSpend(userId: string, amountMinor: number): Promise<boolean> {
+  if (!pool || !Number.isInteger(amountMinor) || amountMinor <= 0) return false;
+  const result = await pool.query(
+    `UPDATE ai_permissions
+        SET daily_spend_used_minor = GREATEST(0, daily_spend_used_minor - $2),
+            updated_at = now()
+      WHERE user_id=$1 AND daily_spend_date=CURRENT_DATE
+      RETURNING daily_spend_used_minor`,
+    [userId, amountMinor]
+  );
+  return result.rowCount === 1;
+}
