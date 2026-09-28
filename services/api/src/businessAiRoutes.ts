@@ -140,7 +140,8 @@ router.post("/ai/query", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), as
   });
 });
 
-router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), async (req, res) => {\n  if (!pool) return res.status(503).json({ error: "AI actions require the production database" });
+router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "AI actions require the production database" });
   const userId = identity(req);
   const action = String(req.body?.action ?? "").trim().toUpperCase();
   const plan = await premiumAction(req, res, action || "UNKNOWN");
@@ -255,7 +256,8 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
   return res.status(400).json({ error: "Unsupported AI action", code: "UNKNOWN_AI_ACTION" });
 });
 
-router.get("/buy-orders", requireAuth("CUSTOMER", "AGENT", "ADMIN"), async (req, res) => {\n  if (!pool) return res.status(503).json({ error: "Buy & Deliver requires the production database" });
+router.get("/buy-orders", requireAuth("CUSTOMER", "AGENT", "ADMIN"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Buy & Deliver requires the production database" });
   const userId = identity(req);
   const result = (req as any).user?.role === "ADMIN"
     ? await pool!.query("SELECT * FROM buy_orders ORDER BY created_at DESC LIMIT 200")
@@ -265,7 +267,8 @@ router.get("/buy-orders", requireAuth("CUSTOMER", "AGENT", "ADMIN"), async (req,
   res.json({ buyOrders: result.rows });
 });
 
-router.post("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {\n  if (!pool) return res.status(503).json({ error: "Business accounts require the production database" });
+router.post("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Business accounts require the production database" });
   const userId = identity(req);
   const parsed = businessSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -279,7 +282,8 @@ router.post("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, 
   res.status(201).json({ business: result.rows[0] });
 });
 
-router.get("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {\n  if (!pool) return res.status(503).json({ error: "Business accounts require the production database" });
+router.get("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Business accounts require the production database" });
   const userId = identity(req);
   const result = (req as any).user?.role === "ADMIN"
     ? await pool!.query("SELECT * FROM business_accounts ORDER BY created_at DESC LIMIT 200")
