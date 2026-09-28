@@ -935,6 +935,8 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
           });
         } else if (refundStatus === "failed") {
           await recordDeliveryEvent({ deliveryId, eventType: "REFUND_FAILED", metadata: { provider: "paystack", transactionReference, refundReference } });
+        } else if (refundStatus === "needs-attention") {
+          await recordDeliveryEvent({ deliveryId, eventType: "REFUND_NEEDS_ATTENTION", metadata: { provider: "paystack", transactionReference, refundReference } });
         } else {
           await recordDeliveryEvent({ deliveryId, eventType: "REFUND_" + refundStatus.toUpperCase(), metadata: { provider: "paystack", transactionReference, refundReference } });
         }
