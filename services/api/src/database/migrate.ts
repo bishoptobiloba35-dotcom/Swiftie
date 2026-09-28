@@ -19,7 +19,8 @@ const migrations = [
   { id: "016_buy_order_operations", file: "016_buy_order_operations.sql" },
   { id: "017_drop_off_network", file: "017_drop_off_network.sql" },
   { id: "018_buy_order_payment_destination", file: "018_buy_order_payment_destination.sql" },
-  { id: "019_buy_order_payment_checkout", file: "019_buy_order_payment_checkout.sql" }
+  { id: "019_buy_order_payment_checkout", file: "019_buy_order_payment_checkout.sql" },
+  { id: "020_buy_order_financial_reconciliation", file: "020_buy_order_financial_reconciliation.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
