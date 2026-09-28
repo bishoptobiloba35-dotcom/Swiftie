@@ -938,6 +938,18 @@ app.post("/api/support/tickets", requireAuth("CUSTOMER", "DRIVER", "AGENT"), asy
   return res.status(201).json({ ticket });
 });
 
+app.get("/api/admin/support/ai-actions", requireAuth("ADMIN"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Support AI audit requires the production database" });
+  const result = await pool!.query(
+    `SELECT a.id, a.ticket_id, a.action_type, a.decision, a.reason, a.response, a.actor, a.created_at,
+            t.subject, t.category, t.status AS ticket_status
+     FROM support_ai_actions a
+     JOIN support_tickets t ON t.id=a.ticket_id
+     ORDER BY a.created_at DESC LIMIT 200`
+  );
+  return res.json({ actions: result.rows });
+});
+
 app.post("/api/driver/documents/upload", requireAuth("DRIVER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
   const userId = identity(req);
