@@ -21,6 +21,15 @@ const client = objectStorageEnabled
 
 const localRoot = path.resolve(process.env.LOCAL_PRIVATE_STORAGE_DIR ?? "uploads/private");
 
+function safeStorageKey(key: string): string {
+  const normalized = key.replaceAll("\\", "/").replace(/^\/+/, "");
+  const parts = normalized.split("/");
+  if (!normalized || parts.some(part => part === ".." || part === "." || part.length === 0)) {
+    throw new Error("Invalid private storage key");
+  }
+  return normalized;
+}
+
 function requireStorage(): { client: S3Client; bucket: string } {
   if (!client || !bucket) throw new Error("Private object storage is not configured");
   return { client, bucket };
@@ -29,7 +38,7 @@ function requireStorage(): { client: S3Client; bucket: string } {
 export async function putPrivateObject(key: string, body: Buffer, contentType: string): Promise<void> {
   if (!objectStorageEnabled) {
     if (process.env.NODE_ENV === "production") throw new Error("Private object storage is not configured");
-    const filePath = path.join(localRoot, key);
+    const filePath = path.join(localRoot, safeStorageKey(key));
     await mkdir(path.dirname(filePath), { recursive: true });
     await writeFile(filePath, body);
     return;
@@ -37,7 +46,7 @@ export async function putPrivateObject(key: string, body: Buffer, contentType: s
   const storage = requireStorage();
   await storage.client.send(new PutObjectCommand({
     Bucket: storage.bucket,
-    Key: key,
+    Key: safeStorageKey(key),
     Body: body,
     ContentType: contentType,
     ServerSideEncryption: endpoint ? undefined : "AES256"
@@ -47,7 +56,7 @@ export async function putPrivateObject(key: string, body: Buffer, contentType: s
 export async function getPrivateObject(key: string): Promise<{ body: Buffer; contentType?: string }> {
   if (!objectStorageEnabled) {
     if (process.env.NODE_ENV === "production") throw new Error("Private object storage is not configured");
-    const filePath = path.join(localRoot, key);
+    const filePath = path.join(localRoot, safeStorageKey(key));
     const body = await readFile(filePath);
     const extension = path.extname(key).toLowerCase();
     return {
