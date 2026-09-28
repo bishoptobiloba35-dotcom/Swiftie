@@ -47,6 +47,33 @@ type MemoryDelivery = {
 const deliveries = new Map<string, MemoryDelivery>();
 const locationRateLimit = new Map<string, number>();
 const LOCATION_MIN_INTERVAL_MS = 3000;
+const receiverPinAttempts = new Map<string, { windowStartedAt: number; count: number; blockedUntil: number }>();
+const RECEIVER_PIN_WINDOW_MS = 5 * 60 * 1000;
+const RECEIVER_PIN_MAX_ATTEMPTS = 5;
+const RECEIVER_PIN_BLOCK_MS = 15 * 60 * 1000;
+
+function checkReceiverPinRate(key: string): { allowed: boolean; retryAfterMs: number } {
+  const now = Date.now();
+  const current = receiverPinAttempts.get(key);
+  if (!current || now - current.windowStartedAt >= RECEIVER_PIN_WINDOW_MS) {
+    receiverPinAttempts.set(key, { windowStartedAt: now, count: 0, blockedUntil: 0 });
+    return { allowed: true, retryAfterMs: 0 };
+  }
+  if (current.blockedUntil > now) return { allowed: false, retryAfterMs: current.blockedUntil - now };
+  return { allowed: true, retryAfterMs: 0 };
+}
+
+function recordReceiverPinFailure(key: string): void {
+  const now = Date.now();
+  const current = receiverPinAttempts.get(key) ?? { windowStartedAt: now, count: 0, blockedUntil: 0 };
+  current.count += 1;
+  if (current.count >= RECEIVER_PIN_MAX_ATTEMPTS) current.blockedUntil = now + RECEIVER_PIN_BLOCK_MS;
+  receiverPinAttempts.set(key, current);
+}
+
+function clearReceiverPinFailures(key: string): void {
+  receiverPinAttempts.delete(key);
+}
 const notificationForDelivery = async (deliveryId: string, userId: string, title: string, body: string, type: string) => {
   if (!databaseEnabled()) return;
   await enqueueNotification({ deliveryId, userId, title, body, type });
@@ -179,7 +206,16 @@ app.post("/api/deliveries/:id/rating/receiver", async (req, res) => {
   const parsed = z.object({ stars: z.number().int().min(1).max(5), comment: z.string().max(500).optional() }).safeParse(req.body);
   if (!receiverPhone || !/^\d{6}$/.test(receiverPin) || !parsed.success) return res.status(400).json({ error: "Receiver phone, six-digit PIN, rating and optional comment are required" });
   const delivery = await findByTrackingCode(String(req.params.id).trim().toUpperCase()).catch(() => null) ?? await findDelivery(req.params.id);
-  if (!delivery || delivery.status !== "DELIVERED" || delivery.receiverPhone !== receiverPhone || !await verifyReceiverPin(delivery.id, receiverPin) || !delivery.driverId) return res.status(403).json({ error: "Receiver details could not be verified" });
+  if (!delivery || delivery.status !== "DELIVERED" || delivery.receiverPhone !== receiverPhone || !delivery.driverId) return res.status(403).json({ error: "Receiver details could not be verified" });
+  const pinKey = "rating:" + delivery.id + ":" + receiverPhone;
+  const pinRate = checkReceiverPinRate(pinKey);
+  if (!pinRate.allowed) return res.status(429).json({ error: "Too many PIN attempts. Try again later.", retryAfterMs: pinRate.retryAfterMs });
+  const pinValid = await verifyReceiverPin(delivery.id, receiverPin);
+  if (!pinValid) {
+    recordReceiverPinFailure(pinKey);
+    return res.status(403).json({ error: "Receiver details could not be verified" });
+  }
+  clearReceiverPinFailures(pinKey);
   try {
     const result = await pool!.query(
       `INSERT INTO receiver_ratings (delivery_id, driver_id, receiver_phone, stars, comment)
@@ -672,9 +708,17 @@ app.post("/api/track/:trackingCode/dispute", async (req, res) => {
     return res.status(400).json({ error: "Receiver phone, six-digit PIN and dispute reason are required" });
   }
   const delivery = await findByTrackingCode(String(req.params.trackingCode).trim().toUpperCase());
-  if (!delivery || delivery.receiverPhone !== receiverPhone || !await verifyReceiverPin(delivery.id, receiverPin)) {
+  if (!delivery || delivery.receiverPhone !== receiverPhone) {
     return res.status(403).json({ error: "Receiver details could not be verified" });
   }
+  const pinKey = "dispute:" + delivery.id + ":" + receiverPhone;
+  const pinRate = checkReceiverPinRate(pinKey);
+  if (!pinRate.allowed) return res.status(429).json({ error: "Too many PIN attempts. Try again later.", retryAfterMs: pinRate.retryAfterMs });
+  if (!await verifyReceiverPin(delivery.id, receiverPin)) {
+    recordReceiverPinFailure(pinKey);
+    return res.status(403).json({ error: "Receiver details could not be verified" });
+  }
+  clearReceiverPinFailures(pinKey);
   if (delivery.status === "CANCELLED") return res.status(409).json({ error: "This delivery is cancelled" });
   const dispute = await createReceiverDispute(delivery.id, receiverPhone, reason, description);
   if (!dispute) return res.status(409).json({ error: "A dispute already exists or database is unavailable" });
@@ -1428,6 +1472,16 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
   if (!receiverPhone || !/^\d{6}$/.test(receiverPin)) return res.status(400).json({ error: "Receiver phone and six-digit PIN are required" });
   const payment = await findPayment(req.params.id);
   if (!payment || payment.status !== "HELD") return res.status(409).json({ error: "Payment is not currently held for delivery release" });
+  const deliveryForPin = await findDelivery(req.params.id);
+  if (!deliveryForPin || deliveryForPin.receiverPhone !== receiverPhone) return res.status(403).json({ error: "Receiver details could not be verified" });
+  const pinKey = "confirm:" + deliveryForPin.id + ":" + receiverPhone;
+  const pinRate = checkReceiverPinRate(pinKey);
+  if (!pinRate.allowed) return res.status(429).json({ error: "Too many PIN attempts. Try again later.", retryAfterMs: pinRate.retryAfterMs });
+  if (!await verifyReceiverPin(deliveryForPin.id, receiverPin)) {
+    recordReceiverPinFailure(pinKey);
+    return res.status(403).json({ error: "Receiver details could not be verified" });
+  }
+  clearReceiverPinFailures(pinKey);
   try {
     const result = await confirmReceiverAndReleaseEscrow(
       req.params.id,
