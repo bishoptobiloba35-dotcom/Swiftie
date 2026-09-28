@@ -19,6 +19,7 @@ import { getPrivateObject, objectStorageEnabled, putPrivateObject } from "./stor
 import { enqueueNotification, processNotificationOutbox, processNotificationPushReceipts } from "./notificationOutbox.js";
 import businessAiRoutes from "./businessAiRoutes.js";
 import agentRoutes from "./agentRoutes.js";
+import { processSupportAiBatch } from "./supportAiAgent.js";
 
 const app = express();
 
@@ -1795,12 +1796,17 @@ async function startServer() {
     await runMigrations();
     void processNotificationOutbox().catch(() => {});
     void processNotificationPushReceipts().catch(() => {});
+    void processSupportAiBatch().catch(() => {});
+    const supportAiWorker = setInterval(() => {
+      void processSupportAiBatch().catch(() => {});
+    }, 5000);
     const notificationWorker = setInterval(() => {
       void processNotificationOutbox().catch(() => {});
     }, 5000);
     const notificationReceiptWorker = setInterval(() => {
       void processNotificationPushReceipts().catch(() => {});
     }, 60_000);
+    supportAiWorker.unref();
     notificationWorker.unref();
     notificationReceiptWorker.unref();
   }
