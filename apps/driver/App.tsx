@@ -630,12 +630,12 @@ export default function App() {
 
 const styles = StyleSheet.create({
   safe:{flex:1,backgroundColor:"#F6F8F5"}, auth:{flex:1,padding:24,justifyContent:"center",gap:14}, container:{padding:20,gap:14},
-  header:{flexDirection:"row",justifyContent:"space-between",alignItems:"center"}, logo:{fontSize:28,fontWeight:"800",marginTop:8},
-  subtitle:{fontSize:14,color:"#666"}, title:{fontSize:18,fontWeight:"700"}, status:{fontSize:18,fontWeight:"800"},
-  card:{borderWidth:1,borderColor:"#ddd",borderRadius:16,padding:16,gap:12}, input:{borderWidth:1,borderColor:"#ccc",borderRadius:10,padding:13},
-  primary:{backgroundColor:"#111",padding:15,borderRadius:12,alignItems:"center"}, primaryText:{color:"#fff",fontWeight:"700"},
-  secondary:{borderWidth:1,borderColor:"#ccc",padding:13,borderRadius:10,alignItems:"center"}, link:{fontWeight:"700"},
-  muted:{color:"#666"}, job:{borderTopWidth:1,borderTopColor:"#eee",paddingTop:12,gap:8}, done:{fontSize:18,fontWeight:"800"},
+  header:{flexDirection:"row",justifyContent:"space-between",alignItems:"center"}, logo:{fontSize:30,fontWeight:"900",color:"#123D2A",letterSpacing:-.8,marginTop:8},
+  subtitle:{fontSize:14,color:"#66716A",lineHeight:20}, title:{fontSize:18,fontWeight:"900",color:"#123D2A",color:"#16221B"}, status:{fontSize:18,fontWeight:"900",color:"#123D2A"},
+  card:{borderWidth:1,borderColor:"#DDE5DF",backgroundColor:"#FFFFFF",borderRadius:20,padding:16,gap:12}, input:{borderWidth:1,borderColor:"#D9E0DB",borderRadius:14,padding:14},
+  primary:{backgroundColor:"#123D2A",padding:15,borderRadius:14,alignItems:"center"}, primaryText:{color:"#fff",fontWeight:"700"},
+  secondary:{borderWidth:1,borderColor:"#BFD0C5",backgroundColor:"#FFFFFF",padding:13,borderRadius:14,alignItems:"center"}, link:{fontWeight:"700"},
+  muted:{color:"#68736C"}, job:{borderTopWidth:1,borderTopColor:"#E7ECE8",paddingTop:12,gap:8}, done:{fontSize:18,fontWeight:"800"},
   preview:{width:"100%",height:220,borderRadius:12}, cameraCard:{gap:12}, camera:{height:420,borderRadius:16,overflow:"hidden"},
   notification:{borderTopWidth:1,borderTopColor:"#eee",paddingTop:10,gap:4}, notificationTitle:{fontWeight:"800"}, fileCard:{borderWidth:1,borderColor:"#ddd",borderRadius:10,padding:12,gap:4}
 });
