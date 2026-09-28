@@ -286,7 +286,31 @@ router.post("/buy-orders/:id/cancel", requireAuth("CUSTOMER"), async (req, res) 
       [orderId(req), identity(req)]
     );
     await client.query("COMMIT");
-    return res.json({ buyOrder: result.rows[0] });
+
+    const cancelledOrder=result.rows[0];
+    if(cancelledOrder.payment_status==="HELD"&&cancelledOrder.payment_reference&&process.env.PAYSTACK_SECRET_KEY){
+      try{
+        const payment=(await pool.query("SELECT id,amount_minor,currency,status FROM buy_order_payments WHERE buy_order_id=$1",[cancelledOrder.id])).rows[0];
+        if(payment&&["HELD","AUTHORIZED"].includes(payment.status)){
+          const refundResponse=await fetch("https://api.paystack.co/refund",{
+            method:"POST",
+            headers:{authorization:"Bearer "+process.env.PAYSTACK_SECRET_KEY,"content-type":"application/json"},
+            body:JSON.stringify({transaction:cancelledOrder.payment_reference,amount:String(payment.amount_minor)})
+          });
+          const refundPayload=await refundResponse.json() as {status?:boolean;message?:string;data?:{id?:string}};
+          if(refundResponse.ok&&refundPayload.status){
+            await pool.query("UPDATE buy_order_payments SET refund_status='PENDING',refund_amount_minor=$2,updated_at=now() WHERE id=$1",[payment.id,Number(payment.amount_minor)]);
+            await pool.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'REFUND_REQUESTED',$3::jsonb)",[cancelledOrder.id,identity(req),JSON.stringify({reference:cancelledOrder.payment_reference,amountMinor:Number(payment.amount_minor),refundId:refundPayload.data?.id??null})]);
+          }else{
+            await pool.query("UPDATE buy_order_payments SET refund_status='FAILED',updated_at=now() WHERE id=$1",[payment.id]);
+            await pool.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'REFUND_REQUEST_FAILED',$3::jsonb)",[cancelledOrder.id,identity(req),JSON.stringify({message:refundPayload.message??"Paystack refund request failed"})]);
+          }
+        }
+      }catch{
+        await pool.query("UPDATE buy_order_payments SET refund_status='FAILED',updated_at=now() WHERE buy_order_id=$1",[cancelledOrder.id]);
+      }
+    }
+    return res.json({ buyOrder: cancelledOrder });
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
