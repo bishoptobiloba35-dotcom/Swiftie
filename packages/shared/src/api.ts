@@ -152,6 +152,33 @@ export class SwiftDropApi {
     if (!response.ok) throw new Error(data.error ?? "Unable to save rating");
   }
 
+  async createSupportTicket(input: { category: "ORDER" | "APP"; subject: string; message: string; deliveryId?: string }): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/support/tickets", {
+      method: "POST", headers: this.headers(true), body: JSON.stringify(input)
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to create support request");
+    return data.ticket;
+  }
+
+  async supportTickets(): Promise<any[]> {
+    const response = await fetch(this.baseUrl + "/api/support/tickets", { headers: this.headers() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to load support requests");
+    return data.tickets ?? [];
+  }
+
+  async createReceiverDispute(trackingCode: string, receiverPhone: string, receiverPin: string, reason: string, description?: string): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/track/" + encodeURIComponent(trackingCode) + "/dispute", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ receiverPhone, receiverPin, reason, description })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to open dispute");
+    return data.dispute;
+  }
+
   async notifications(): Promise<Array<{ id: string; delivery_id?: string | null; title: string; body: string; type: string; read_at?: string | null; created_at: string }>> {
     const response = await fetch(this.baseUrl + "/api/notifications", { headers: this.headers() });
     const data = await response.json();
