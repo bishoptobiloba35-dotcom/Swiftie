@@ -24,7 +24,19 @@ const migrations = [
   { id: "021_ai_basic_usage", file: "021_ai_basic_usage.sql" },
   { id: "022_shopper_buy_deliver", file: "022_shopper_buy_deliver.sql" },
   { id: "023_agent_operations", file: "023_agent_operations.sql" },
-  { id: "024_business_dispatch_plans", file: "024_business_dispatch_plans.sql" }
+  { id: "024_business_dispatch_plans", file: "024_business_dispatch_plans.sql" },
+  { id: "025_business_agent_ai", file: "025_business_agent_ai.sql" },
+  { id: "026_buy_order_operations", file: "026_buy_order_operations.sql" },
+  { id: "027_drop_off_network", file: "027_drop_off_network.sql" },
+  { id: "028_buy_order_payment_destination", file: "028_buy_order_payment_destination.sql" },
+  { id: "029_buy_order_payment_checkout", file: "029_buy_order_payment_checkout.sql" },
+  { id: "030_buy_order_financial_reconciliation", file: "030_buy_order_financial_reconciliation.sql" },
+  { id: "031_delivery_dimensions", file: "031_delivery_dimensions.sql" },
+  { id: "032_buy_order_financial_states", file: "032_buy_order_financial_states.sql" },
+  { id: "033_buy_order_settlements", file: "033_buy_order_settlements.sql" },
+  { id: "034_settlement_accounts", file: "034_settlement_accounts.sql" },
+  { id: "035_support_ai_agent", file: "035_support_ai_agent.sql" },
+  { id: "036_support_ticket_messages", file: "036_support_ticket_messages.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
