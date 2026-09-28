@@ -22,7 +22,8 @@ const client = objectStorageEnabled
 const localRoot = path.resolve(process.env.LOCAL_PRIVATE_STORAGE_DIR ?? "uploads/private");
 
 export function safeStorageKey(key: string): string {
-  const normalized = key.replaceAll("\\", "/").replace(/^\/+/, "");
+  if (key.startsWith("/") || /^[A-Za-z]:[\\/]/.test(key)) throw new Error("Invalid private storage key");
+  const normalized = key.replaceAll("\\", "/");
   const parts = normalized.split("/");
   if (!normalized || parts.some(part => part === ".." || part === "." || part.length === 0)) {
     throw new Error("Invalid private storage key");
