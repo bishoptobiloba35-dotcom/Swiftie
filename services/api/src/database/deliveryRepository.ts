@@ -445,6 +445,17 @@ export async function createEligiblePayout(deliveryId: string, driverId: string,
   return result.rows[0] ? rowToPayout(result.rows[0]) : null;
 }
 
+export async function cancelEligiblePayoutForRefund(deliveryId: string): Promise<PayoutRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `UPDATE payouts SET status='CANCELLED', updated_at=now()
+     WHERE delivery_id=$1 AND status IN ('PENDING','ELIGIBLE')
+     RETURNING *`,
+    [deliveryId]
+  );
+  return result.rows[0] ? rowToPayout(result.rows[0]) : null;
+}
+
 export async function findPayout(deliveryId: string): Promise<PayoutRecord | null> {
   if (!pool) return null;
   const result = await pool.query("SELECT * FROM payouts WHERE delivery_id=$1", [deliveryId]);
