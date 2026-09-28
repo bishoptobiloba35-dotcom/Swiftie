@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
@@ -31,7 +31,6 @@ app.use(cors({
 }));
 app.use(express.json({ limit: "10mb" }));
 app.use("/api/auth", authRoutes);
-app.use("/uploads", express.static("uploads"));
 
 type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED";
 type MemoryDelivery = {
@@ -40,6 +39,8 @@ type MemoryDelivery = {
   status: Status; driverId?: string; pickupPhotoUrl?: string; receiverPin: string; createdAt: string; updatedAt: string;
 };
 const deliveries = new Map<string, MemoryDelivery>();
+const locationRateLimit = new Map<string, number>();
+const LOCATION_MIN_INTERVAL_MS = 3000;
 const notificationForDelivery = async (deliveryId: string, userId: string, title: string, body: string, type: string) => {
   if (!databaseEnabled()) return;
   await pool!.query("INSERT INTO notifications (user_id, delivery_id, title, body, type) VALUES ($1,$2,$3,$4,$5)", [userId, deliveryId, title, body, type]);
@@ -1228,24 +1229,77 @@ app.post("/api/deliveries/:id/at-pickup", requireAuth("DRIVER"), async (req, res
 });
 
 app.post("/api/uploads/pickup-photo", requireAuth("DRIVER"), async (req, res) => {
+  const deliveryId = String(req.body?.deliveryId ?? "").trim();
+  if (!deliveryId) return res.status(400).json({ error: "deliveryId is required" });
+  const driverId = await authenticatedDriverId(req);
+  if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
+  const delivery = await getOne(deliveryId);
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  if (delivery.driverId !== driverId || delivery.status !== "DRIVER_AT_PICKUP") {
+    return res.status(403).json({ error: "Only the assigned driver may upload a pickup photo while at pickup" });
+  }
   const dataUrl = String(req.body?.image ?? "");
   const match = dataUrl.match(/^data:image\/(jpeg|jpg|png);base64,(.+)$/);
   if (!match) return res.status(400).json({ error: "A JPEG or PNG data URL is required" });
   const extension = match[1] === "png" ? "png" : "jpg";
   const buffer = Buffer.from(match[2], "base64");
   if (buffer.length > 8 * 1024 * 1024) return res.status(413).json({ error: "Image is too large" });
-  const filename = randomUUID() + "." + extension;
-  const directory = path.resolve("uploads/pickups");
+  const directory = path.resolve("uploads/pickups", delivery.id);
   await mkdir(directory, { recursive: true });
-  await writeFile(path.join(directory, filename), buffer);
-  res.status(201).json({ url: "/uploads/pickups/" + filename });
+  const filename = randomUUID() + "." + extension;
+  await writeFile(path.join(directory, filename), buffer, { flag: "wx" });
+  res.status(201).json({ url: "/api/deliveries/" + encodeURIComponent(delivery.id) + "/pickup-photo" });
+});
+
+app.get("/api/deliveries/:id/pickup-photo", requireAuth("CUSTOMER", "DRIVER", "ADMIN"), async (req, res) => {
+  const user = (req as typeof req & { user?: { userId: string; role: "CUSTOMER" | "DRIVER" | "ADMIN" } }).user!;
+  const delivery = databaseEnabled()
+    ? await findDeliveryForUser(req.params.id, user.userId, user.role)
+    : await getOne(req.params.id);
+  if (!delivery || !delivery.pickupPhotoUrl) return res.status(404).json({ error: "Pickup photo not found" });
+  const directory = path.resolve("uploads/pickups", delivery.id);
+  try {
+    const entries = await (await import("node:fs/promises")).readdir(directory);
+    const filename = entries.find(name => /^[-a-zA-Z0-9]+\.(?:jpg|png)$/.test(name));
+    if (!filename) return res.status(404).json({ error: "Pickup photo not found" });
+    const buffer = await readFile(path.join(directory, filename));
+    res.setHeader("content-type", filename.endsWith(".png") ? "image/png" : "image/jpeg");
+    res.setHeader("cache-control", "private, max-age=300");
+    return res.send(buffer);
+  } catch {
+    return res.status(404).json({ error: "Pickup photo not found" });
+  }
+});
+
+app.get("/api/track/:trackingCode/pickup-photo", async (req, res) => {
+  const code = String(req.params.trackingCode ?? "").trim().toUpperCase();
+  const receiverPhone = String(req.query.receiverPhone ?? "").trim();
+  if (!receiverPhone) return res.status(400).json({ error: "receiverPhone is required" });
+  const delivery = databaseEnabled()
+    ? await findByTrackingCode(code)
+    : [...deliveries.values()].find(d => d.trackingCode === code) ?? null;
+  if (!delivery || delivery.receiverPhone !== receiverPhone || !delivery.pickupPhotoUrl) {
+    return res.status(403).json({ error: "Tracking details could not be verified" });
+  }
+  const directory = path.resolve("uploads/pickups", delivery.id);
+  try {
+    const entries = await (await import("node:fs/promises")).readdir(directory);
+    const filename = entries.find(name => /^[-a-zA-Z0-9]+\.(?:jpg|png)$/.test(name));
+    if (!filename) return res.status(404).json({ error: "Pickup photo not found" });
+    const buffer = await readFile(path.join(directory, filename));
+    res.setHeader("content-type", filename.endsWith(".png") ? "image/png" : "image/jpeg");
+    res.setHeader("cache-control", "private, max-age=300");
+    return res.send(buffer);
+  } catch {
+    return res.status(404).json({ error: "Pickup photo not found" });
+  }
 });
 
 app.post("/api/deliveries/:id/pickup", requireAuth("DRIVER"), async (req, res) => {
   const driverId = await authenticatedDriverId(req);
   if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
   const photo = String(req.body?.pickupPhotoUrl ?? "");
-  if (!photo) return res.status(400).json({ error: "Pickup parcel photo is required" });
+  if (!photo || !photo.startsWith("/api/deliveries/" + req.params.id + "/pickup-photo")) return res.status(400).json({ error: "A valid pickup parcel photo is required" });
   if (databaseEnabled()) {
     const updated = await savePickupPhoto(req.params.id, driverId, photo);
     if (!updated) return res.status(409).json({ error: "Driver must be assigned and at pickup before confirming pickup" });
@@ -1286,14 +1340,21 @@ app.post("/api/deliveries/:id/location", requireAuth("DRIVER"), async (req, res)
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   const driverId = await authenticatedDriverId(req);
   if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
+  const now = Date.now();
+  const rateKey = delivery.id + ":" + driverId;
+  const previous = locationRateLimit.get(rateKey) ?? 0;
+  if (now - previous < LOCATION_MIN_INTERVAL_MS) {
+    return res.status(429).json({ error: "Location update rate exceeded", retryAfterMs: LOCATION_MIN_INTERVAL_MS - (now - previous) });
+  }
   const event = {
     deliveryId: delivery.id, driverId,
     latitude: Number(req.body?.latitude), longitude: Number(req.body?.longitude),
-    accuracyMeters: req.body?.accuracyMeters == null ? undefined : Number(req.body.accuracyMeters),
-    recordedAt: new Date().toISOString()
+    accuracyMeters: req.body?.accuracyMeters == null ? undefined : Number(req.body?.accuracyMeters),
+    recordedAt: new Date(now).toISOString()
   };
   const error = validateLocationEvent(event, delivery.driverId ?? "", delivery.status);
   if (error) return res.status(403).json({ error });
+  locationRateLimit.set(rateKey, now);
   if (databaseEnabled()) await recordPersistentLocation(event); else recordLocation(event);
   publishDeliveryLocation(delivery.id, event);
   res.status(201).json(event);
