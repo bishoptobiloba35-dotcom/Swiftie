@@ -1645,6 +1645,19 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
   );
   const buyOrder = buyOrderResult.rows[0];
   if (buyOrder) {
+    if (buyOrder.receiver_phone !== receiverPhone) {
+      return res.status(403).json({ error: "Receiver details could not be verified" });
+    }
+    const pinKey = "buy-confirm:" + buyOrder.id + ":" + receiverPhone;
+    const pinRate = checkReceiverPinRate(pinKey);
+    if (!pinRate.allowed) {
+      return res.status(429).json({ error: "Too many PIN attempts. Try again later.", retryAfterMs: pinRate.retryAfterMs });
+    }
+    if (!await verifyReceiverPin(buyOrder.delivery_id, receiverPin)) {
+      recordReceiverPinFailure(pinKey);
+      return res.status(403).json({ error: "Receiver details could not be verified" });
+    }
+    clearReceiverPinFailures(pinKey);
     if (buyOrder.payment_status !== "HELD") return res.status(409).json({ error: "Buy & Deliver payment is not currently held for release" });
     if (buyOrder.delivery_status !== "ARRIVED" || !buyOrder.driver_id) return res.status(409).json({ error: "The courier must arrive before receiver confirmation" });
     const client = await pool!.connect();
