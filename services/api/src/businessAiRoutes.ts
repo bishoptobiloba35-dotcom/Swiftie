@@ -466,7 +466,7 @@ router.post("/drop-off/locations/:id/documents", requireAuth("CUSTOMER","AGENT",
   const m=parsed.data.dataUrl.match(/^data:(application\/pdf|image\/(?:jpeg|jpg|png));base64,(.+)$/i);
   if(!m)return res.status(400).json({error:"Document must be PDF, JPEG, JPG or PNG"});
   const bytes=Buffer.from(m[2],"base64"); if(bytes.length>5*1024*1024)return res.status(400).json({error:"Document exceeds 5MB"});
-  const key="drop-off/"+locationId+"/documents/"+crypto.randomUUID();
+  const key="drop-off/"+locationId+"/documents/"+randomUUID();
   try{
     await putPrivateObject(key,bytes,m[1]);
     const saved=await pool.query("INSERT INTO drop_off_location_documents(location_id,document_type,storage_key,status) VALUES($1,$2,$3,'PENDING') RETURNING id,document_type,status,created_at",[locationId,parsed.data.documentType,key]);
@@ -699,7 +699,7 @@ router.post("/drop-off/parcels/:id/intake", requireAuth("CUSTOMER","AGENT","ADMI
     const bytes=Buffer.from(m[2],"base64");
     if(!bytes.length||bytes.length>8*1024*1024)return res.status(413).json({error:"Parcel photo must be between 1 byte and 8MB"});
     const extension=m[1].toLowerCase()==="png"?"png":"jpg";
-    parcelPhotoKey="drop-off/"+parcel.location_id+"/parcels/"+parcelId+"/intake-"+crypto.randomUUID()+"."+extension;
+    parcelPhotoKey="drop-off/"+parcel.location_id+"/parcels/"+parcelId+"/intake-"+randomUUID()+"."+extension;
     await putPrivateObject(parcelPhotoKey,bytes,extension==="png"?"image/png":"image/jpeg");
   }
   const client=await pool.connect();
