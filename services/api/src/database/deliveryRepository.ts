@@ -8,6 +8,8 @@ export type PaymentRecord = {
   deliveryId: string;
   provider: string;
   providerReference?: string;
+  authorizationUrl?: string;
+  accessCode?: string;
   amountMinor: number;
   currency: string;
   status: "PENDING" | "AUTHORIZED" | "HELD" | "RELEASED" | "REFUNDED" | "FAILED";
@@ -33,6 +35,8 @@ function paymentFromRow(row: any): PaymentRecord {
     deliveryId: row.delivery_id,
     provider: row.provider,
     providerReference: row.provider_reference ?? undefined,
+    authorizationUrl: row.authorization_url ?? undefined,
+    accessCode: row.access_code ?? undefined,
     amountMinor: Number(row.amount_minor),
     currency: row.currency,
     status: row.status,
@@ -118,6 +122,23 @@ export async function markPaymentRefund(deliveryId: string, refundReference: str
   } finally {
     client.release();
   }
+}
+
+export async function savePaymentAuthorization(
+  deliveryId: string,
+  providerReference: string,
+  authorizationUrl: string,
+  accessCode?: string
+): Promise<PaymentRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `UPDATE payments
+        SET provider_reference=$2, authorization_url=$3, access_code=$4, status='PENDING', updated_at=now()
+      WHERE delivery_id=$1
+      RETURNING *`,
+    [deliveryId, providerReference, authorizationUrl, accessCode ?? null]
+  );
+  return result.rows[0] ? paymentFromRow(result.rows[0]) : null;
 }
 
 export async function updatePaymentStatus(
