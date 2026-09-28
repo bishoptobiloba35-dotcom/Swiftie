@@ -1,0 +1,5 @@
+ALTER TABLE payments
+  ADD COLUMN IF NOT EXISTS refund_reference TEXT,
+  ADD COLUMN IF NOT EXISTS refund_status TEXT,
+  ADD COLUMN IF NOT EXISTS refund_amount_minor INTEGER,
+  ADD COLUMN IF NOT EXISTS refund_updated_at TIMESTAMPTZ;
