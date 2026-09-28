@@ -7,7 +7,7 @@ import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
-import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout } from "./database/deliveryRepository.js";
+import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, savePaymentAuthorization, markPaymentRefund, confirmReceiverAndReleaseEscrow, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
 import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, prepareRefund, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
@@ -753,13 +753,42 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
   if (!amountMinor || !Number.isSafeInteger(amountMinor)) {
     return res.status(409).json({ error: "Delivery does not have a valid server quote" });
   }
+
   const secret = process.env.PAYSTACK_SECRET_KEY;
   const provider = process.env.PAYMENT_PROVIDER || "paystack";
   if (provider !== "paystack" || !secret) {
     return res.status(503).json({ error: "Paystack payment configuration is not ready" });
   }
 
-  const reference = "SD-" + delivery.trackingCode + "-" + Date.now();
+  const existing = await findPayment(delivery.id);
+  if (existing?.status === "HELD" || existing?.status === "RELEASED") {
+    return res.status(409).json({ error: "This delivery already has a completed payment state" });
+  }
+  if (existing?.status === "PENDING" && existing.authorizationUrl && existing.providerReference) {
+    return res.status(200).json({
+      paymentId: existing.id,
+      reference: existing.providerReference,
+      authorizationUrl: existing.authorizationUrl,
+      accessCode: existing.accessCode
+    });
+  }
+
+  // Reserve one stable provider reference before contacting Paystack. A retry after
+  // a network/database interruption therefore targets the same payment attempt.
+  const reference = existing?.providerReference ?? ("SD-" + delivery.trackingCode + "-PAY");
+  const payment = existing ?? await createPayment({
+    deliveryId: delivery.id,
+    provider: "paystack",
+    amountMinor,
+    currency: "NGN"
+  });
+
+  if (existing && (existing.amountMinor !== amountMinor || existing.currency !== "NGN")) {
+    return res.status(409).json({ error: "Existing payment amount no longer matches the server quote" });
+  }
+
+  await updatePaymentStatus(delivery.id, "PENDING", reference);
+
   const response = await fetch("https://api.paystack.co/transaction/initialize", {
     method: "POST",
     headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
@@ -772,23 +801,55 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
     })
   });
   const payload = await response.json() as any;
+
   if (!response.ok || !payload.status || !payload.data?.authorization_url) {
+    // If Paystack already accepted this reference but the response was lost,
+    // verify it before allowing another payment attempt.
+    const verify = await fetch("https://api.paystack.co/transaction/verify/" + encodeURIComponent(reference), {
+      headers: { authorization: "Bearer " + secret }
+    }).catch(() => null);
+    if (verify?.ok) {
+      const verified = await verify.json() as any;
+      const data = verified?.data;
+      if (verified?.status && data?.status === "success" && Number(data.amount) === amountMinor && String(data.currency) === "NGN") {
+        const saved = await savePaymentAuthorization(
+          delivery.id,
+          reference,
+          String(data.authorization_url ?? ""),
+          data.access_code ? String(data.access_code) : undefined
+        );
+        if (saved?.authorizationUrl) {
+          return res.status(200).json({
+            paymentId: saved.id,
+            reference,
+            authorizationUrl: saved.authorizationUrl,
+            accessCode: saved.accessCode
+          });
+        }
+      }
+    }
     return res.status(502).json({ error: "Payment provider initialization failed" });
   }
 
-  const payment = await createPayment({ deliveryId: delivery.id, provider: "paystack", amountMinor, currency: "NGN" });
-  await updatePaymentStatus(delivery.id, "PENDING", payload.data.reference ?? reference);
+  const saved = await savePaymentAuthorization(
+    delivery.id,
+    String(payload.data.reference ?? reference),
+    String(payload.data.authorization_url),
+    payload.data.access_code ? String(payload.data.access_code) : undefined
+  );
+  if (!saved) return res.status(500).json({ error: "Unable to persist payment authorization" });
+
   await recordDeliveryEvent({
     deliveryId: delivery.id,
     eventType: "PAYMENT_INITIALIZED",
     actorUserId: userId,
-    metadata: { paymentId: payment.id, reference: payload.data.reference ?? reference, amountMinor }
+    metadata: { paymentId: saved.id, reference: saved.providerReference, amountMinor }
   });
-  res.status(201).json({
-    paymentId: payment.id,
-    reference: payload.data.reference ?? reference,
-    authorizationUrl: payload.data.authorization_url,
-    accessCode: payload.data.access_code
+  return res.status(201).json({
+    paymentId: saved.id,
+    reference: saved.providerReference,
+    authorizationUrl: saved.authorizationUrl,
+    accessCode: saved.accessCode
   });
 });
 
