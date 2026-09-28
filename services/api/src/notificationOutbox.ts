@@ -1,5 +1,7 @@
 import { pool, withDatabase } from "./database/db.js";
 
+type ExpoTicket = { ticketId: string; token: string };
+
 type PendingNotification = {
   id: string;
   userId: string;
@@ -44,9 +46,10 @@ export async function enqueueNotification(input: {
   });
 }
 
-async function sendToExpo(tokens: string[], title: string, body: string, data: Record<string, string | null>): Promise<{ retry: boolean; invalidTokens: string[] }> {
+async function sendToExpo(tokens: string[], title: string, body: string, data: Record<string, string | null>): Promise<{ retry: boolean; invalidTokens: string[]; tickets: ExpoTicket[] }> {
   let retry = false;
   const invalidTokens: string[] = [];
+  const tickets: ExpoTicket[] = [];
 
   for (let i = 0; i < tokens.length; i += 100) {
     const batch = tokens.slice(i, i + 100);
@@ -62,11 +65,12 @@ async function sendToExpo(tokens: string[], title: string, body: string, data: R
     }
 
     const payload = await response.json() as {
-      data?: Array<{ status?: string; details?: { error?: string }; message?: string }>;
+      data?: Array<{ status?: string; id?: string; details?: { error?: string }; message?: string }>;
     };
     for (let index = 0; index < (payload.data ?? []).length; index += 1) {
       const ticket = payload.data![index];
       const token = batch[index];
+      if (ticket.status === "ok" && ticket.id && token) tickets.push({ ticketId: ticket.id, token });
       if (ticket.status === "error" && ticket.details?.error === "DeviceNotRegistered") {
         if (token) invalidTokens.push(token);
       } else if (ticket.status === "error") {
@@ -75,7 +79,7 @@ async function sendToExpo(tokens: string[], title: string, body: string, data: R
     }
   }
 
-  return { retry, invalidTokens };
+  return { retry, invalidTokens, tickets };
 }
 
 export async function processNotificationOutbox(): Promise<void> {
@@ -129,6 +133,15 @@ export async function processNotificationOutbox(): Promise<void> {
       if (outcome.invalidTokens.length) {
         await pool.query("DELETE FROM device_tokens WHERE push_token = ANY($1::text[])", [outcome.invalidTokens]);
       }
+      if (outcome.tickets.length) {
+        await pool.query(
+          `INSERT INTO notification_push_receipts (outbox_id, push_token, ticket_id)
+           SELECT $1, item->>'token', item->>'ticketId'
+           FROM jsonb_array_elements($2::jsonb) AS item
+           ON CONFLICT (outbox_id, ticket_id) DO NOTHING`,
+          [row.id, JSON.stringify(outcome.tickets)]
+        );
+      }
       if (outcome.retry) {
         await pool.query(
           "UPDATE notification_outbox SET next_attempt_at=now()+($2 * interval '1 second'), last_error=$3 WHERE id=$1",
@@ -146,5 +159,45 @@ export async function processNotificationOutbox(): Promise<void> {
         [row.id, error instanceof Error ? error.message.slice(0, 500) : "Push delivery failed"]
       );
     }
+  }
+}
+
+
+export async function processNotificationPushReceipts(): Promise<void> {
+  if (!pool) return;
+  const result = await pool.query(
+    `SELECT id, outbox_id AS "outboxId", push_token AS "pushToken", ticket_id AS "ticketId"
+       FROM notification_push_receipts
+      WHERE checked_at IS NULL
+      ORDER BY created_at
+      LIMIT 100`
+  );
+  const rows = result.rows as Array<{ id: string; outboxId: string; pushToken: string; ticketId: string }>;
+  for (let i = 0; i < rows.length; i += 100) {
+    const batch = rows.slice(i, i + 100);
+    try {
+      const response = await fetch("https://exp.host/--/api/v2/push/getReceipts", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ ids: batch.map(row => row.ticketId) })
+      });
+      if (!response.ok) continue;
+      const payload = await response.json() as {
+        data?: Record<string, { status?: string; message?: string; details?: { error?: string } }>;
+      };
+      for (const row of batch) {
+        const receipt = payload.data?.[row.ticketId];
+        if (!receipt || !receipt.status || receipt.status === "pending") continue;
+        await pool.query(
+          `UPDATE notification_push_receipts
+              SET status=$2, error_code=$3, message=$4, checked_at=now()
+            WHERE id=$1`,
+          [row.id, receipt.status, receipt.details?.error ?? null, receipt.message ?? null]
+        );
+        if (receipt.status === "error" && receipt.details?.error === "DeviceNotRegistered") {
+          await pool.query("DELETE FROM device_tokens WHERE push_token=$1", [row.pushToken]);
+        }
+      }
+    } catch {}
   }
 }
