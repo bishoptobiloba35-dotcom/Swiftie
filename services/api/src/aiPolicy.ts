@@ -8,6 +8,7 @@ export type AiPermission = {
   autoPayLimitMinor: number;
   dailySpendLimitMinor: number;
   dailySpendUsedMinor: number;
+  dailySpendDate: string;
   preferredVehicle?: string;
   maxDeliveryCostMinor?: number;
   approvalThresholdMinor?: number;
@@ -16,11 +17,19 @@ export type AiPermission = {
 export async function ensureAiDefaults(userId: string): Promise<AiPermission> {
   if (!pool) throw new Error("DATABASE_URL is not configured");
   const result = await pool.query(
-    `INSERT INTO ai_permissions (user_id)
-     VALUES ($1)
-     ON CONFLICT (user_id) DO UPDATE SET updated_at=now()
+    `INSERT INTO ai_permissions (user_id, daily_spend_date)
+     VALUES ($1, CURRENT_DATE)
+     ON CONFLICT (user_id) DO UPDATE
+       SET daily_spend_used_minor =
+             CASE WHEN ai_permissions.daily_spend_date < CURRENT_DATE
+                  THEN 0 ELSE ai_permissions.daily_spend_used_minor END,
+           daily_spend_date =
+             CASE WHEN ai_permissions.daily_spend_date < CURRENT_DATE
+                  THEN CURRENT_DATE ELSE ai_permissions.daily_spend_date END,
+           updated_at=now()
      RETURNING mode, auto_pay_enabled, auto_pay_limit_minor, daily_spend_limit_minor,
-               daily_spend_used_minor, preferred_vehicle, max_delivery_cost_minor, approval_threshold_minor`,
+               daily_spend_used_minor, daily_spend_date, preferred_vehicle,
+               max_delivery_cost_minor, approval_threshold_minor`,
     [userId]
   );
   return mapPermission(result.rows[0]);
@@ -33,6 +42,7 @@ function mapPermission(row: any): AiPermission {
     autoPayLimitMinor: Number(row.auto_pay_limit_minor),
     dailySpendLimitMinor: Number(row.daily_spend_limit_minor),
     dailySpendUsedMinor: Number(row.daily_spend_used_minor),
+    dailySpendDate: String(row.daily_spend_date),
     preferredVehicle: row.preferred_vehicle ?? undefined,
     maxDeliveryCostMinor: row.max_delivery_cost_minor == null ? undefined : Number(row.max_delivery_cost_minor),
     approvalThresholdMinor: row.approval_threshold_minor == null ? undefined : Number(row.approval_threshold_minor)
@@ -54,7 +64,8 @@ export async function updateAiPermission(userId: string, input: Partial<AiPermis
             max_delivery_cost_minor=$7, approval_threshold_minor=$8, updated_at=now()
       WHERE user_id=$1
       RETURNING mode, auto_pay_enabled, auto_pay_limit_minor, daily_spend_limit_minor,
-                daily_spend_used_minor, preferred_vehicle, max_delivery_cost_minor, approval_threshold_minor`,
+                daily_spend_used_minor, daily_spend_date, preferred_vehicle,
+                max_delivery_cost_minor, approval_threshold_minor`,
     [userId, next.mode, next.autoPayEnabled, next.autoPayLimitMinor, next.dailySpendLimitMinor,
      next.preferredVehicle ?? null, next.maxDeliveryCostMinor ?? null, next.approvalThresholdMinor ?? null]
   );
