@@ -17,7 +17,8 @@ const migrations = [
   { id: "014_payment_refund_events", file: "014_payment_refund_events.sql" },
   { id: "015_business_agent_ai", file: "015_business_agent_ai.sql" },
   { id: "016_buy_order_operations", file: "016_buy_order_operations.sql" },
-  { id: "017_drop_off_network", file: "017_drop_off_network.sql" }
+  { id: "017_drop_off_network", file: "017_drop_off_network.sql" },
+  { id: "018_buy_order_payment_destination", file: "018_buy_order_payment_destination.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
