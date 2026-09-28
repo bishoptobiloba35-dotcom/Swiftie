@@ -325,6 +325,59 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
   return res.status(400).json({ error: "Unsupported AI action", code: "UNKNOWN_AI_ACTION" });
 });
 
+router.post("/buy-orders/:id/payment/initialize", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Buy & Deliver payments require the production database" });
+  const id = String(req.params.id ?? "").trim();
+  const customerId = identity(req);
+  const orderResult = await pool.query("SELECT id, customer_user_id, purchase_budget_minor, currency, status FROM buy_orders WHERE id=$1", [id]);
+  const order = orderResult.rows[0];
+  if (!order || order.customer_user_id !== customerId) return res.status(404).json({ error: "Buy & Deliver order not found" });
+  if (["CANCELLED", "DELIVERED", "DISPUTED"].includes(order.status)) return res.status(409).json({ error: "This order cannot accept a new payment" });
+
+  const existing = await pool.query("SELECT id, provider, provider_reference, amount_minor, currency, status, authorization_url, access_code FROM buy_order_payments WHERE buy_order_id=$1", [id]);
+  const current = existing.rows[0];
+  if (current && ["HELD", "AUTHORIZED"].includes(current.status)) return res.json({ payment: current, message: "Payment is already authorized/held" });
+  if (current?.status === "PENDING" && current.authorization_url && current.provider_reference) return res.json({ payment: current, authorizationUrl: current.authorization_url, accessCode: current.access_code });
+
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  if (process.env.PAYMENT_PROVIDER && process.env.PAYMENT_PROVIDER !== "paystack") return res.status(503).json({ error: "Buy & Deliver payment provider is not supported" });
+  if (!secret) return res.status(503).json({ error: "Paystack payment configuration is not ready" });
+  const userResult = await pool.query("SELECT email FROM users WHERE id=$1", [customerId]);
+  const email = String(userResult.rows[0]?.email ?? "").trim();
+  if (!email) return res.status(409).json({ error: "A customer email address is required before payment" });
+  const amountMinor = Number(order.purchase_budget_minor);
+  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) return res.status(409).json({ error: "Buy & Deliver payment amount is invalid" });
+
+  const reference = "sd_buy_" + id.replaceAll("-", "") + "_" + crypto.randomUUID().replaceAll("-", "");
+  const response = await fetch("https://api.paystack.co/transaction/initialize", {
+    method: "POST",
+    headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
+    body: JSON.stringify({ email, amount: String(amountMinor), currency: String(order.currency ?? "NGN"), reference, metadata: { buyOrderId: id, customerUserId: customerId, paymentScope: "BUY_AND_DELIVER_PURCHASE_BUDGET" } })
+  });
+  const payload = await response.json() as { status?: boolean; message?: string; data?: { authorization_url?: string; access_code?: string; reference?: string } };
+  if (!response.ok || !payload.status || !payload.data?.reference || !payload.data.authorization_url) return res.status(502).json({ error: payload.message ?? "Paystack payment initialization failed" });
+
+  const providerReference = payload.data.reference;
+  const paymentResult = await pool.query(
+    "INSERT INTO buy_order_payments (buy_order_id, provider, provider_reference, amount_minor, currency, status, authorization_url, access_code) VALUES ($1,'paystack',$2,$3,$4,'PENDING',$5,$6) ON CONFLICT (buy_order_id) DO UPDATE SET provider='paystack', provider_reference=EXCLUDED.provider_reference, amount_minor=EXCLUDED.amount_minor, currency=EXCLUDED.currency, status='PENDING', authorization_url=EXCLUDED.authorization_url, access_code=EXCLUDED.access_code, updated_at=now() RETURNING id, buy_order_id, provider, provider_reference, amount_minor, currency, status, authorization_url, access_code, created_at, updated_at",
+    [id, providerReference, amountMinor, String(order.currency ?? "NGN"), payload.data.authorization_url, payload.data.access_code ?? null]
+  );
+  await pool.query("UPDATE buy_orders SET payment_reference=$2, payment_status='PENDING', updated_at=now() WHERE id=$1", [id, providerReference]);
+  await pool.query("INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'PAYMENT_INITIALIZED',$3::jsonb)", [id, customerId, JSON.stringify({ provider: "paystack", reference: providerReference, amountMinor })]);
+  return res.status(201).json({ payment: paymentResult.rows[0], authorizationUrl: payload.data.authorization_url, accessCode: payload.data.access_code ?? null });
+});
+
+router.get("/buy-orders/:id/payment/status", requireAuth("CUSTOMER", "AGENT", "ADMIN"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Buy & Deliver payments require the production database" });
+  const id = String(req.params.id ?? "").trim();
+  const result = await pool.query("SELECT bop.*, bo.customer_user_id, bo.payment_status AS order_payment_status FROM buy_order_payments bop JOIN buy_orders bo ON bo.id=bop.buy_order_id WHERE bop.buy_order_id=$1", [id]);
+  if (!result.rows[0]) return res.status(404).json({ error: "Buy & Deliver payment not found" });
+  const row = result.rows[0];
+  const role = (req as any).user?.role;
+  if (role === "CUSTOMER" && row.customer_user_id !== identity(req)) return res.status(403).json({ error: "Not authorized" });
+  return res.json({ payment: row });
+});
+
 router.get("/buy-orders", requireAuth("CUSTOMER", "AGENT", "ADMIN"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Buy & Deliver requires the production database" });
   const userId = identity(req);
