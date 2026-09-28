@@ -26,9 +26,9 @@ export async function enqueueNotification(input: {
   await pool.query("BEGIN");
   try {
     const notification = await pool.query(
-      \`INSERT INTO notifications (user_id, delivery_id, title, body, type)
+      `INSERT INTO notifications (user_id, delivery_id, title, body, type)
        VALUES ($1,$2,$3,$4,$5)
-       RETURNING id\`,
+       RETURNING id`,
       [input.userId, input.deliveryId ?? null, input.title, input.body, input.type]
     );
     await pool.query(
@@ -80,7 +80,7 @@ export async function processNotificationOutbox(): Promise<void> {
   if (!pool) return;
 
   const result = await pool.query(
-    \`WITH picked AS (
+    `WITH picked AS (
        SELECT ob.id
          FROM notification_outbox ob
         WHERE ob.sent_at IS NULL
@@ -103,7 +103,7 @@ export async function processNotificationOutbox(): Promise<void> {
        FROM claimed
        JOIN notifications n ON n.id=claimed.notification_id
        LEFT JOIN device_tokens dt ON dt.user_id=n.user_id
-      GROUP BY claimed.id, n.id, n.user_id, n.title, n.body, n.type, n.delivery_id, claimed.attempts\`,
+      GROUP BY claimed.id, n.id, n.user_id, n.title, n.body, n.type, n.delivery_id, claimed.attempts`,
     []
   );
 
