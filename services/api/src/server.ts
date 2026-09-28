@@ -164,6 +164,13 @@ app.post("/api/ai/actions", requireAuth("CUSTOMER"), async (req, res) => {
       const audit = await auditAiAction({ userId, actionType: parsed.data.actionType, status: "REJECTED", amountMinor: parsed.data.amountMinor, targetType: parsed.data.targetType, targetId: parsed.data.targetId, details: { reason: payment.reason } });
       return res.status(403).json({ error: payment.reason ?? "AI action rejected", audit });
     }
+    if (!payment.requiresApproval && parsed.data.amountMinor != null) {
+      const reserved = await reserveAiSpend(userId, parsed.data.amountMinor);
+      if (!reserved) {
+        const audit = await auditAiAction({ userId, actionType: parsed.data.actionType, status: "REJECTED", amountMinor: parsed.data.amountMinor, targetType: parsed.data.targetType, targetId: parsed.data.targetId, details: { reason: "AI daily spending limit would be exceeded" } });
+        return res.status(403).json({ error: "AI daily spending limit would be exceeded", audit });
+      }
+    }
     const status = payment.requiresApproval ? "PREPARED" : "EXECUTED";
     const audit = await auditAiAction({
       userId,
@@ -172,7 +179,7 @@ app.post("/api/ai/actions", requireAuth("CUSTOMER"), async (req, res) => {
       amountMinor: parsed.data.amountMinor,
       targetType: parsed.data.targetType,
       targetId: parsed.data.targetId,
-      details: { ...parsed.data.details, requiresApproval: payment.requiresApproval, reason: payment.reason }
+      details: { ...parsed.data.details, requiresApproval: payment.requiresApproval, reason: payment.reason, spendReserved: !payment.requiresApproval && parsed.data.amountMinor != null }
     });
     return res.status(201).json({ action: audit, requiresApproval: payment.requiresApproval, reason: payment.reason });
   } catch {
