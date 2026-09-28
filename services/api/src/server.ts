@@ -428,11 +428,11 @@ app.post("/api/business/dispatch/plan/:planId/approve", requireAuth("CUSTOMER"),
   try {
     const b=await pool!.query("SELECT id FROM business_accounts WHERE owner_user_id=$1 AND status='ACTIVE' LIMIT 1",[identity(req)]);
     if(!b.rows[0]) return res.status(404).json({error:"Business profile not found"});
-    const plan=await pool!.query("SELECT * FROM business_dispatch_plans WHERE id=$1 AND business_id=$2",[req.params.planId,b.rows[0].id]);
+    const plan=await pool!.query("SELECT * FROM business_dispatch_plans WHERE id=$1 AND business_id=$2",[routeParam(req.params.planId, "planId"),b.rows[0].id]);
     if(!plan.rows[0]) return res.status(404).json({error:"Dispatch plan not found"});
     if(plan.rows[0].status!=="PREPARED") return res.status(409).json({error:"Dispatch plan is not awaiting approval"});
-    const updated=await pool!.query("UPDATE business_dispatch_plans SET status='APPROVED',approved_at=now() WHERE id=$1 RETURNING *",[req.params.planId]);
-    await auditAiAction({userId:identity(req),actionType:"BUSINESS_DISPATCH_PLAN_APPROVAL",status:"APPROVED",amountMinor:Number(plan.rows[0].estimated_total_minor),targetType:"BUSINESS_DISPATCH_PLAN",targetId:req.params.planId});
+    const updated=await pool!.query("UPDATE business_dispatch_plans SET status='APPROVED',approved_at=now() WHERE id=$1 RETURNING *",[routeParam(req.params.planId, "planId")]);
+    await auditAiAction({userId:identity(req),actionType:"BUSINESS_DISPATCH_PLAN_APPROVAL",status:"APPROVED",amountMinor:Number(plan.rows[0].estimated_total_minor),targetType:"BUSINESS_DISPATCH_PLAN",targetId:routeParam(req.params.planId, "planId")});
     return res.json({plan:updated.rows[0]});
   } catch { return res.status(500).json({error:"Unable to approve dispatch plan"}); }
 });
@@ -443,7 +443,7 @@ app.post("/api/business/dispatch/plan/:planId/execute", requireAuth("CUSTOMER"),
   try {
     const b=await pool!.query("SELECT id FROM business_accounts WHERE owner_user_id=$1 AND status='ACTIVE' LIMIT 1",[identity(req)]);
     if(!b.rows[0]) return res.status(404).json({error:"Business profile not found"});
-    const planResult=await pool!.query("SELECT * FROM business_dispatch_plans WHERE id=$1 AND business_id=$2 FOR UPDATE",[req.params.planId,b.rows[0].id]);
+    const planResult=await pool!.query("SELECT * FROM business_dispatch_plans WHERE id=$1 AND business_id=$2 FOR UPDATE",[routeParam(req.params.planId, "planId"),b.rows[0].id]);
     if(!planResult.rows[0]) return res.status(404).json({error:"Dispatch plan not found"});
     const plan=planResult.rows[0];
     if(plan.status!=="APPROVED") return res.status(409).json({error:"Dispatch plan must be approved before execution"});
