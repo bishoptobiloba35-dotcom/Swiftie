@@ -2,8 +2,6 @@ import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
@@ -16,6 +14,7 @@ import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
 import { validateProductionConfig } from "./productionConfig.js";
+import { getPrivateObject, objectStorageEnabled, putPrivateObject } from "./storage.js";
 
 const app = express();
 
@@ -747,10 +746,12 @@ app.post("/api/driver/documents/upload", requireAuth("DRIVER"), async (req, res)
   if (buffer.length === 0) return res.status(400).json({ error: "Document file is empty" });
   if (buffer.length > 10 * 1024 * 1024) return res.status(413).json({ error: "KYC document must be 10MB or smaller" });
 
+  if (!objectStorageEnabled) {
+    return res.status(503).json({ error: "Private object storage is not configured" });
+  }
   const filename = randomUUID() + "." + extension;
-  const directory = path.resolve(process.env.UPLOADS_DIR ?? "uploads", "kyc");
-  await mkdir(directory, { recursive: true });
-  await writeFile(path.join(directory, filename), buffer);
+  const contentType = extension === "pdf" ? "application/pdf" : extension === "png" ? "image/png" : "image/jpeg";
+  await putPrivateObject("kyc/" + driver.id + "/" + filename, buffer, contentType);
 
   const result = await pool!.query(
     "INSERT INTO driver_documents (driver_id, document_type, document_url) VALUES ($1,$2,$3) RETURNING id, document_type, status, created_at",
@@ -772,9 +773,15 @@ app.get("/api/driver/documents/file/:filename", requireAuth(), async (req, res) 
     if (!driver || driver.id !== row.driver_id) return res.status(403).json({ error: "Not authorized to view this document" });
   }
 
-  const filePath = path.resolve(process.env.UPLOADS_DIR ?? "uploads", "kyc", filename);
-  try { await access(filePath); } catch { return res.status(404).json({ error: "Document file not found" }); }
-  return res.sendFile(filePath);
+  if (!objectStorageEnabled) return res.status(503).json({ error: "Private object storage is not configured" });
+  try {
+    const stored = await getPrivateObject("kyc/" + row.driver_id + "/" + filename);
+    res.setHeader("content-type", stored.contentType ?? "application/octet-stream");
+    res.setHeader("cache-control", "private, no-store");
+    return res.send(stored.body);
+  } catch {
+    return res.status(404).json({ error: "Document file not found" });
+  }
 });
 
 app.post("/api/driver/documents", requireAuth("DRIVER"), async (req, res) => {
@@ -1265,15 +1272,20 @@ app.post("/api/uploads/pickup-photo", requireAuth("DRIVER"), async (req, res) =>
     return res.status(403).json({ error: "Only the assigned driver may upload a pickup photo while at pickup" });
   }
   const dataUrl = String(req.body?.image ?? "");
-  const match = dataUrl.match(/^data:image\/(jpeg|jpg|png);base64,(.+)$/);
+  const match = dataUrl.match(/^data:image\/(jpeg|jpg|png);base64,(.+)$/i);
   if (!match) return res.status(400).json({ error: "A JPEG or PNG data URL is required" });
-  const extension = match[1] === "png" ? "png" : "jpg";
+  const extension = match[1].toLowerCase() === "png" ? "png" : "jpg";
+  const contentType = extension === "png" ? "image/png" : "image/jpeg";
   const buffer = Buffer.from(match[2], "base64");
+  if (buffer.length === 0) return res.status(400).json({ error: "Image is empty" });
   if (buffer.length > 8 * 1024 * 1024) return res.status(413).json({ error: "Image is too large" });
-  const directory = path.resolve("uploads/pickups", delivery.id);
-  await mkdir(directory, { recursive: true });
-  const filename = randomUUID() + "." + extension;
-  await writeFile(path.join(directory, filename), buffer, { flag: "wx" });
+
+  if (!objectStorageEnabled) {
+    if (process.env.NODE_ENV === "production") return res.status(503).json({ error: "Private object storage is not configured" });
+    return res.status(503).json({ error: "Pickup photo storage is not configured" });
+  }
+
+  await putPrivateObject("pickups/" + delivery.id + "/photo." + extension, buffer, contentType);
   res.status(201).json({ url: "/api/deliveries/" + encodeURIComponent(delivery.id) + "/pickup-photo" });
 });
 
@@ -1283,15 +1295,12 @@ app.get("/api/deliveries/:id/pickup-photo", requireAuth("CUSTOMER", "DRIVER", "A
     ? await findDeliveryForUser(req.params.id, user.userId, user.role)
     : await getOne(req.params.id);
   if (!delivery || !delivery.pickupPhotoUrl) return res.status(404).json({ error: "Pickup photo not found" });
-  const directory = path.resolve("uploads/pickups", delivery.id);
+  if (!objectStorageEnabled) return res.status(503).json({ error: "Private object storage is not configured" });
   try {
-    const entries = await (await import("node:fs/promises")).readdir(directory);
-    const filename = entries.find(name => /^[-a-zA-Z0-9]+\.(?:jpg|png)$/.test(name));
-    if (!filename) return res.status(404).json({ error: "Pickup photo not found" });
-    const buffer = await readFile(path.join(directory, filename));
-    res.setHeader("content-type", filename.endsWith(".png") ? "image/png" : "image/jpeg");
-    res.setHeader("cache-control", "private, max-age=300");
-    return res.send(buffer);
+    const stored = await getPrivateObject("pickups/" + delivery.id + "/photo.jpg").catch(async () => getPrivateObject("pickups/" + delivery.id + "/photo.png"));
+    res.setHeader("content-type", stored.contentType ?? "image/jpeg");
+    res.setHeader("cache-control", "private, no-store");
+    return res.send(stored.body);
   } catch {
     return res.status(404).json({ error: "Pickup photo not found" });
   }
@@ -1307,15 +1316,12 @@ app.get("/api/track/:trackingCode/pickup-photo", async (req, res) => {
   if (!delivery || delivery.receiverPhone !== receiverPhone || !delivery.pickupPhotoUrl) {
     return res.status(403).json({ error: "Tracking details could not be verified" });
   }
-  const directory = path.resolve("uploads/pickups", delivery.id);
+  if (!objectStorageEnabled) return res.status(503).json({ error: "Private object storage is not configured" });
   try {
-    const entries = await (await import("node:fs/promises")).readdir(directory);
-    const filename = entries.find(name => /^[-a-zA-Z0-9]+\.(?:jpg|png)$/.test(name));
-    if (!filename) return res.status(404).json({ error: "Pickup photo not found" });
-    const buffer = await readFile(path.join(directory, filename));
-    res.setHeader("content-type", filename.endsWith(".png") ? "image/png" : "image/jpeg");
-    res.setHeader("cache-control", "private, max-age=300");
-    return res.send(buffer);
+    const stored = await getPrivateObject("pickups/" + delivery.id + "/photo.jpg").catch(async () => getPrivateObject("pickups/" + delivery.id + "/photo.png"));
+    res.setHeader("content-type", stored.contentType ?? "image/jpeg");
+    res.setHeader("cache-control", "private, no-store");
+    return res.send(stored.body);
   } catch {
     return res.status(404).json({ error: "Pickup photo not found" });
   }
