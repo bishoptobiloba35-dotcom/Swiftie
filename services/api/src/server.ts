@@ -909,7 +909,7 @@ app.post("/api/driver/documents", requireAuth("DRIVER"), async (_req, res) => {
   return res.status(410).json({
     error: "Direct document URLs are no longer accepted. Upload KYC documents through the secure document upload flow."
   });
-}
+});
 
 app.get("/api/driver/documents", requireAuth("DRIVER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
