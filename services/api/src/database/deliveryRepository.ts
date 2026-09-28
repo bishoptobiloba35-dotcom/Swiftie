@@ -147,7 +147,7 @@ export async function updatePaymentStatus(
       WHERE delivery_id=$1
         AND status = ANY($4::text[])
       RETURNING *`,
-    [deliveryId, status, providerReference ?? null, allowedFrom[status]]
+    [deliveryId, status, providerReference ?? null, allowedFrom]
   );
   return result.rows[0] ? paymentFromRow(result.rows[0]) : null;
 }
