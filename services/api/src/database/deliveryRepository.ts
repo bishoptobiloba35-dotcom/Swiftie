@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { pool } from "./db.js";
 import { hashPin, verifyPin } from "../security.js";
 import { canTransition } from "../deliveryState.js";
+import { allowedPaymentSources } from "./paymentState.js";
 
 export type PaymentRecord = {
   id: string;
@@ -126,10 +127,27 @@ export async function updatePaymentStatus(
   providerReference?: string
 ): Promise<PaymentRecord | null> {
   if (!pool) return null;
+
+  // Financial state changes must be monotonic and explicitly allowed. Webhooks can
+  // be retried, so a same-state update remains idempotent, but a terminal state
+  // must never be moved backwards by a late or forged callback.
+  const allowedFrom = allowedPaymentSources(status);
+
   const result = await pool.query(
-    `UPDATE payments SET status=$2, escrow_status=CASE WHEN $2='HELD' THEN 'HELD' WHEN $2='RELEASED' THEN 'RELEASED' WHEN $2='REFUNDED' THEN 'REFUNDED' ELSE escrow_status END, provider_reference=COALESCE($3, provider_reference), updated_at=now()
-     WHERE delivery_id=$1 RETURNING *`,
-    [deliveryId, status, providerReference ?? null]
+    `UPDATE payments
+        SET status=$2,
+            escrow_status=CASE
+              WHEN $2='HELD' THEN 'HELD'
+              WHEN $2='RELEASED' THEN 'RELEASED'
+              WHEN $2='REFUNDED' THEN 'REFUNDED'
+              ELSE escrow_status
+            END,
+            provider_reference=COALESCE($3, provider_reference),
+            updated_at=now()
+      WHERE delivery_id=$1
+        AND status = ANY($4::text[])
+      RETURNING *`,
+    [deliveryId, status, providerReference ?? null, allowedFrom]
   );
   return result.rows[0] ? paymentFromRow(result.rows[0]) : null;
 }
