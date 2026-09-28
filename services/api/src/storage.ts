@@ -1,4 +1,6 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 
 const bucket = process.env.OBJECT_STORAGE_BUCKET?.trim();
 const region = process.env.OBJECT_STORAGE_REGION?.trim();
@@ -17,12 +19,21 @@ const client = objectStorageEnabled
     })
   : null;
 
+const localRoot = path.resolve(process.env.LOCAL_PRIVATE_STORAGE_DIR ?? "uploads/private");
+
 function requireStorage(): { client: S3Client; bucket: string } {
   if (!client || !bucket) throw new Error("Private object storage is not configured");
   return { client, bucket };
 }
 
 export async function putPrivateObject(key: string, body: Buffer, contentType: string): Promise<void> {
+  if (!objectStorageEnabled) {
+    if (process.env.NODE_ENV === "production") throw new Error("Private object storage is not configured");
+    const filePath = path.join(localRoot, key);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, body);
+    return;
+  }
   const storage = requireStorage();
   await storage.client.send(new PutObjectCommand({
     Bucket: storage.bucket,
@@ -34,6 +45,16 @@ export async function putPrivateObject(key: string, body: Buffer, contentType: s
 }
 
 export async function getPrivateObject(key: string): Promise<{ body: Buffer; contentType?: string }> {
+  if (!objectStorageEnabled) {
+    if (process.env.NODE_ENV === "production") throw new Error("Private object storage is not configured");
+    const filePath = path.join(localRoot, key);
+    const body = await readFile(filePath);
+    const extension = path.extname(key).toLowerCase();
+    return {
+      body,
+      contentType: extension === ".png" ? "image/png" : extension === ".jpg" || extension === ".jpeg" ? "image/jpeg" : extension === ".pdf" ? "application/pdf" : undefined
+    };
+  }
   const storage = requireStorage();
   const response = await storage.client.send(new GetObjectCommand({ Bucket: storage.bucket, Key: key }));
   if (!response.Body) throw new Error("Stored object has no body");
