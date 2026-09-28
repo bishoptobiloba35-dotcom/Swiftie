@@ -6,6 +6,7 @@ export type DeliveryStatus =
   | "PICKED_UP"
   | "IN_TRANSIT"
   | "ARRIVED"
+  | "RESCHEDULED"
   | "DELIVERED"
   | "CANCELLED"
   | "DISPUTED";
@@ -17,7 +18,8 @@ const transitions: Record<DeliveryStatus, DeliveryStatus[]> = {
   DRIVER_AT_PICKUP: ["PICKED_UP", "CANCELLED"],
   PICKED_UP: ["IN_TRANSIT", "DISPUTED"],
   IN_TRANSIT: ["ARRIVED", "DISPUTED"],
-  ARRIVED: ["DELIVERED", "DISPUTED"],
+  ARRIVED: ["DELIVERED", "RESCHEDULED", "DISPUTED"],
+  RESCHEDULED: ["IN_TRANSIT", "CANCELLED", "DISPUTED"],
   DELIVERED: [],
   CANCELLED: [],
   DISPUTED: []
