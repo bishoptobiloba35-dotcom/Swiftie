@@ -28,7 +28,28 @@ function App(){
  async function resolveCase(deliveryId:string,resolution:"RESOLVED_REFUND"|"RESOLVED_RELEASE",amountMajor?:string){const note=prompt(resolution==="RESOLVED_REFUND"?"Refund decision / investigation note":"Release decision / investigation note")??"";if(note.trim().length<5){setError("A decision note of at least 5 characters is required.");return;}const body:any={resolution,note};if(resolution==="RESOLVED_REFUND"&&amountMajor){const amount=Number(amountMajor);if(!Number.isFinite(amount)||amount<=0){setError("Enter a valid refund amount.");return;}body.refundAmountMinor=Math.round(amount*100);}try{await call("/api/admin/deliveries/"+deliveryId+"/dispute/resolve",{method:"POST",body:JSON.stringify(body)});await openCase(deliveryId);await refresh();}catch(e){setError(e instanceof Error?e.message:"Unable to resolve case");}}
  async function approve(id:string){await call("/api/admin/drivers/"+id+"/approve",{method:"POST"});await refresh();}
  async function suspend(id:string){await call("/api/admin/drivers/"+id+"/suspend",{method:"POST"});await refresh();}
- async function reviewDocuments(driverId:string){const d=await call("/api/admin/drivers/"+driverId+"/documents");for(const doc of (d.documents??[]).filter((x:any)=>x.status==="PENDING")){if(!confirm("Review "+doc.document_type+" for "+driverId.slice(0,8)+"?"))continue;const approved=confirm("Approve this document? Cancel means reject.");const note=prompt("Review note")??"";await call("/api/admin/driver-documents/"+doc.id+"/review",{method:"POST",body:JSON.stringify({status:approved?"APPROVED":"REJECTED",note})});}await refresh();}
+ async function reviewDocuments(driverId:string){
+   const d=await call("/api/admin/drivers/"+driverId+"/documents");
+   for(const doc of (d.documents??[]).filter((x:any)=>x.status==="PENDING")){
+     const viewer=window.open("about:blank","_blank");
+     try{
+       const url=doc.document_url?.startsWith("http")?doc.document_url:API_URL+doc.document_url;
+       const response=await fetch(url,{headers:{authorization:"Bearer "+(localStorage.getItem("swiftdrop.adminToken")??"")}});
+       if(!response.ok)throw new Error("Unable to load the KYC document");
+       const blob=await response.blob();
+       const objectUrl=URL.createObjectURL(blob);
+       if(viewer)viewer.location.href=objectUrl;
+       const approved=confirm("Review "+doc.document_type+" for "+driverId.slice(0,8)+"? Approve this document? Cancel means reject.");
+       const note=prompt("Review note")??"";
+       await call("/api/admin/driver-documents/"+doc.id+"/review",{method:"POST",body:JSON.stringify({status:approved?"APPROVED":"REJECTED",note})});
+       window.setTimeout(()=>URL.revokeObjectURL(objectUrl),60000);
+     }catch(error){
+       viewer?.close();
+       setError(error instanceof Error?error.message:"Unable to load KYC document");
+     }
+   }
+   await refresh();
+ }
  async function resolveSupport(id:string,status:"RESOLVED"|"CLOSED"|"IN_REVIEW"){const note=prompt("Support resolution note");if(!note)return;await call("/api/admin/support/tickets/"+id+"/resolve",{method:"POST",body:JSON.stringify({status,note})});await refresh();}
  if(!token)return <main className="auth"><section className="panel auth-panel"><div className="brand-mark">SD</div><h1>SwiftDrop Admin</h1><p className="muted">Secure operations control center</p><input placeholder="Phone" value={phone} onChange={e=>setPhone(e.target.value)}/><input placeholder="Password" type="password" value={password} onChange={e=>setPassword(e.target.value)}/><button onClick={()=>void login()}>Sign in</button>{error&&<p className="error">{error}</p>}</section></main>;
  return <main><header className="topbar"><div><div className="eyebrow">SWIFTDROP OPERATIONS</div><h1>Control center</h1><span className="muted">Monitor deliveries, trust & safety, payments and support.</span></div><div className="top-actions"><button className="ghost" onClick={()=>void refresh()}>Refresh</button><button className="ghost" onClick={()=>{localStorage.removeItem("swiftdrop.adminToken");setToken("");}}>Sign out</button></div></header>
