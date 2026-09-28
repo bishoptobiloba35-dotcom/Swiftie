@@ -292,6 +292,12 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
       await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "DISPATCH_LIMIT_EXCEEDED" });
       return res.status(403).json({ error: "Dispatch plan exceeds the business per-order approval limit" });
     }
+    const monthlySpend = await pool!.query("SELECT COALESCE(SUM(amount_minor),0) AS total FROM business_spend_ledger WHERE business_id=$1 AND created_at >= date_trunc('month', now())", [parsed.data.businessId]);
+    const monthlyLimit = Number(member.business.monthly_spend_limit_minor);
+    if (monthlyLimit > 0 && Number(monthlySpend.rows[0]?.total ?? 0) + estimatedTotalMinor > monthlyLimit) {
+      await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "MONTHLY_SPEND_LIMIT_EXCEEDED", metadata: { businessId: parsed.data.businessId } });
+      return res.status(403).json({ error: "Dispatch plan would exceed the monthly business spending limit" });
+    }
 
     const approvalRequired = Boolean(member.business.requires_approval || member.memberRole === "DISPATCHER");
     const planResult = await pool!.query(
