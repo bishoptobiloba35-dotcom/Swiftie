@@ -131,6 +131,8 @@ const createDeliverySchema = z.object({
   isPerishable: z.boolean(),
   pickup: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   dropoff: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
+  pickupDropOffLocationId: z.string().uuid().optional(),
+  dropoffDropOffLocationId: z.string().uuid().optional(),
   quote: z.object({
     currency: z.literal("NGN"),
     distanceMeters: z.number().int().nonnegative(),
