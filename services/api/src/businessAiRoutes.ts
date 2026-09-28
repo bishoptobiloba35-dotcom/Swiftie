@@ -348,7 +348,7 @@ router.post("/buy-orders/:id/payment/initialize", requireAuth("CUSTOMER"), async
   const amountMinor = Number(order.purchase_budget_minor);
   if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) return res.status(409).json({ error: "Buy & Deliver payment amount is invalid" });
 
-  const reference = "sd_buy_" + id.replaceAll("-", "") + "_" + crypto.randomUUID().replaceAll("-", "");
+  const reference = "sd_buy_" + id.replaceAll("-", "") + "_" + crypto.crypto.randomUUID().replaceAll("-", "");
   const response = await fetch("https://api.paystack.co/transaction/initialize", {
     method: "POST",
     headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
