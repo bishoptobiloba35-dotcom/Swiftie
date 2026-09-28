@@ -1007,14 +1007,14 @@ export async function dispatchBusinessDelivery(businessId: string, deliveryId: s
     const candidate = await client.query(
       `SELECT d.id FROM deliveries d JOIN business_deliveries bd ON bd.delivery_id=d.id
         WHERE bd.business_id=$1 AND bd.delivery_id=$2 AND bd.status='READY'
-          AND d.status='PAYMENT_AUTHORIZED' AND d.driver_id IS NULL FOR UPDATE`, [businessId, deliveryId, preferredVehicle ?? null]);
+          AND d.status='PAYMENT_AUTHORIZED' AND d.driver_id IS NULL FOR UPDATE`, [businessId, deliveryId]);
     if (!candidate.rowCount) { await client.query('ROLLBACK'); return null; }
     const driver = await client.query(
       `SELECT d.id FROM drivers d WHERE d.status='APPROVED' AND d.online=true
         AND EXISTS (SELECT 1 FROM driver_documents dd WHERE dd.driver_id=d.id AND dd.status='APPROVED')
         AND ($3::text IS NULL OR UPPER(COALESCE(d.vehicle_type,''))=UPPER($3::text))
         AND NOT EXISTS (SELECT 1 FROM deliveries x WHERE x.driver_id=d.id AND x.status IN ('DRIVER_ASSIGNED','DRIVER_AT_PICKUP','PICKED_UP','IN_TRANSIT','ARRIVED'))
-       ORDER BY d.updated_at ASC NULLS FIRST LIMIT 1 FOR UPDATE SKIP LOCKED`);
+       ORDER BY d.updated_at ASC NULLS FIRST LIMIT 1 FOR UPDATE SKIP LOCKED` [businessId, deliveryId, preferredVehicle ?? null]);
     if (!driver.rowCount) { await client.query('ROLLBACK'); return null; }
     const updated = await client.query(
       `UPDATE deliveries SET driver_id=$2, status='DRIVER_ASSIGNED', updated_at=now()
