@@ -46,8 +46,28 @@ function App(){
 
 function CaseDrawer({data,close,review,release,refund}:{data:CaseDetail;close:()=>void;review:()=>void;release:()=>void;refund:(amount:string)=>void}){
  const c=data.case; const [amount,setAmount]=React.useState(String((Number(c.payment_amount_minor||c.quote_total_minor||0)/100).toFixed(2)));
+ const [photoSrc,setPhotoSrc]=React.useState("");
  const canRefund=["OPEN","UNDER_REVIEW"].includes(c.dispute_status) && c.payment_status!=="REFUNDED" && !["PROCESSING","RELEASED"].includes(c.payout_status);
- const photo=c.pickup_photo_url ? (c.pickup_photo_url.startsWith("http")?c.pickup_photo_url:API_URL+c.pickup_photo_url) : "";
+
+ React.useEffect(()=>{
+   let active=true;
+   let objectUrl="";
+   const load=async()=>{
+     if(!c.pickup_photo_url){setPhotoSrc("");return;}
+     try{
+       const url=c.pickup_photo_url.startsWith("http")?c.pickup_photo_url:API_URL+c.pickup_photo_url;
+       const response=await fetch(url,{headers:{authorization:"Bearer "+(localStorage.getItem("swiftdrop.adminToken")??"")}});
+       if(!response.ok)throw new Error("Unable to load pickup evidence");
+       const blob=await response.blob();
+       objectUrl=URL.createObjectURL(blob);
+       if(active)setPhotoSrc(objectUrl);
+     }catch{if(active)setPhotoSrc("");}
+   };
+   void load();
+   return()=>{active=false;if(objectUrl)URL.revokeObjectURL(objectUrl);};
+ },[c.pickup_photo_url]);
+
+ const photo=photoSrc;
  return <div className="modal-backdrop"><aside className="drawer"><div className="drawer-head"><div><div className="eyebrow">CASE INVESTIGATION</div><h2>{c.tracking_code}</h2><span className={statusClass(c.dispute_status)}>{String(c.dispute_status??"NO DISPUTE").replaceAll("_"," ")}</span></div><button className="ghost" onClick={close}>Close</button></div>
  <div className="drawer-scroll">
  <section className="case-grid"><div><span>Delivery</span><strong>{c.status}</strong></div><div><span>Payment</span><strong>{money(c.payment_amount_minor,c.payment_currency||"NGN")}</strong></div><div><span>Payout</span><strong>{c.payout_status??"None"}</strong></div><div><span>Refund</span><strong>{c.refund_status?c.refund_status+" · "+money(c.refund_amount_minor,c.payment_currency||"NGN"):"None"}</strong></div></section>
