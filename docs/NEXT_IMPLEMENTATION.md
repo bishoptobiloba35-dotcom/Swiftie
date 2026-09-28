@@ -38,3 +38,9 @@
 - API request IDs and structured request/error logs are enabled for operational tracing.
 - Customer and driver apps have environment-driven Expo production configuration and EAS build profiles.
 - Final legal documents remain subject to Nigerian legal/privacy review before public launch.
+
+- Paystack refund accounting now tracks cumulative refunded amounts and uses a unique refund-event record so repeated webhook deliveries cannot double-count a refund.
+- Paystack webhook duplicates are safely reprocessed instead of being discarded after an early idempotency claim; signed events remain the source of truth and downstream financial mutations are idempotent.
+- Payout transfer references are reserved before the provider request, allowing webhook reconciliation even when the initiating HTTP request times out.
+- Admin dispute release now atomically releases held escrow and creates/maintains courier payout eligibility.
+- Direct arbitrary KYC document URL submission has been disabled; drivers must use the private upload flow.
