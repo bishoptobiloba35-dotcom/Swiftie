@@ -23,7 +23,8 @@ const migrations = [
   { id: "020_business_ai_spend", file: "020_business_ai_spend.sql" },
   { id: "021_ai_basic_usage", file: "021_ai_basic_usage.sql" },
   { id: "022_shopper_buy_deliver", file: "022_shopper_buy_deliver.sql" },
-  { id: "023_agent_operations", file: "023_agent_operations.sql" }
+  { id: "023_agent_operations", file: "023_agent_operations.sql" },
+  { id: "024_business_dispatch_plans", file: "024_business_dispatch_plans.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
