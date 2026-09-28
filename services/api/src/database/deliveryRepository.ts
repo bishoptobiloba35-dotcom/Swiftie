@@ -67,22 +67,57 @@ export async function createPayment(input: {
 
 export async function markPaymentRefund(deliveryId: string, refundReference: string, refundStatus: string, refundAmountMinor: number): Promise<PaymentRecord | null> {
   if (!pool) return null;
-  const result = await pool.query(
-    `UPDATE payments
-        SET refund_reference=$2,
-            refund_status=$3,
-            refund_amount_minor=$4,
-            total_refunded_minor=CASE
-              WHEN $3='processed' THEN COALESCE(total_refunded_minor,0) + $4
-              ELSE COALESCE(total_refunded_minor,0)
-            END,
-            refund_updated_at=now(),
-            updated_at=now()
-      WHERE delivery_id=$1
-      RETURNING *`,
-    [deliveryId, refundReference, refundStatus, refundAmountMinor]
-  );
-  return result.rows[0] ? paymentFromRow(result.rows[0]) : null;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `WITH existing AS (
+         SELECT refund_status
+           FROM payment_refund_events
+          WHERE delivery_id=$1 AND refund_reference=$2
+          FOR UPDATE
+       ),
+       inserted AS (
+         INSERT INTO payment_refund_events (delivery_id, refund_reference, refund_status, amount_minor)
+         SELECT $1,$2,$3,$4
+         WHERE NOT EXISTS (SELECT 1 FROM existing)
+         RETURNING id
+       ),
+       event_updated AS (
+         UPDATE payment_refund_events
+            SET refund_status=$3, amount_minor=$4, updated_at=now()
+          WHERE delivery_id=$1 AND refund_reference=$2
+            AND EXISTS (SELECT 1 FROM existing)
+         RETURNING id
+       )
+       UPDATE payments
+          SET refund_reference=$2,
+              refund_status=$3,
+              refund_amount_minor=$4,
+              total_refunded_minor=COALESCE(total_refunded_minor,0) +
+                CASE
+                  WHEN $3='processed'
+                   AND (
+                     EXISTS (SELECT 1 FROM inserted)
+                     OR EXISTS (SELECT 1 FROM existing WHERE refund_status <> 'processed')
+                   )
+                  THEN $4
+                  ELSE 0
+                END,
+              refund_updated_at=now(),
+              updated_at=now()
+        WHERE delivery_id=$1
+        RETURNING *`,
+      [deliveryId, refundReference || "unknown", refundStatus, refundAmountMinor]
+    );
+    await client.query('COMMIT');
+    return result.rows[0] ? paymentFromRow(result.rows[0]) : null;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function updatePaymentStatus(
