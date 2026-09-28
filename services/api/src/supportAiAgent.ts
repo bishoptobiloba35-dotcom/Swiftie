@@ -3,6 +3,7 @@ import {
   listOpenSupportAiTickets,
   recordSupportAiAction,
   notifyAdminsOfSupportAiAction,
+  notifySupportUserOfAiAction,
   resolveSupportTicket
 } from "./database/deliveryRepository.js";
 
@@ -108,10 +109,24 @@ export async function processSupportAiBatch(limit = 10): Promise<void> {
       );
       if (action) {
         await notifyAdminsOfSupportAiAction(ticket.id, action.id, decision.action, decision.response);
+        await notifySupportUserOfAiAction(ticket.id, action.id, decision.action, decision.response);
       }
     } catch (error) {
       console.error("Support AI ticket processing failed:", error);
-      await resolveSupportTicket(ticket.id, "IN_REVIEW", "Support AI could not safely process this request; human review required.");
+      const response = "Support AI could not safely process this request; human review is required.";
+      const action = await recordSupportAiAction(
+        ticket.id,
+        "ESCALATE_TO_HUMAN",
+        "ESCALATED",
+        "Support AI processing failed safely; human review is required.",
+        response
+      );
+      if (action) {
+        await notifyAdminsOfSupportAiAction(ticket.id, action.id, "ESCALATED", response);
+        await notifySupportUserOfAiAction(ticket.id, action.id, "ESCALATED", response);
+      } else {
+        await resolveSupportTicket(ticket.id, "IN_REVIEW", response);
+      }
     }
   }
 }
