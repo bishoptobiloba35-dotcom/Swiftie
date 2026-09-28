@@ -29,3 +29,12 @@
 3. Finish mobile app-store production configuration, privacy disclosures, terms/acceptable-use flows, notification credentials, and release builds; legal text should receive Nigerian counsel/privacy review before launch.
 5. Commit a reproducible npm lockfile and restore locked installs/caching in CI once dependency resolution is stable.
 6. After CI is verified green, enable branch protection with required production CI checks.
+
+
+## Latest production hardening
+- CI workflow is green across API tests and all workspace builds.
+- Production API now requires private object storage configuration and validates private object keys on read/write.
+- Notification delivery uses a durable outbox, retry backoff, Expo push tickets and receipt reconciliation.
+- API request IDs and structured request/error logs are enabled for operational tracing.
+- Customer and driver apps have environment-driven Expo production configuration and EAS build profiles.
+- Final legal documents remain subject to Nigerian legal/privacy review before public launch.
