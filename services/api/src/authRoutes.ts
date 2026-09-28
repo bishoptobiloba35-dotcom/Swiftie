@@ -5,6 +5,29 @@ import { hashPassword, verifyPassword } from "./security.js";
 import { pool } from "./database/db.js";
 
 const router = Router();
+
+const authAttempts = new Map<string, { count: number; resetAt: number }>();
+function rateLimitAuth(req: any, res: any, next: any, limit: number) {
+  const key = String(req.ip ?? req.socket?.remoteAddress ?? "unknown");
+  const now = Date.now();
+  const current = authAttempts.get(key);
+  if (!current || current.resetAt <= now) {
+    authAttempts.set(key, { count: 1, resetAt: now + 60_000 });
+    return next();
+  }
+  if (current.count >= limit) {
+    res.setHeader("Retry-After", Math.ceil((current.resetAt - now) / 1000));
+    return res.status(429).json({ error: "Too many authentication attempts. Please try again shortly." });
+  }
+  current.count += 1;
+  return next();
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of authAttempts) if (value.resetAt <= now) authAttempts.delete(key);
+}, 5 * 60_000).unref();
+
 const schema = z.object({
   userId: z.string().uuid(),
   role: z.enum(["CUSTOMER", "DRIVER", "ADMIN"])
@@ -20,7 +43,7 @@ const registrationSchema = z.object({
   role: z.enum(["CUSTOMER", "DRIVER"]).default("CUSTOMER")
 });
 
-router.post("/register", async (req, res) => {
+router.post("/register", rateLimitAuth, (req, res, next) => { rateLimitAuth(req,res,next,5); }, async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const parsed = registrationSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -50,7 +73,7 @@ const loginSchema = z.object({
   password: z.string().min(8).max(128)
 });
 
-router.post("/login", async (req, res) => {
+router.post("/login", rateLimitAuth, (req, res, next) => { rateLimitAuth(req,res,next,10); }, async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid login details" });
