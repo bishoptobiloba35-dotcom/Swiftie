@@ -520,6 +520,42 @@ export async function recordAdminSupportMessage(ticketId: string, adminUserId: s
   );
 }
 
+export async function recordAdminSupportReply(
+  ticketId: string,
+  adminUserId: string,
+  response: string
+): Promise<SupportTicketRecord | null> {
+  if (!pool) return null;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `UPDATE support_tickets
+          SET status='IN_REVIEW', resolution_note=$2, updated_at=now()
+        WHERE id=$1 AND status IN ('OPEN','IN_REVIEW')
+        RETURNING *`,
+      [ticketId, response]
+    );
+    const ticket = result.rows[0];
+    if (!ticket) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    await client.query(
+      `INSERT INTO support_ticket_messages (ticket_id, sender_type, sender_user_id, message)
+       VALUES ($1,'ADMIN',$2,$3)`,
+      [ticketId, adminUserId, response]
+    );
+    await client.query("COMMIT");
+    return rowToSupportTicket(ticket);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function listSupportTickets(userId?: string): Promise<SupportTicketRecord[]> {
   if (!pool) return [];
   const result = await pool.query(
