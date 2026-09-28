@@ -3,17 +3,18 @@ on:
   push:
     branches: [main]
   pull_request:
-  
+
 jobs:
   typecheck:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        project: [shared, api, admin]
+        project: [shared, api, admin, customer, driver]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
       - run: npm install --ignore-scripts
       - run: npm run build --workspace=@swiftdrop/${{ matrix.project }}
