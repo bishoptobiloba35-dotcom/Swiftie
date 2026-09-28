@@ -16,4 +16,6 @@ test("payment state transitions reject backwards or terminal rollback", () => {
   assert.equal(canTransitionPaymentStatus("RELEASED", "AUTHORIZED"), false);
   assert.equal(canTransitionPaymentStatus("REFUNDED", "HELD"), false);
   assert.equal(canTransitionPaymentStatus("FAILED", "HELD"), false);
+  assert.equal(canTransitionPaymentStatus("RELEASED", "REFUNDED"), true);
+  assert.equal(canTransitionPaymentStatus("FAILED", "FAILED"), true);
 });
