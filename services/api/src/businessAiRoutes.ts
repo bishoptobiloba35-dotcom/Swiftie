@@ -433,7 +433,7 @@ router.post("/drop-off/parcels", requireAuth("CUSTOMER","AGENT","ADMIN"), async(
   res.status(201).json({parcel:parcel.rows[0]});
 });
 
-router.post("/drop-off/parcels/:id/intake", requireAuth("AGENT","ADMIN"), async(req,res)=>{
+router.post("/drop-off/parcels/:id/intake", requireAuth("CUSTOMER","AGENT","ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const parsed=z.object({intakeCode:z.string().min(6).max(20),storageReference:z.string().max(120).optional()}).safeParse(req.body);
   if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
