@@ -433,6 +433,104 @@ export async function findDispute(deliveryId: string): Promise<DisputeRecord | n
   return result.rows[0] ? rowToDispute(result.rows[0]) : null;
 }
 
+export async function releaseDisputeAndCreatePayout(
+  deliveryId: string,
+  payoutPercent: number,
+  note: string
+): Promise<{ dispute: DisputeRecord; payout: PayoutRecord | null; payment: PaymentRecord } | null> {
+  if (!pool) return null;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const disputeResult = await client.query(
+      `SELECT * FROM disputes
+        WHERE delivery_id=$1 AND status IN ('OPEN','UNDER_REVIEW')
+        FOR UPDATE`,
+      [deliveryId]
+    );
+    const disputeRow = disputeResult.rows[0];
+    if (!disputeRow) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    const paymentResult = await client.query(
+      `SELECT p.*, d.driver_id
+         FROM payments p
+         JOIN deliveries d ON d.id=p.delivery_id
+        WHERE p.delivery_id=$1
+        FOR UPDATE`,
+      [deliveryId]
+    );
+    const paymentRow = paymentResult.rows[0];
+    if (!paymentRow || !['HELD','RELEASED'].includes(paymentRow.status) || !paymentRow.driver_id) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    const payoutResult = await client.query(
+      `SELECT * FROM payouts WHERE delivery_id=$1 FOR UPDATE`,
+      [deliveryId]
+    );
+    const existingPayout = payoutResult.rows[0] ?? null;
+    const payoutAmountMinor = Math.max(
+      0,
+      Math.floor(Number(paymentRow.amount_minor) * Math.min(100, Math.max(0, payoutPercent)) / 100)
+    );
+
+    let payoutRow = existingPayout;
+    if (payoutAmountMinor > 0 && (!existingPayout || ['PENDING','ELIGIBLE'].includes(existingPayout.status))) {
+      const created = await client.query(
+        `INSERT INTO payouts (delivery_id, driver_id, amount_minor, currency, status)
+         VALUES ($1,$2,$3,$4,'ELIGIBLE')
+         ON CONFLICT (delivery_id) DO UPDATE
+           SET driver_id=EXCLUDED.driver_id,
+               amount_minor=EXCLUDED.amount_minor,
+               currency=EXCLUDED.currency,
+               status=CASE WHEN payouts.status IN ('PENDING','ELIGIBLE') THEN 'ELIGIBLE' ELSE payouts.status END,
+               updated_at=now()
+         RETURNING *`,
+        [deliveryId, paymentRow.driver_id, payoutAmountMinor, paymentRow.currency ?? 'NGN']
+      );
+      payoutRow = created.rows[0] ?? existingPayout;
+    }
+
+    if (paymentRow.status === 'HELD') {
+      await client.query(
+        `UPDATE payments
+            SET status='RELEASED', escrow_status='RELEASED', updated_at=now()
+          WHERE delivery_id=$1 AND status='HELD'`,
+        [deliveryId]
+      );
+    }
+
+    const resolved = await client.query(
+      `UPDATE disputes
+          SET status='RESOLVED_RELEASE', resolution_note=$2, updated_at=now()
+        WHERE delivery_id=$1 AND status IN ('OPEN','UNDER_REVIEW')
+        RETURNING *`,
+      [deliveryId, note]
+    );
+    if (!resolved.rows[0]) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    await client.query('COMMIT');
+    const paymentAfter = await pool.query('SELECT * FROM payments WHERE delivery_id=$1', [deliveryId]);
+    return {
+      dispute: rowToDispute(resolved.rows[0]),
+      payout: payoutRow ? rowToPayout(payoutRow) : null,
+      payment: paymentFromRow(paymentAfter.rows[0])
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function resolveDispute(deliveryId: string, status: "RESOLVED_REFUND" | "RESOLVED_RELEASE", note: string): Promise<DisputeRecord | null> {
   if (!pool) return null;
   const result = await pool.query(
