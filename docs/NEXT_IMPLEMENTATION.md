@@ -12,6 +12,12 @@
 - Paystack webhook verification uses the exact raw request body and constant-time signature comparison.
 - Payment initialization now uses the same `PAYSTACK_SECRET_KEY` configuration used by Paystack webhooks and transfers.
 - Notification records now use a database-backed outbox with retry/backoff and Expo push delivery; invalid device tokens are removed.
+- Expo push ticket IDs and provider receipts are now persisted and reconciled by a background worker, including invalid-token cleanup from receipt errors.
+- Private storage keys reject traversal and absolute paths.
+- Delivery transitions now use a central state machine and database transitions verify driver ownership atomically.
+- API requests now receive a unique `x-request-id`, with structured request/error logs that avoid request bodies and credentials.
+- Customer and driver Expo configuration now uses environment-driven dynamic configs with production bundle/package identifiers and EAS build profiles.
+- CI run #277 passed all workspace builds and API tests after the production-hardening changes.
 - CI is a genuine quality gate: workspace builds and API tests must pass; failures are fixed at source/configuration level rather than suppressed.
 - The API test job does not depend on an npm lockfile cache until a reproducible lockfile is committed.
 - The latest CI source repairs corrected the driver earnings-style reference and customer tracking destination coordinates to use the nested `dropoff.location` model.
@@ -19,8 +25,7 @@
 ## Remaining production milestones
 
 1. Add automated database integration coverage for every delivery-state transition, receiver PIN completion, escrow release, disputes, support, payout webhooks, notification outbox, and object-storage authorization.
-2. Add Expo push receipt polling and durable receipt/error records so provider-level delivery failures are reconciled after push tickets are issued.
-3. Add production observability: structured request IDs, error tracking, metrics, alerting, and operational dashboards.
-4. Finish mobile app-store production configuration, privacy disclosures, terms/acceptable-use flows, notification credentials, and release builds.
+2. Add external error tracking, metrics, alerting, and operational dashboards on top of the request-ID logging foundation.
+3. Finish mobile app-store production configuration, privacy disclosures, terms/acceptable-use flows, notification credentials, and release builds; legal text should receive Nigerian counsel/privacy review before launch.
 5. Commit a reproducible npm lockfile and restore locked installs/caching in CI once dependency resolution is stable.
 6. After CI is verified green, enable branch protection with required production CI checks.
