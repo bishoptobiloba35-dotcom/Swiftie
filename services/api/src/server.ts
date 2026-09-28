@@ -63,6 +63,31 @@ app.use((req, res, next) => {
 });
 app.use("/api/auth", authRoutes);
 
+async function hasIndividualPremium(userId: string): Promise<boolean> {
+  if (!pool) return false;
+  const result = await pool.query(
+    `INSERT INTO user_plans (user_id) VALUES ($1)
+     ON CONFLICT (user_id) DO NOTHING
+     RETURNING individual_plan`,
+    [userId]
+  );
+  if (result.rows[0]) return result.rows[0].individual_plan === "PREMIUM";
+  const current = await pool.query("SELECT individual_plan FROM user_plans WHERE user_id=$1", [userId]);
+  return current.rows[0]?.individual_plan === "PREMIUM";
+}
+
+async function hasBusinessPremium(userId: string): Promise<boolean> {
+  if (!pool) return false;
+  const result = await pool.query(
+    `SELECT up.business_plan
+       FROM user_plans up
+      WHERE up.user_id=$1
+        AND up.business_plan='PREMIUM'`,
+    [userId]
+  );
+  return result.rows.length > 0;
+}
+
 app.get("/api/me/product-profile", requireAuth("CUSTOMER", "DRIVER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Product profile requires the production database" });
   const userId = identity(req);
@@ -85,6 +110,7 @@ app.get("/api/me/product-profile", requireAuth("CUSTOMER", "DRIVER"), async (req
 
 app.get("/api/ai/permissions", requireAuth("CUSTOMER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "AI permissions require the production database" });
+  if (!await hasIndividualPremium(identity(req))) return res.status(403).json({ error: "Individual Premium is required for Swift AI" });
   try {
     return res.json({ permissions: await getAiPermission(identity(req)) });
   } catch {
@@ -94,6 +120,7 @@ app.get("/api/ai/permissions", requireAuth("CUSTOMER"), async (req, res) => {
 
 app.patch("/api/ai/permissions", requireAuth("CUSTOMER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "AI permissions require the production database" });
+  if (!await hasIndividualPremium(identity(req))) return res.status(403).json({ error: "Individual Premium is required for Swift AI" });
   const parsed = z.object({
     mode: z.enum(["ASSIST", "AUTHORIZED", "AUTONOMOUS"]).optional(),
     autoPayEnabled: z.boolean().optional(),
@@ -118,6 +145,7 @@ app.patch("/api/ai/permissions", requireAuth("CUSTOMER"), async (req, res) => {
 
 app.post("/api/ai/actions", requireAuth("CUSTOMER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "AI actions require the production database" });
+  if (!await hasIndividualPremium(identity(req))) return res.status(403).json({ error: "Individual Premium is required for Swift AI" });
   const parsed = z.object({
     actionType: z.string().trim().min(2).max(80),
     amountMinor: z.number().int().positive().max(500_000_000).optional(),
@@ -154,6 +182,7 @@ app.post("/api/ai/actions", requireAuth("CUSTOMER"), async (req, res) => {
 
 app.get("/api/ai/activity", requireAuth("CUSTOMER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "AI activity requires the production database" });
+  if (!await hasIndividualPremium(identity(req))) return res.status(403).json({ error: "Individual Premium is required for Swift AI" });
   const result = await pool!.query(
     `SELECT id, action_type, status, amount_minor, currency, target_type, target_id, details, created_at
        FROM ai_action_audit WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100`,
@@ -182,6 +211,7 @@ app.post("/api/business", requireAuth("CUSTOMER"), async (req, res) => {
 
 app.get("/api/business/ai-rules", requireAuth("CUSTOMER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Business AI requires the production database" });
+  if (!await hasBusinessPremium(identity(req))) return res.status(403).json({ error: "Business Premium is required for Business AI" });
   const business = await pool!.query(`SELECT id FROM business_accounts WHERE owner_user_id=$1 LIMIT 1`, [identity(req)]);
   if (!business.rows[0]) return res.status(404).json({ error: "Business account not found" });
   const rules = await pool!.query(`SELECT * FROM business_ai_rules WHERE business_id=$1`, [business.rows[0].id]);
@@ -190,6 +220,7 @@ app.get("/api/business/ai-rules", requireAuth("CUSTOMER"), async (req, res) => {
 
 app.patch("/api/business/ai-rules", requireAuth("CUSTOMER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Business AI requires the production database" });
+  if (!await hasBusinessPremium(identity(req))) return res.status(403).json({ error: "Business Premium is required for Business AI" });
   const parsed = z.object({
     autoDispatchEnabled: z.boolean().optional(),
     weekdaySchedule: z.string().trim().max(100).nullable().optional(),
