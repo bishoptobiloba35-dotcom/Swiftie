@@ -488,5 +488,16 @@ const styles = StyleSheet.create({
   notificationTitle: { fontWeight: "900", color: "#16221B" },
   ratingBox: { borderTopWidth: 1, borderTopColor: "#E7ECE8", paddingTop: 12, marginTop: 8, gap: 10 },
   starRow: { flexDirection: "row", gap: 8 },
-  star: { fontSize: 34, color: "#F2A93B" }
+  star: { fontSize: 34, color: "#F2A93B" },
+  reviewRow: { flexDirection: "row", gap: 8 },
+  reviewButton: { flex: 1, borderRadius: 14, paddingVertical: 15, alignItems: "center" },
+  reviewButtonText: { color: "#FFFFFF", fontWeight: "900" },
+  reviewBad: { backgroundColor: "#C53B3B" },
+  reviewFair: { backgroundColor: "#D4A62A" },
+  reviewExcellent: { backgroundColor: "#178A52" },
+  dangerButton: { backgroundColor: "#C53B3B", borderRadius: 14, padding: 15, alignItems: "center" },
+  supportChoice: { flex: 1, borderWidth: 1, borderColor: "#D9E0DB", borderRadius: 12, padding: 13, alignItems: "center", backgroundColor: "#FFFFFF" },
+  supportChoiceActive: { borderColor: "#178A52", backgroundColor: "#EAF5EF" },
+  supportChoiceText: { fontWeight: "800", color: "#123D2A" },
+  multiline: { minHeight: 110, textAlignVertical: "top" },
 });
