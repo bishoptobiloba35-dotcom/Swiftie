@@ -15,6 +15,7 @@ import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
 import { validateProductionConfig } from "./productionConfig.js";
 import { getPrivateObject, objectStorageEnabled, putPrivateObject } from "./storage.js";
+import { enqueueNotification, processNotificationOutbox } from "./notificationOutbox.js";
 
 const app = express();
 
@@ -48,7 +49,7 @@ const locationRateLimit = new Map<string, number>();
 const LOCATION_MIN_INTERVAL_MS = 3000;
 const notificationForDelivery = async (deliveryId: string, userId: string, title: string, body: string, type: string) => {
   if (!databaseEnabled()) return;
-  await pool!.query("INSERT INTO notifications (user_id, delivery_id, title, body, type) VALUES ($1,$2,$3,$4,$5)", [userId, deliveryId, title, body, type]);
+  await enqueueNotification({ deliveryId, userId, title, body, type });
 };
 
 
@@ -1457,7 +1458,14 @@ const port = Number(process.env.API_PORT || 4000);
 
 async function startServer() {
   validateProductionConfig();
-  if (databaseEnabled()) await runMigrations();
+  if (databaseEnabled()) {
+    await runMigrations();
+    void processNotificationOutbox().catch(() => {});
+    const notificationWorker = setInterval(() => {
+      void processNotificationOutbox().catch(() => {});
+    }, 5000);
+    notificationWorker.unref();
+  }
   httpServer.listen(port, () => console.log(`SwiftDrop API listening on port ${port}`));
 }
 
