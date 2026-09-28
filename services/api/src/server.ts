@@ -1655,6 +1655,10 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
         [locked.delivery_id]
       );
       await client.query(
+        "INSERT INTO buy_order_settlements (buy_order_id,agent_id,amount_minor,currency,status) VALUES ($1,$2,$3,$4,'PENDING') ON CONFLICT (buy_order_id) DO NOTHING",
+        [locked.id, locked.agent_id, Number(locked.actual_purchase_minor ?? 0), locked.currency ?? "NGN"]
+      );
+      await client.query(
         "UPDATE buy_order_payments SET status='RELEASED', updated_at=now() WHERE buy_order_id=$1 AND status='HELD'",
         [locked.id]
       );
