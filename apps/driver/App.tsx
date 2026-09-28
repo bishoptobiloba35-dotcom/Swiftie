@@ -405,7 +405,7 @@ export default function App() {
   async function confirmPickup() {
     if (!job || !photoUrl) return;
     try {
-      const upload = await driverApi("/api/uploads/pickup-photo", { image: photoUrl });
+      const upload = await driverApi("/api/uploads/pickup-photo", { deliveryId: job.id, image: photoUrl });
       const data = await driverApi("/api/deliveries/" + job.id + "/pickup", { pickupPhotoUrl: upload.url });
       setJob(data); setStatus(data.status); setPhotoUrl("");
     } catch (error) {
