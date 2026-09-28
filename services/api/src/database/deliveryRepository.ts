@@ -963,6 +963,69 @@ export async function listDeliveryAttempts(deliveryId: string) {
   return result.rows.map(row => ({ ...row, createdAt: new Date(row.createdAt).toISOString() }));
 }
 
+
+export type BusinessDispatchItem = { delivery: StoredDelivery; status: string; priority: number; scheduledFor?: string };
+
+export async function createBusinessAccount(ownerUserId: string, name: string): Promise<{ id: string; name: string; status: string } | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `INSERT INTO business_accounts (owner_user_id, name) VALUES ($1,$2)
+     ON CONFLICT (owner_user_id) DO UPDATE SET name=EXCLUDED.name, updated_at=now()
+     RETURNING id, name, status`, [ownerUserId, name]);
+  return result.rows[0] ?? null;
+}
+
+export async function attachDeliveryToBusiness(businessId: string, deliveryId: string, priority = 0, scheduledFor?: string): Promise<BusinessDispatchItem | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `INSERT INTO business_deliveries (business_id, delivery_id, priority, scheduled_for)
+     SELECT $1,$2,$3,$4 WHERE EXISTS (SELECT 1 FROM deliveries WHERE id=$2)
+     ON CONFLICT (delivery_id) DO UPDATE SET priority=EXCLUDED.priority, scheduled_for=EXCLUDED.scheduled_for, updated_at=now()
+     RETURNING delivery_id, status, priority, scheduled_for`, [businessId, deliveryId, priority, scheduledFor ?? null]);
+  if (!result.rows[0]) return null;
+  const delivery = await findDelivery(deliveryId);
+  return delivery ? { delivery, status: result.rows[0].status, priority: Number(result.rows[0].priority), scheduledFor: result.rows[0].scheduled_for ? new Date(result.rows[0].scheduled_for).toISOString() : undefined } : null;
+}
+
+export async function listBusinessReadyDeliveries(businessId: string): Promise<BusinessDispatchItem[]> {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT bd.delivery_id, bd.status AS business_status, bd.priority, bd.scheduled_for, d.*
+       FROM business_deliveries bd JOIN deliveries d ON d.id=bd.delivery_id
+      WHERE bd.business_id=$1 AND bd.status='READY'
+        AND (bd.scheduled_for IS NULL OR bd.scheduled_for <= now())
+        AND d.status='PAYMENT_AUTHORIZED' AND d.driver_id IS NULL
+      ORDER BY bd.priority DESC, bd.created_at ASC`, [businessId]);
+  return result.rows.map(row => ({ delivery: rowToDelivery(row), status: row.business_status, priority: Number(row.priority), scheduledFor: row.scheduled_for ? new Date(row.scheduled_for).toISOString() : undefined }));
+}
+
+export async function dispatchBusinessDelivery(businessId: string, deliveryId: string): Promise<StoredDelivery | null> {
+  if (!pool) return null;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const candidate = await client.query(
+      `SELECT d.id FROM deliveries d JOIN business_deliveries bd ON bd.delivery_id=d.id
+        WHERE bd.business_id=$1 AND bd.delivery_id=$2 AND bd.status='READY'
+          AND d.status='PAYMENT_AUTHORIZED' AND d.driver_id IS NULL FOR UPDATE`, [businessId, deliveryId]);
+    if (!candidate.rowCount) { await client.query('ROLLBACK'); return null; }
+    const driver = await client.query(
+      `SELECT d.id FROM drivers d WHERE d.status='APPROVED' AND d.online=true
+        AND EXISTS (SELECT 1 FROM driver_documents dd WHERE dd.driver_id=d.id AND dd.status='APPROVED')
+        AND NOT EXISTS (SELECT 1 FROM deliveries x WHERE x.driver_id=d.id AND x.status IN ('DRIVER_ASSIGNED','DRIVER_AT_PICKUP','PICKED_UP','IN_TRANSIT','ARRIVED'))
+       ORDER BY d.updated_at ASC NULLS FIRST LIMIT 1 FOR UPDATE SKIP LOCKED`);
+    if (!driver.rowCount) { await client.query('ROLLBACK'); return null; }
+    const updated = await client.query(
+      `UPDATE deliveries SET driver_id=$2, status='DRIVER_ASSIGNED', updated_at=now()
+        WHERE id=$1 AND driver_id IS NULL AND status='PAYMENT_AUTHORIZED' RETURNING *`, [deliveryId, driver.rows[0].id]);
+    if (!updated.rowCount) { await client.query('ROLLBACK'); return null; }
+    await client.query(`UPDATE business_deliveries SET status='DISPATCHED', updated_at=now() WHERE business_id=$1 AND delivery_id=$2`, [businessId, deliveryId]);
+    await client.query(`INSERT INTO business_dispatch_audit (business_id, delivery_id, action, status, details) VALUES ($1,$2,'DISPATCH','EXECUTED',$3::jsonb)`, [businessId, deliveryId, JSON.stringify({ driverId: driver.rows[0].id })]);
+    await client.query('COMMIT');
+    return rowToDelivery(updated.rows[0]);
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
 export async function assignNextDeliveryToDriver(driverId: string): Promise<StoredDelivery | null> {
   if (!pool) return null;
   const verified = await pool.query(
