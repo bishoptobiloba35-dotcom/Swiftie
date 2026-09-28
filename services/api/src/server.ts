@@ -19,6 +19,9 @@ import { ensureAiDefaults, getAiPermission, updateAiPermission, auditAiAction, e
 import { executeAiAction } from "./aiExecutor.js";
 import { getPrivateObject, objectStorageEnabled, putPrivateObject } from "./storage.js";
 import { enqueueNotification, processNotificationOutbox, processNotificationPushReceipts } from "./notificationOutbox.js";
+import businessAiRoutes from "./businessAiRoutes.js";
+import agentRoutes from "./agentRoutes.js";
+import { processSupportAiBatch } from "./supportAiAgent.js";
 import { createShoppingTask, addShoppingItem, listShoppingItems, findShoppingTaskForUser, listCustomerShoppingTasks, applyAsShopper, getShopperForUser, assignShoppingTask, authorizeShoppingTask, updateShoppingItem, recordShoppingEvidence, setShoppingActual, approveShoppingOverage, reconcileShoppingTask, completeShoppingTask } from "./database/shopperRepository.js";
 import { approveAgentApplication, getAgentForUser, listAgents, createAgentShipment, updateAgentShipment, addAgentEvidence, listAgentShipments } from "./database/agentRepository.js";
 
@@ -65,6 +68,8 @@ app.use((req, res, next) => {
   next();
 });
 app.use("/api/auth", authRoutes);
+app.use("/api", businessAiRoutes);
+app.use("/api", agentRoutes);
 
 async function hasIndividualPremium(userId: string): Promise<boolean> {
   if (!pool) return false;
@@ -2395,6 +2400,8 @@ async function startServer() {
     await runMigrations();
     void processNotificationOutbox().catch(() => {});
     void processNotificationPushReceipts().catch(() => {});
+    void processSupportAiBatch().catch(() => {});
+    const supportAiWorker = setInterval(() => { void processSupportAiBatch().catch(() => {}); }, 5000);
     const notificationWorker = setInterval(() => {
       void processNotificationOutbox().catch(() => {});
     }, 5000);
@@ -2402,6 +2409,7 @@ async function startServer() {
       void processNotificationPushReceipts().catch(() => {});
     }, 60_000);
     notificationWorker.unref();
+    supportAiWorker.unref();
     notificationReceiptWorker.unref();
   }
   httpServer.listen(port, () => console.log(`SwiftDrop API listening on port ${port}`));
