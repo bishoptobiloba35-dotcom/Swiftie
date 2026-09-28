@@ -15,7 +15,7 @@ type Capability = "INFORMATION" | "ACTION";
 
 async function currentPlan(userId: string): Promise<Plan> {
   if (!pool) return "BASIC";
-  const result = await pool.query("SELECT ai_plan FROM users WHERE id=$1", [userId]);
+  const result = await pool.query("SELECT COALESCE(up.individual_plan,u.ai_plan,'BASIC') AS ai_plan FROM users u LEFT JOIN user_plans up ON up.user_id=u.id WHERE u.id=$1", [userId]);
   return result.rows[0]?.ai_plan === "PREMIUM" ? "PREMIUM" : "BASIC";
 }
 
