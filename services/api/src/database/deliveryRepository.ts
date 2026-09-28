@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { pool } from "./db.js";
 import { hashPin, verifyPin } from "../security.js";
 import { canTransition } from "../deliveryState.js";
+import { allowedPaymentSources } from "./paymentState.js";
 
 export type PaymentRecord = {
   id: string;
