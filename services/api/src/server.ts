@@ -680,6 +680,9 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
         const refundStatus=String(event.event).replace("refund.","");
         const refundReference=String(event?.data?.refund_reference??event?.data?.id??"");
         const amountMinor=Number(event?.data?.amount??0);
+        if(!Number.isSafeInteger(amountMinor)||amountMinor<0){
+          return res.status(200).json({received:true});
+        }
         if(refundStatus==="processed"){
           await pool!.query(
             "UPDATE buy_order_payments SET refund_status='PROCESSED',refund_reference=COALESCE(refund_reference,$2),refund_amount_minor=$3,total_refunded_minor=total_refunded_minor+$3,status=CASE WHEN total_refunded_minor+$3>=amount_minor THEN 'REFUNDED' ELSE status END,updated_at=now() WHERE id=$1",
