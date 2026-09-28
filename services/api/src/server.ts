@@ -1026,7 +1026,7 @@ app.get("/api/admin/users", requireAuth("ADMIN"), async (req, res) => {
   const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 50)));
   const search = String(req.query.search ?? "").trim();
   const result = await pool!.query(
-    `SELECT u.id, u.role, u.full_name, u.phone, u.email, u.created_at,
+    `SELECT u.id, u.role, u.full_name, u.phone, u.email, u.ai_plan, u.created_at,
             d.id AS driver_id, d.status AS driver_status, d.online AS driver_online
        FROM users u
        LEFT JOIN drivers d ON d.user_id=u.id
