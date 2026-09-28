@@ -550,9 +550,25 @@ router.get("/admin/drop-off/applications", requireAuth("ADMIN"), async(_req,res)
 router.post("/admin/drop-off/locations/:id/review", requireAuth("ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const parsed=z.object({status:z.enum(["ACTIVE","SUSPENDED","REJECTED","PENDING"]),note:z.string().max(1000).optional()}).safeParse(req.body);if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
-  const locationId=String(req.params.id),current=await pool.query("SELECT * FROM drop_off_locations WHERE id=$1",[locationId]);if(!current.rows[0])return res.status(404).json({error:"Location not found"});
+  const locationId=String(req.params.id);
+  const current=await pool.query("SELECT dl.*,ba.status AS business_status FROM drop_off_locations dl JOIN business_accounts ba ON ba.id=dl.business_id WHERE dl.id=$1",[locationId]);
+  if(!current.rows[0])return res.status(404).json({error:"Location not found"});
   const verified=parsed.data.status==="ACTIVE",client=await pool.connect();
-  try{await client.query("BEGIN");const updated=await client.query("UPDATE drop_off_locations SET status=$2,verification_status=$3,verified_by_user_id=CASE WHEN $3='VERIFIED' THEN $4 ELSE verified_by_user_id END,verified_at=CASE WHEN $3='VERIFIED' THEN now() ELSE verified_at END,updated_at=now() WHERE id=$1 RETURNING *",[locationId,parsed.data.status,verified?"VERIFIED":"REJECTED",identity(req)]);await client.query("UPDATE drop_off_location_documents SET status=$2,updated_at=now() WHERE location_id=$1 AND status='PENDING'",[locationId,verified?"APPROVED":"REJECTED"]);await client.query("INSERT INTO drop_off_application_audit(location_id,actor_user_id,old_status,new_status,note) VALUES($1,$2,$3,$4,$5)",[locationId,identity(req),current.rows[0].status,parsed.data.status,parsed.data.note??null]);await client.query("COMMIT");res.json({location:updated.rows[0]});}catch(e){await client.query("ROLLBACK");throw e}finally{client.release();}
+  try{
+    await client.query("BEGIN");
+    if(verified){
+      if(current.rows[0].business_status!=="ACTIVE"){await client.query("ROLLBACK");return res.status(409).json({error:"The linked business account must be ACTIVE before a drop-off location can be approved"});}
+      const docs=(await client.query("SELECT document_type FROM drop_off_location_documents WHERE location_id=$1 AND status IN ('PENDING','APPROVED')",[locationId])).rows.map((row:any)=>row.document_type);
+      const required=["BUSINESS_REGISTRATION","PREMISES_EVIDENCE","IDENTITY"];
+      const missing=required.filter(type=>!docs.includes(type));
+      if(missing.length){await client.query("ROLLBACK");return res.status(409).json({error:"Required verification documents are missing",missing});}
+    }
+    const updated=await client.query("UPDATE drop_off_locations SET status=$2,verification_status=$3,verified_by_user_id=CASE WHEN $3='VERIFIED' THEN $4 ELSE verified_by_user_id END,verified_at=CASE WHEN $3='VERIFIED' THEN now() ELSE verified_at END,updated_at=now() WHERE id=$1 RETURNING *",[locationId,parsed.data.status,verified?"VERIFIED":"REJECTED",identity(req)]);
+    await client.query("UPDATE drop_off_location_documents SET status=$2,updated_at=now() WHERE location_id=$1 AND status='PENDING'",[locationId,verified?"APPROVED":"REJECTED"]);
+    await client.query("INSERT INTO drop_off_application_audit(location_id,actor_user_id,old_status,new_status,note) VALUES($1,$2,$3,$4,$5)",[locationId,identity(req),current.rows[0].status,parsed.data.status,parsed.data.note??null]);
+    await client.query("COMMIT");
+    res.json({location:updated.rows[0]});
+  }catch(e){await client.query("ROLLBACK");throw e}finally{client.release();}
 });
 
 router.post("/drop-off/parcels", requireAuth("CUSTOMER","AGENT","ADMIN"), async(req,res)=>{
@@ -566,11 +582,18 @@ router.post("/drop-off/parcels", requireAuth("CUSTOMER","AGENT","ADMIN"), async(
   if(!location||location.status!=="ACTIVE"||location.verification_status!=="VERIFIED")return res.status(409).json({error:"Drop-off location is not active"});
   const existing=await pool.query("SELECT * FROM drop_off_parcels WHERE delivery_id=$1 AND location_id=$2 AND endpoint=$3",[parsed.data.deliveryId,parsed.data.locationId,parsed.data.endpoint]);
   if(existing.rows[0])return res.json({parcel:existing.rows[0]});
-  const capacity=await pool.query("SELECT count(*)::int AS count FROM drop_off_parcels WHERE location_id=$1 AND status IN ('AT_LOCATION','READY_FOR_COURIER')",[location.id]);
-  if(Number(capacity.rows[0].count)>=location.capacity)return res.status(409).json({error:"Drop-off location is at capacity"});
-  const parcel=await pool.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,$3,encode(gen_random_bytes(5),'hex')) RETURNING *",[parsed.data.deliveryId,location.id,parsed.data.endpoint]);
-  await pool.query("INSERT INTO drop_off_events(parcel_id,actor_user_id,event_type,metadata) VALUES($1,$2,'PARCEL_EXPECTED',$3::jsonb)",[parcel.rows[0].id,userId,JSON.stringify({endpoint:parsed.data.endpoint})]);
-  res.status(201).json({parcel:parcel.rows[0]});
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const lockedLocation=(await client.query("SELECT capacity FROM drop_off_locations WHERE id=$1 AND status='ACTIVE' AND verification_status='VERIFIED' FOR UPDATE",[location.id])).rows[0];
+    if(!lockedLocation){await client.query("ROLLBACK");return res.status(409).json({error:"Drop-off location is no longer active"});}
+    const capacity=await client.query("SELECT count(*)::int AS count FROM drop_off_parcels WHERE location_id=$1 AND status IN ('AT_LOCATION','READY_FOR_COURIER')",[location.id]);
+    if(Number(capacity.rows[0].count)>=Number(lockedLocation.capacity)){await client.query("ROLLBACK");return res.status(409).json({error:"Drop-off location is at capacity"});}
+    const parcel=await client.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,$3,encode(gen_random_bytes(5),'hex')) RETURNING *",[parsed.data.deliveryId,location.id,parsed.data.endpoint]);
+    await client.query("INSERT INTO drop_off_events(parcel_id,actor_user_id,event_type,metadata) VALUES($1,$2,'PARCEL_EXPECTED',$3::jsonb)",[parcel.rows[0].id,userId,JSON.stringify({endpoint:parsed.data.endpoint})]);
+    await client.query("COMMIT");
+    res.status(201).json({parcel:parcel.rows[0]});
+  }catch(error){await client.query("ROLLBACK");throw error}finally{client.release();}
 });
 
 router.post("/drop-off/parcels/:id/intake", requireAuth("CUSTOMER","AGENT","ADMIN"), async(req,res)=>{
