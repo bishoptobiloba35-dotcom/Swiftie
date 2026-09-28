@@ -1,0 +1,31 @@
+name: SwiftDrop CI source repair
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply source fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          perl -0pi -e 's/styles\.earnings/styles.title/g' apps/driver/App.tsx
+          perl -0pi -e 's/\{location \? <View style=\{styles\.locationBox\}>/\{location \&\& delivery.dropoff.location ? <View style=\{styles.locationBox\}>/; s/delivery\.dropoff\.latitude/delivery.dropoff.location.latitude/g; s/delivery\.dropoff\.longitude/delivery.dropoff.location.longitude/g' apps/customer/App.tsx
+      - name: Commit source fixes and remove repair workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/ci-source-repair.yml
+          git add apps/driver/App.tsx apps/customer/App.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m 'ci: repair source type errors'
+          git push origin HEAD:main
