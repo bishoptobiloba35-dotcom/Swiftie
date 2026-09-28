@@ -17,6 +17,7 @@ import { identity } from "./requestIdentity.js";
 import { validateProductionConfig } from "./productionConfig.js";
 import { getPrivateObject, objectStorageEnabled, putPrivateObject } from "./storage.js";
 import { enqueueNotification, processNotificationOutbox, processNotificationPushReceipts } from "./notificationOutbox.js";
+import businessAiRoutes from "./businessAiRoutes.js";
 
 const app = express();
 
@@ -61,6 +62,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use("/api/auth", authRoutes);
+app.use("/api", businessAiRoutes);
 
 type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED";
 type DeliveryLocation = { latitude: number; longitude: number; recordedAt?: string };
