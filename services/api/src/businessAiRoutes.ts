@@ -140,14 +140,14 @@ router.post("/ai/query", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), as
   });
 });
 
-router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), async (req, res) => {
+router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), async (req, res) => {\n  if (!pool) return res.status(503).json({ error: "AI actions require the production database" });
   const userId = identity(req);
   const action = String(req.body?.action ?? "").trim().toUpperCase();
   const plan = await premiumAction(req, res, action || "UNKNOWN");
   if (!plan) return;
 
   if (action === "CREATE_BUY_ORDER") {
-    if (req.user?.role !== "CUSTOMER") {
+    if ((req as any).user?.role !== "CUSTOMER") {
       await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "CUSTOMER_ONLY" });
       return res.status(403).json({ error: "Buy & Deliver orders must be created by a customer or authorized business member" });
     }
@@ -177,7 +177,7 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
   }
 
   if (action === "CREATE_BUSINESS") {
-    if (req.user?.role !== "CUSTOMER" && req.user?.role !== "ADMIN") {
+    if ((req as any).user?.role !== "CUSTOMER" && (req as any).user?.role !== "ADMIN") {
       await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "ROLE_NOT_AUTHORIZED" });
       return res.status(403).json({ error: "Only customer or admin accounts can create business accounts" });
     }
@@ -191,7 +191,7 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
           (owner_user_id, legal_name, display_name, registration_number, monthly_spend_limit_minor, per_order_limit_minor, requires_approval, status)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
          RETURNING *`,
-        [userId, parsed.data.legalName, parsed.data.displayName, parsed.data.registrationNumber ?? null, parsed.data.monthlySpendLimitMinor, parsed.data.perOrderLimitMinor, parsed.data.requiresApproval, req.user?.role === "ADMIN" ? "ACTIVE" : "PENDING"]
+        [userId, parsed.data.legalName, parsed.data.displayName, parsed.data.registrationNumber ?? null, parsed.data.monthlySpendLimitMinor, parsed.data.perOrderLimitMinor, parsed.data.requiresApproval, (req as any).user?.role === "ADMIN" ? "ACTIVE" : "PENDING"]
       );
       await client.query(
         "INSERT INTO business_members (business_id, user_id, member_role) VALUES ($1,$2,'OWNER')",
@@ -255,17 +255,17 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
   return res.status(400).json({ error: "Unsupported AI action", code: "UNKNOWN_AI_ACTION" });
 });
 
-router.get("/buy-orders", requireAuth("CUSTOMER", "AGENT", "ADMIN"), async (req, res) => {
+router.get("/buy-orders", requireAuth("CUSTOMER", "AGENT", "ADMIN"), async (req, res) => {\n  if (!pool) return res.status(503).json({ error: "Buy & Deliver requires the production database" });
   const userId = identity(req);
-  const result = req.user?.role === "ADMIN"
+  const result = (req as any).user?.role === "ADMIN"
     ? await pool!.query("SELECT * FROM buy_orders ORDER BY created_at DESC LIMIT 200")
-    : req.user?.role === "AGENT"
+    : (req as any).user?.role === "AGENT"
       ? await pool!.query("SELECT bo.* FROM buy_orders bo JOIN agent_profiles ap ON ap.id=bo.agent_id WHERE ap.user_id=$1 ORDER BY bo.created_at DESC LIMIT 100", [userId])
       : await pool!.query("SELECT * FROM buy_orders WHERE customer_user_id=$1 ORDER BY created_at DESC LIMIT 100", [userId]);
   res.json({ buyOrders: result.rows });
 });
 
-router.post("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
+router.post("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {\n  if (!pool) return res.status(503).json({ error: "Business accounts require the production database" });
   const userId = identity(req);
   const parsed = businessSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -273,15 +273,15 @@ router.post("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, 
     `INSERT INTO business_accounts
       (owner_user_id, legal_name, display_name, registration_number, monthly_spend_limit_minor, per_order_limit_minor, requires_approval, status)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-    [userId, parsed.data.legalName, parsed.data.displayName, parsed.data.registrationNumber ?? null, parsed.data.monthlySpendLimitMinor, parsed.data.perOrderLimitMinor, parsed.data.requiresApproval, req.user?.role === "ADMIN" ? "ACTIVE" : "PENDING"]
+    [userId, parsed.data.legalName, parsed.data.displayName, parsed.data.registrationNumber ?? null, parsed.data.monthlySpendLimitMinor, parsed.data.perOrderLimitMinor, parsed.data.requiresApproval, (req as any).user?.role === "ADMIN" ? "ACTIVE" : "PENDING"]
   );
   await pool!.query("INSERT INTO business_members (business_id, user_id, member_role) VALUES ($1,$2,'OWNER')", [result.rows[0].id, userId]);
   res.status(201).json({ business: result.rows[0] });
 });
 
-router.get("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
+router.get("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {\n  if (!pool) return res.status(503).json({ error: "Business accounts require the production database" });
   const userId = identity(req);
-  const result = req.user?.role === "ADMIN"
+  const result = (req as any).user?.role === "ADMIN"
     ? await pool!.query("SELECT * FROM business_accounts ORDER BY created_at DESC LIMIT 200")
     : await pool!.query("SELECT ba.* FROM business_accounts ba JOIN business_members bm ON bm.business_id=ba.id WHERE bm.user_id=$1 AND bm.active=true ORDER BY ba.created_at DESC", [userId]);
   res.json({ businesses: result.rows });
