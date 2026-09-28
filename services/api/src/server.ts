@@ -19,6 +19,7 @@ import { ensureAiDefaults, getAiPermission, updateAiPermission, auditAiAction, e
 import { executeAiAction } from "./aiExecutor.js";
 import { getPrivateObject, objectStorageEnabled, putPrivateObject } from "./storage.js";
 import { enqueueNotification, processNotificationOutbox, processNotificationPushReceipts } from "./notificationOutbox.js";
+import { createShoppingTask, addShoppingItem, listShoppingItems, findShoppingTaskForUser, listCustomerShoppingTasks, applyAsShopper, getShopperForUser, assignShoppingTask, authorizeShoppingTask, updateShoppingItem, recordShoppingEvidence, setShoppingActual, approveShoppingOverage, reconcileShoppingTask, completeShoppingTask } from "./database/shopperRepository.js";
 
 const app = express();
 
@@ -88,6 +89,105 @@ async function hasBusinessPremium(userId: string): Promise<boolean> {
   );
   return result.rows.length > 0;
 }
+
+
+app.post("/api/shopper/apply", requireAuth("CUSTOMER"), async (req,res)=>{
+ if(!databaseEnabled()) return res.status(503).json({error:"Shopper onboarding requires the production database"});
+ const parsed=z.object({shopperType:z.enum(["SHOPPER","ERRAND_PARTNER"]).default("SHOPPER"),serviceZones:z.array(z.string().trim().min(1).max(100)).max(50).default([])}).safeParse(req.body);
+ if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
+ try{return res.status(201).json({shopper:await applyAsShopper(identity(req),parsed.data.shopperType,parsed.data.serviceZones)});}
+ catch{return res.status(500).json({error:"Unable to submit shopper application"});}
+});
+app.get("/api/shopper/profile", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Shopper profile requires the production database"});
+ return res.json({shopper:await getShopperForUser(identity(req))});
+});
+app.get("/api/shopper/tasks", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Shopping tasks require the production database"});
+ try{
+  const shopper=await getShopperForUser(identity(req));
+  const tasks=shopper&&shopper.status==="APPROVED"
+    ? (await pool!.query("SELECT st.* FROM shopping_tasks st WHERE st.shopper_id=$1 ORDER BY st.created_at DESC LIMIT 100",[shopper.id])).rows
+    : await listCustomerShoppingTasks(identity(req));
+  return res.json({tasks});
+ }catch{return res.status(500).json({error:"Unable to load shopping tasks"});}
+});
+app.post("/api/shopper/tasks", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Shopping tasks require the production database"});
+ const parsed=z.object({taskType:z.enum(["BUY_AND_DELIVER","SHOP_FOR_ME","APPROVED_ERRAND","MERCHANT_PICKUP","RETURN"]),title:z.string().trim().min(2).max(160),notes:z.string().trim().max(2000).optional(),destinationAddress:z.string().trim().max(500).optional(),budgetMinor:z.number().int().positive().max(500_000_000),deliveryId:z.string().uuid().optional(),items:z.array(z.object({name:z.string().trim().min(1).max(200),quantity:z.number().int().min(1).max(1000),maxUnitPriceMinor:z.number().int().min(0).optional(),substitutionPolicy:z.enum(["NO_SUBSTITUTE","ASK_FIRST","SIMILAR_UNDER_BUDGET","CLOSEST_AVAILABLE"]).default("ASK_FIRST")})).min(1).max(100).optional()}).safeParse(req.body);
+ if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
+ try{
+  const t=await createShoppingTask({customerId:identity(req),...parsed.data});
+  for(const item of parsed.data.items??[]) await addShoppingItem({taskId:t.id,...item});
+  return res.status(201).json({task:t,items:await listShoppingItems(t.id)});
+ }catch{return res.status(500).json({error:"Unable to create shopping task"});}
+});
+app.get("/api/shopper/tasks/:id/items", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Shopping items require the production database"});
+ const t=await findShoppingTaskForUser(routeParam(req.params.id,"id"),identity(req),"CUSTOMER");
+ if(!t)return res.status(404).json({error:"Shopping task not found"});
+ return res.json({items:await listShoppingItems(t.id)});
+});
+app.post("/api/shopper/tasks/:id/authorize", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Shopping authorization requires the production database"});
+ const amount=Number(req.body?.amountMinor); if(!Number.isInteger(amount)||amount<=0)return res.status(400).json({error:"A valid authorization amount is required"});
+ try{const r=await authorizeShoppingTask(routeParam(req.params.id,"id"),identity(req),amount);return r?res.json(r):res.status(409).json({error:"Authorization must cover the task budget and the task must belong to you"});}
+ catch{return res.status(500).json({error:"Unable to authorize shopping task"});}
+});
+app.post("/api/shopper/tasks/:id/overage-approve", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Shopping approval requires the production database"});
+ const amount=Number(req.body?.additionalAmountMinor);if(!Number.isInteger(amount)||amount<=0)return res.status(400).json({error:"A valid additional approval amount is required"});
+ try{const r=await approveShoppingOverage(routeParam(req.params.id,"id"),identity(req),amount);return r?res.json({task:r}):res.status(409).json({error:"Additional approval is not available for this task"});}
+ catch{return res.status(500).json({error:"Unable to approve shopping overage"});}
+});
+app.post("/api/shopper/tasks/:id/reconcile", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Shopping reconciliation requires the production database"});
+ try{const t=await reconcileShoppingTask(routeParam(req.params.id,"id"),identity(req));return t?res.json({reconciliation:t}):res.status(404).json({error:"Shopping task not found"});}
+ catch{return res.status(500).json({error:"Unable to reconcile shopping task"});}
+});
+app.post("/api/shopper/tasks/:id/items", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Shopping items require the production database"});
+ const t=await findShoppingTaskForUser(routeParam(req.params.id,"id"),identity(req),"CUSTOMER");if(!t)return res.status(404).json({error:"Shopping task not found"});
+ const p=z.object({name:z.string().trim().min(1).max(200),quantity:z.number().int().min(1).max(1000),maxUnitPriceMinor:z.number().int().min(0).optional(),substitutionPolicy:z.enum(["NO_SUBSTITUTE","ASK_FIRST","SIMILAR_UNDER_BUDGET","CLOSEST_AVAILABLE"]).default("ASK_FIRST")}).safeParse(req.body);
+ if(!p.success)return res.status(400).json({error:p.error.flatten()});
+ return res.status(201).json({item:await addShoppingItem({taskId:t.id,...p.data})});
+});
+app.post("/api/admin/shoppers/:userId/approve", requireAuth("ADMIN"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Shopper administration requires the production database"});
+ const r=await pool!.query("UPDATE shopper_profiles SET status='APPROVED',updated_at=now() WHERE user_id=$1 RETURNING *",[routeParam(req.params.userId,"userId")]);
+ return r.rows[0]?res.json({shopper:r.rows[0]}):res.status(404).json({error:"Shopper profile not found"});
+});
+app.post("/api/admin/shopping-tasks/:id/assign", requireAuth("ADMIN"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Shopping assignment requires the production database"});
+ const shopperId=String(req.body?.shopperId??"").trim();if(!z.string().uuid().safeParse(shopperId).success)return res.status(400).json({error:"Valid shopperId is required"});
+ try{const r=await assignShoppingTask(routeParam(req.params.id,"id"),shopperId);return r?res.json({task:r}):res.status(409).json({error:"Task is not authorized or shopper is not approved"});}
+ catch{return res.status(500).json({error:"Unable to assign shopping task"});}
+});
+app.post("/api/shopper/tasks/:id/item-update", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Shopping item updates require the production database"});
+ const shopper=await getShopperForUser(identity(req));if(!shopper||shopper.status!=="APPROVED")return res.status(403).json({error:"Approved shopper access is required"});
+ const p=z.object({itemId:z.string().uuid(),foundStatus:z.enum(["PENDING","FOUND","UNAVAILABLE","SUBSTITUTED"]),actualUnitPriceMinor:z.number().int().min(0).optional(),actualQuantity:z.number().int().min(1).max(1000).optional(),substituteName:z.string().trim().max(200).optional()}).safeParse(req.body);
+ if(!p.success)return res.status(400).json({error:p.error.flatten()});
+ const r=await updateShoppingItem(routeParam(req.params.id,"id"),shopper.id,p.data.itemId,p.data);return r?res.json({item:r}):res.status(409).json({error:"Item cannot be updated in the current task state"});
+});
+app.post("/api/shopper/tasks/:id/purchase-total", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Shopping purchase requires the production database"});
+ const shopper=await getShopperForUser(identity(req));if(!shopper||shopper.status!=="APPROVED")return res.status(403).json({error:"Approved shopper access is required"});
+ const amount=Number(req.body?.actualAmountMinor);if(!Number.isInteger(amount)||amount<=0)return res.status(400).json({error:"Valid actual purchase amount is required"});
+ const r=await setShoppingActual(routeParam(req.params.id,"id"),shopper.id,amount);return r?res.json({task:r}):res.status(409).json({error:"Task is not ready for purchase total"});
+});
+app.post("/api/shopper/tasks/:id/evidence", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Shopping evidence requires the production database"});
+ const shopper=await getShopperForUser(identity(req));if(!shopper||shopper.status!=="APPROVED")return res.status(403).json({error:"Approved shopper access is required"});
+ const p=z.object({evidenceType:z.enum(["RECEIPT","ITEM_PHOTO","PURCHASE_CONFIRMATION","HANDOVER"]),objectKey:z.string().min(1).max(500),contentType:z.string().min(1).max(100)}).safeParse(req.body);
+ if(!p.success)return res.status(400).json({error:p.error.flatten()});
+ if(!p.data.objectKey.startsWith("shopping/"))return res.status(400).json({error:"Evidence must use a private shopping storage key"});
+ const r=await recordShoppingEvidence(routeParam(req.params.id,"id"),shopper.id,p.data.evidenceType,p.data.objectKey,p.data.contentType);return r?res.status(201).json({evidence:r}):res.status(409).json({error:"Unable to record evidence"});
+});
+app.post("/api/shopper/tasks/:id/complete", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Shopping completion requires the production database"});
+ const r=await completeShoppingTask(routeParam(req.params.id,"id"),identity(req));return r?res.json({task:r}):res.status(409).json({error:"Task cannot be completed in its current state"});
+});
 
 app.post("/api/business/profile", requireAuth("CUSTOMER"), async (req,res)=>{
  if(!databaseEnabled()) return res.status(503).json({error:"Business profile requires the production database"});
@@ -247,8 +347,7 @@ app.post("/api/business/dispatch/run", requireAuth("CUSTOMER"), async (req, res)
       await auditAiAction({
         userId: identity(req),
         actionType: "BUSINESS_DISPATCH",
-        status: "FAILED",
-        amountMinor: spent,
+        status: "FAILED",        amountMinor: spent,
         targetType: "BUSINESS",
         targetId: businessId,
         details: { error: message }
@@ -497,7 +596,6 @@ app.get("/api/business/ai-rules", requireAuth("CUSTOMER"), async (req, res) => {
   const rules = await pool!.query(`SELECT * FROM business_ai_rules WHERE business_id=$1`, [business.rows[0].id]);
   return res.json({ businessId: business.rows[0].id, rules: rules.rows[0] ?? null });
 });
-
 app.patch("/api/business/ai-rules", requireAuth("CUSTOMER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Business AI requires the production database" });
   if (!await hasBusinessPremium(identity(req))) return res.status(403).json({ error: "Business Premium is required for Business AI" });
@@ -748,7 +846,6 @@ app.post("/api/deliveries/:id/rating/receiver", async (req, res) => {
     return res.status(500).json({ error: "Unable to save receiver rating" });
   }
 });
-
 app.get("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Payout account requires the production database" });
   const driver = await driverForUser(identity(req));
@@ -997,8 +1094,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
         isPerishable: input.isPerishable,
         quote: input.quote
       });
-      return res.status(201).json(safeDelivery(created));
-    }
+      return res.status(201).json(safeDelivery(created));    }
     const now = new Date().toISOString();
     const delivery: MemoryDelivery = {
       id: randomUUID(),
@@ -1247,8 +1343,7 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   if (event?.event !== "charge.success") return res.status(200).json({ received: true });
 
   const data = event.data;
-  const deliveryId = String(data?.metadata?.deliveryId ?? "");
-  const reference = String(data?.reference ?? "");
+  const deliveryId = String(data?.metadata?.deliveryId ?? "");  const reference = String(data?.reference ?? "");
   if (!deliveryId || !reference) return res.status(200).json({ received: true });
 
   const payment = await findPayment(deliveryId);
@@ -1497,8 +1592,7 @@ app.get("/api/admin/users", requireAuth("ADMIN"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Admin user management requires the production database" });
   const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 50)));
   const search = String(req.query.search ?? "").trim();
-  const result = await pool!.query(
-    `SELECT u.id, u.role, u.full_name, u.phone, u.email, u.created_at,
+  const result = await pool!.query(    `SELECT u.id, u.role, u.full_name, u.phone, u.email, u.created_at,
             d.id AS driver_id, d.status AS driver_status, d.online AS driver_online
        FROM users u
        LEFT JOIN drivers d ON d.user_id=u.id
@@ -1747,8 +1841,7 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
     routeParam(req.params.id, "id"),
     Number(process.env.DRIVER_PAYOUT_PERCENT ?? 90),
     note
-  );
-  if (!released) return res.status(409).json({ error: "This dispute cannot be released. Verify that the payment is held and an assigned driver is eligible for payout." });
+  );  if (!released) return res.status(409).json({ error: "This dispute cannot be released. Verify that the payment is held and an assigned driver is eligible for payout." });
   await recordAdminCaseAudit({
     deliveryId: routeParam(req.params.id, "id"),
     disputeId: released.dispute.id,
@@ -1997,8 +2090,7 @@ app.get("/api/track/:trackingCode/pickup-photo", async (req, res) => {
 
 app.post("/api/deliveries/:id/pickup", requireAuth("DRIVER"), async (req, res) => {
   const driverId = await authenticatedDriverId(req);
-  if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
-  const photo = String(req.body?.pickupPhotoUrl ?? "");
+  if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });  const photo = String(req.body?.pickupPhotoUrl ?? "");
   if (!photo || !photo.startsWith("/api/deliveries/" + routeParam(req.params.id, "id") + "/pickup-photo")) return res.status(400).json({ error: "A valid pickup parcel photo is required" });
   if (databaseEnabled()) {
     const updated = await savePickupPhoto(routeParam(req.params.id, "id"), driverId, photo);
