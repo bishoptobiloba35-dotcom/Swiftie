@@ -1,4 +1,4 @@
-import { pool } from "./database/db.js";
+import { pool, withDatabase } from "./database/db.js";
 
 type PendingNotification = {
   id: string;
@@ -23,23 +23,7 @@ export async function enqueueNotification(input: {
   type: string;
 }): Promise<void> {
   if (!pool) return;
-  await pool.query("BEGIN");
-  try {
-    const notification = await pool.query(
-      `INSERT INTO notifications (user_id, delivery_id, title, body, type)
-       VALUES ($1,$2,$3,$4,$5)
-       RETURNING id`,
-      [input.userId, input.deliveryId ?? null, input.title, input.body, input.type]
-    );
-    await pool.query(
-      "INSERT INTO notification_outbox (notification_id) VALUES ($1)",
-      [notification.rows[0].id]
-    );
-    await pool.query("COMMIT");
-  } catch (error) {
-    await pool.query("ROLLBACK");
-    throw error;
-  }
+  await withDatabase(async client => {\n    await client.query("BEGIN");\n    try {\n      const notification = await client.query(\n        `INSERT INTO notifications (user_id, delivery_id, title, body, type)\n         VALUES ($1,$2,$3,$4,$5)\n         RETURNING id`,\n        [input.userId, input.deliveryId ?? null, input.title, input.body, input.type]\n      );\n      await client.query(\n        "INSERT INTO notification_outbox (notification_id) VALUES ($1)",\n        [notification.rows[0].id]\n      );\n      await client.query("COMMIT");\n    } catch (error) {\n      await client.query("ROLLBACK");\n      throw error;\n    }\n  });
 }
 
 async function sendToExpo(tokens: string[], title: string, body: string, data: Record<string, string | null>): Promise<{ retry: boolean; invalidTokens: string[] }> {
