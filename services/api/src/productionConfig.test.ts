@@ -21,6 +21,10 @@ test("production config accepts complete secure configuration", () => {
     process.env.JWT_SECRET = "a-long-production-secret";
     process.env.PAYSTACK_SECRET_KEY = "sk_live_example";
     process.env.CORS_ORIGINS = "https://app.example.com,https://admin.example.com";
+    process.env.OBJECT_STORAGE_BUCKET = "swiftdrop";
+    process.env.OBJECT_STORAGE_REGION = "eu-west-1";
+    process.env.OBJECT_STORAGE_ACCESS_KEY_ID = "access";
+    process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY = "secret";
     process.env.DRIVER_PAYOUT_PERCENT = "90";
     assert.doesNotThrow(() => validateProductionConfig());
   } finally {
@@ -48,6 +52,10 @@ test("production config rejects insecure JWT fallback", () => {
     process.env.JWT_SECRET = "development-only-change-me";
     process.env.PAYSTACK_SECRET_KEY = "sk_live_example";
     process.env.CORS_ORIGINS = "https://app.example.com";
+    process.env.OBJECT_STORAGE_BUCKET = "swiftdrop";
+    process.env.OBJECT_STORAGE_REGION = "eu-west-1";
+    process.env.OBJECT_STORAGE_ACCESS_KEY_ID = "access";
+    process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY = "secret";
     assert.throws(() => validateProductionConfig(), /JWT_SECRET must not use the development fallback/);
   } finally {
     restoreEnv();
@@ -74,6 +82,10 @@ test("production config validates payout percentage", () => {
     process.env.JWT_SECRET = "a-long-production-secret";
     process.env.PAYSTACK_SECRET_KEY = "sk_live_example";
     process.env.CORS_ORIGINS = "https://app.example.com";
+    process.env.OBJECT_STORAGE_BUCKET = "swiftdrop";
+    process.env.OBJECT_STORAGE_REGION = "eu-west-1";
+    process.env.OBJECT_STORAGE_ACCESS_KEY_ID = "access";
+    process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY = "secret";
     process.env.DRIVER_PAYOUT_PERCENT = "101";
     assert.throws(() => validateProductionConfig(), /DRIVER_PAYOUT_PERCENT/);
   } finally {
