@@ -426,7 +426,7 @@ export default function App() {
           />
         </MapView>
         <Text>Driver: {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}</Text>
-        <Text style={styles.eta}>Approx. ETA: {etaMinutes(haversineDistanceMeters(location, delivery.dropoff))} min</Text>
+        <Text style={styles.eta}>Approx. ETA: {etaMinutes(haversineDistanceMeters(location, delivery.dropoff.location))} min</Text>
         <Text style={styles.muted}>Updated: {new Date(location.recordedAt).toLocaleTimeString()}</Text>
       </View> : <Text style={styles.muted}>Waiting for the driver to start the trip…</Text>}
       {delivery.status === "ARRIVED" && <View style={styles.ratingBox}>
