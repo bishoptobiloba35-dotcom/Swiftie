@@ -804,7 +804,7 @@ export async function prepareRefund(deliveryId: string, refundAmountMinor: numbe
       return null;
     }
     const totalRefundedMinor = Number(paymentRow.total_refunded_minor ?? 0);
-    if (paymentRow.status === 'REFUNDED' || ['processed','processing','pending'].includes(String(paymentRow.refund_status ?? ''))) {
+    if (paymentRow.status === 'REFUNDED' || ['processed','processing','pending','needs-attention'].includes(String(paymentRow.refund_status ?? ''))) {
       await client.query('ROLLBACK');
       return null;
     }
