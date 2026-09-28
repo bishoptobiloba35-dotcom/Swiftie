@@ -524,8 +524,15 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
         const amountMinor = Number(event?.data?.amount ?? 0);
         await markPaymentRefund(deliveryId, refundReference, refundStatus, amountMinor);
         if (refundStatus === "processed") {
-          await updatePaymentStatus(deliveryId, "REFUNDED", transactionReference);
-          await recordDeliveryEvent({ deliveryId, eventType: "REFUND_PROCESSED", metadata: { provider: "paystack", transactionReference, refundReference, amountMinor } });
+          const payment = await findPayment(deliveryId);
+          if (payment && amountMinor >= payment.amountMinor) {
+            await updatePaymentStatus(deliveryId, "REFUNDED", transactionReference);
+          }
+          await recordDeliveryEvent({
+            deliveryId,
+            eventType: "REFUND_PROCESSED",
+            metadata: { provider: "paystack", transactionReference, refundReference, amountMinor, fullyRefunded: Boolean(payment && amountMinor >= payment.amountMinor) }
+          });
         } else if (refundStatus === "failed") {
           await recordDeliveryEvent({ deliveryId, eventType: "REFUND_FAILED", metadata: { provider: "paystack", transactionReference, refundReference } });
         } else {
