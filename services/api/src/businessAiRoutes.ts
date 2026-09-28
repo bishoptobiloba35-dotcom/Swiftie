@@ -474,6 +474,35 @@ router.post("/drop-off/locations/:id/documents", requireAuth("CUSTOMER","AGENT",
   }catch(e){res.status(503).json({error:e instanceof Error?e.message:"Unable to store document"});}
 });
 
+router.post("/admin/business/accounts/:id/status", requireAuth("ADMIN"), async(req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const parsed=z.object({status:z.enum(["PENDING","ACTIVE","SUSPENDED"])}).safeParse(req.body);
+  if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
+  const result=await pool.query("UPDATE business_accounts SET status=$2,updated_at=now() WHERE id=$1 RETURNING *",[String(req.params.id),parsed.data.status]);
+  if(!result.rows[0])return res.status(404).json({error:"Business account not found"});
+  await pool.query("INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES((SELECT owner_user_id FROM business_accounts WHERE id=$1),(SELECT ai_plan FROM users WHERE id=(SELECT owner_user_id FROM business_accounts WHERE id=$1)),'ADMIN_BUSINESS_STATUS','UPDATE',true,'Admin status update',$2::jsonb)",[String(req.params.id),JSON.stringify({businessId:String(req.params.id),status:parsed.data.status})]);
+  return res.json({business:result.rows[0]});
+});
+
+router.post("/admin/ai/users/:id/plan", requireAuth("ADMIN"), async(req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const parsed=z.object({plan:z.enum(["BASIC","PREMIUM"]),reason:z.string().trim().min(3).max(500)}).safeParse(req.body);
+  if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const current=(await client.query("SELECT id,ai_plan FROM users WHERE id=$1 FOR UPDATE",[String(req.params.id)])).rows[0];
+    if(!current){await client.query("ROLLBACK");return res.status(404).json({error:"User not found"});}
+    if(current.ai_plan!==parsed.data.plan){
+      await client.query("UPDATE users SET ai_plan=$2 WHERE id=$1",[current.id,parsed.data.plan]);
+      await client.query("INSERT INTO ai_entitlement_events(user_id,old_plan,new_plan,changed_by_user_id,reason) VALUES($1,$2,$3,$4,$5)",[current.id,current.ai_plan,parsed.data.plan,identity(req),parsed.data.reason]);
+    }
+    await client.query("COMMIT");
+    return res.json({userId:current.id,plan:parsed.data.plan});
+  }catch(error){await client.query("ROLLBACK");return res.status(500).json({error:error instanceof Error?error.message:"Unable to update AI entitlement"});}
+  finally{client.release();}
+});
+
 router.get("/admin/drop-off/applications", requireAuth("ADMIN"), async(_req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const result=await pool.query("SELECT dl.*,ba.display_name AS business_name,(SELECT count(*) FROM drop_off_location_documents d WHERE d.location_id=dl.id) AS document_count FROM drop_off_locations dl JOIN business_accounts ba ON ba.id=dl.business_id ORDER BY dl.created_at DESC LIMIT 500");
