@@ -131,3 +131,59 @@ export async function releaseAiSpend(userId: string, amountMinor: number): Promi
   );
   return result.rowCount === 1;
 }
+
+
+export type AiAccess = {
+  plan: "BASIC" | "PREMIUM";
+  monthlyChatCredits: number;
+  monthlyChatCreditsUsed: number;
+  remainingChatCredits: number;
+  allowedActions: string[];
+};
+
+const BASIC_CHAT_CREDITS = 20;
+const PREMIUM_CHAT_CREDITS = 500;
+const BASIC_ACTIONS = ["TRACK_DELIVERY", "GET_TRACKING", "GET_DELIVERY_STATUS", "CONTACT_SUPPORT"];
+
+export async function getAiAccess(userId: string): Promise<AiAccess> {
+  if (!pool) throw new Error("DATABASE_URL is not configured");
+  const planResult = await pool.query(
+    `INSERT INTO user_plans (user_id) VALUES ($1)
+     ON CONFLICT (user_id) DO UPDATE SET updated_at=now()
+     RETURNING individual_plan`,
+    [userId]
+  );
+  const plan = planResult.rows[0]?.individual_plan === "PREMIUM" ? "PREMIUM" : "BASIC";
+  const usage = await pool.query(
+    `INSERT INTO ai_usage (user_id, period_start) VALUES ($1, date_trunc('month', CURRENT_DATE)::date)
+     ON CONFLICT (user_id) DO UPDATE
+       SET chat_credits_used = CASE WHEN ai_usage.period_start < date_trunc('month', CURRENT_DATE)::date THEN 0 ELSE ai_usage.chat_credits_used END,
+           action_credits_used = CASE WHEN ai_usage.period_start < date_trunc('month', CURRENT_DATE)::date THEN 0 ELSE ai_usage.action_credits_used END,
+           period_start = CASE WHEN ai_usage.period_start < date_trunc('month', CURRENT_DATE)::date THEN date_trunc('month', CURRENT_DATE)::date ELSE ai_usage.period_start END,
+           updated_at=now()
+     RETURNING chat_credits_used`,
+    [userId]
+  );
+  const limit = plan === "PREMIUM" ? PREMIUM_CHAT_CREDITS : BASIC_CHAT_CREDITS;
+  const used = Number(usage.rows[0]?.chat_credits_used ?? 0);
+  return {
+    plan,
+    monthlyChatCredits: limit,
+    monthlyChatCreditsUsed: used,
+    remainingChatCredits: Math.max(0, limit - used),
+    allowedActions: plan === "PREMIUM" ? ["TRACK_DELIVERY","GET_TRACKING","GET_DELIVERY_STATUS","RESCHEDULE_DELIVERY","CONTACT_SUPPORT","PAY_DELIVERY"] : BASIC_ACTIONS
+  };
+}
+
+export async function consumeAiChatCredit(userId: string): Promise<{ remaining: number; limit: number }> {
+  const access = await getAiAccess(userId);
+  const result = await pool!.query(
+    `UPDATE ai_usage SET chat_credits_used=chat_credits_used+1, updated_at=now()
+      WHERE user_id=$1 AND period_start=date_trunc('month', CURRENT_DATE)::date
+        AND chat_credits_used < $2
+      RETURNING chat_credits_used`,
+    [userId, access.monthlyChatCredits]
+  );
+  if (!result.rowCount) throw new Error("AI chat credit limit reached for this month");
+  return { remaining: Math.max(0, access.monthlyChatCredits - Number(result.rows[0].chat_credits_used)), limit: access.monthlyChatCredits };
+}
