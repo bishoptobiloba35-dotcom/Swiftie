@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pool } from "./database/db.js";
 import { requireAuth } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
+import { canCreatePersonalBuyOrder, canDispatchBusiness, canManageBusiness, canUseAiAction } from "./aiPolicy.js";
 
 const router = Router();
 
@@ -46,7 +47,7 @@ async function audit(input: {
 async function premiumAction(req: any, res: any, action: string): Promise<Plan | null> {
   const userId = identity(req);
   const plan = await currentPlan(userId);
-  if (plan !== "PREMIUM") {
+  if (!canUseAiAction(plan)) {
     await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "PREMIUM_REQUIRED", requestId: String(res.getHeader("x-request-id") ?? "") });
     res.status(403).json({ error: "This AI action requires Premium AI", code: "PREMIUM_AI_REQUIRED" });
     return null;
@@ -148,7 +149,7 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
   if (!plan) return;
 
   if (action === "CREATE_BUY_ORDER") {
-    if ((req as any).user?.role !== "CUSTOMER") {
+    if (!canCreatePersonalBuyOrder((req as any).user?.role)) {
       await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "CUSTOMER_ONLY" });
       return res.status(403).json({ error: "Buy & Deliver orders must be created by a customer or authorized business member" });
     }
@@ -178,7 +179,7 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
   }
 
   if (action === "CREATE_BUSINESS") {
-    if ((req as any).user?.role !== "CUSTOMER" && (req as any).user?.role !== "ADMIN") {
+    if (!canManageBusiness((req as any).user?.role)) {
       await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "ROLE_NOT_AUTHORIZED" });
       return res.status(403).json({ error: "Only customer or admin accounts can create business accounts" });
     }
@@ -213,7 +214,7 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
     const parsed = dispatchSchema.safeParse(req.body?.input);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const member = await businessMember(userId, parsed.data.businessId);
-    if (!member || !["OWNER", "ADMIN", "DISPATCHER"].includes(member.memberRole)) {
+    if (!member || !canDispatchBusiness(member.memberRole as any)) {
       await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "BUSINESS_ROLE_NOT_AUTHORIZED", metadata: { businessId: parsed.data.businessId } });
       return res.status(403).json({ error: "Business dispatch authorization required" });
     }
