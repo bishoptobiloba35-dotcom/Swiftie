@@ -89,8 +89,8 @@ export async function processNotificationOutbox(): Promise<void> {
         FOR UPDATE SKIP LOCKED
         LIMIT 25
      )
-     SELECT ob.id, n.user_id, n.title, n.body, n.type, n.delivery_id, ob.attempts,
-            COALESCE(array_agg(dt.push_token) FILTER (WHERE dt.push_token IS NOT NULL), '{}') AS push_tokens
+     SELECT ob.id, n.user_id AS "userId", n.title, n.body, n.type, n.delivery_id AS "deliveryId", ob.attempts,
+            COALESCE(array_agg(dt.push_token) FILTER (WHERE dt.push_token IS NOT NULL), '{}') AS "pushTokens"
        FROM picked
        JOIN notification_outbox ob ON ob.id=picked.id
        JOIN notifications n ON n.id=ob.notification_id
