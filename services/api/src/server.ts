@@ -11,7 +11,7 @@ import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, confirmReceiverAndReleaseEscrow, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
-import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, createDispute, findDispute, resolveDispute, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus } from "./database/deliveryRepository.js";
+import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -588,7 +588,7 @@ app.post("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER"), async
     ? await findDeliveryForUser(req.params.id, userId, (req as any).user.role)
     : null;
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
-  if (["DELIVERED", "CANCELLED"].includes(delivery.status)) {
+  if (delivery.status === "CANCELLED") {
     return res.status(409).json({ error: "This delivery can no longer be disputed" });
   }
   const reason = String(req.body?.reason ?? "").trim();
@@ -605,6 +605,30 @@ app.post("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER"), async
   res.status(201).json({ dispute });
 });
 
+app.post("/api/track/:trackingCode/dispute", async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Receiver disputes require the production database" });
+  const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
+  const receiverPin = String(req.body?.receiverPin ?? "").trim();
+  const reason = String(req.body?.reason ?? "").trim();
+  const description = String(req.body?.description ?? "").trim();
+  if (!receiverPhone || !/^\d{6}$/.test(receiverPin) || !reason) {
+    return res.status(400).json({ error: "Receiver phone, six-digit PIN and dispute reason are required" });
+  }
+  const delivery = await findByTrackingCode(String(req.params.trackingCode).trim().toUpperCase());
+  if (!delivery || delivery.receiverPhone !== receiverPhone || !await verifyReceiverPin(delivery.id, receiverPin)) {
+    return res.status(403).json({ error: "Receiver details could not be verified" });
+  }
+  if (delivery.status === "CANCELLED") return res.status(409).json({ error: "This delivery is cancelled" });
+  const dispute = await createReceiverDispute(delivery.id, receiverPhone, reason, description);
+  if (!dispute) return res.status(409).json({ error: "A dispute already exists or database is unavailable" });
+  await recordDeliveryEvent({
+    deliveryId: delivery.id,
+    eventType: "DISPUTE_OPENED",
+    metadata: { reason, openedByRole: "RECEIVER" }
+  });
+  return res.status(201).json({ dispute });
+});
+
 app.get("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER", "ADMIN"), async (req, res) => {
   const userId = identity(req);
   const role = (req as any).user.role;
@@ -613,6 +637,31 @@ app.get("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER", "ADMIN"
   const dispute = await findDispute(req.params.id);
   if (!dispute) return res.status(404).json({ error: "No dispute found" });
   res.json({ dispute });
+});
+
+app.get("/api/support/tickets", requireAuth("CUSTOMER", "DRIVER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Support requires the production database" });
+  const tickets = await listSupportTickets(identity(req));
+  return res.json({ tickets });
+});
+
+app.post("/api/support/tickets", requireAuth("CUSTOMER", "DRIVER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Support requires the production database" });
+  const category = String(req.body?.category ?? "").toUpperCase();
+  const subject = String(req.body?.subject ?? "").trim();
+  const message = String(req.body?.message ?? "").trim();
+  const deliveryId = req.body?.deliveryId ? String(req.body.deliveryId) : undefined;
+  if (category !== "ORDER" && category !== "APP") return res.status(400).json({ error: "Support category must be ORDER or APP" });
+  if (subject.length < 3 || subject.length > 120 || message.length < 5 || message.length > 2000) {
+    return res.status(400).json({ error: "Enter a subject and a message within the allowed length" });
+  }
+  if (deliveryId) {
+    const delivery = await findDeliveryForUser(deliveryId, identity(req), (req as any).user.role);
+    if (!delivery) return res.status(404).json({ error: "Order not found" });
+  }
+  const ticket = await createSupportTicket(identity(req), category, subject, message, deliveryId);
+  if (!ticket) return res.status(503).json({ error: "Unable to create support request" });
+  return res.status(201).json({ ticket });
 });
 
 app.post("/api/driver/documents/upload", requireAuth("DRIVER"), async (req, res) => {
@@ -800,6 +849,21 @@ app.get("/api/admin/disputes", requireAuth("ADMIN"), async (_req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool!.query("SELECT id, delivery_id, opened_by, reason, description, status, resolution_note, created_at, updated_at FROM disputes ORDER BY updated_at DESC LIMIT 100");
   res.json({ disputes: result.rows });
+});
+
+app.get("/api/admin/support/tickets", requireAuth("ADMIN"), async (_req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const tickets = await listSupportTickets();
+  return res.json({ tickets });
+});
+
+app.post("/api/admin/support/tickets/:id/resolve", requireAuth("ADMIN"), async (req, res) => {
+  const status = String(req.body?.status ?? "");
+  const note = String(req.body?.note ?? "").trim();
+  if (!["IN_REVIEW","RESOLVED","CLOSED"].includes(status) || !note) return res.status(400).json({ error: "A valid status and resolution note are required" });
+  const ticket = await resolveSupportTicket(req.params.id, status as "IN_REVIEW" | "RESOLVED" | "CLOSED", note);
+  if (!ticket) return res.status(404).json({ error: "Support ticket not found or already resolved" });
+  return res.json({ ticket });
 });
 
 app.get("/api/admin/payouts", requireAuth("ADMIN"), async (_req, res) => {
