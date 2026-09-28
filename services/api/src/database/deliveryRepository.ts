@@ -856,6 +856,113 @@ export async function prepareRefund(deliveryId: string, refundAmountMinor: numbe
   }
 }
 
+
+export async function recordFailedDeliveryAttempt(input: {
+  deliveryId: string;
+  driverId: string;
+  outcome: "RECEIVER_UNAVAILABLE" | "ACCESS_BLOCKED" | "ADDRESS_ISSUE" | "REFUSED" | "OTHER";
+  notes?: string;
+  contactAttempted: boolean;
+  waitMinutes: number;
+  action: "RESCHEDULE" | "RETURN_TO_SENDER" | "SUPPORT";
+}): Promise<{ attemptId: string; delivery: StoredDelivery } | null> {
+  if (!pool) return null;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const deliveryResult = await client.query(
+      "SELECT * FROM deliveries WHERE id=$1 AND driver_id=$2 FOR UPDATE",
+      [input.deliveryId, input.driverId]
+    );
+    const row = deliveryResult.rows[0];
+    if (!row || !["ARRIVED", "IN_TRANSIT"].includes(row.status)) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    const attempt = await client.query(
+      `INSERT INTO delivery_attempts
+        (delivery_id, driver_id, outcome, notes, contact_attempted, wait_minutes, action)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       RETURNING id`,
+      [input.deliveryId, input.driverId, input.outcome, input.notes ?? null, input.contactAttempted, input.waitMinutes, input.action]
+    );
+    let nextStatus = row.status;
+    if (input.action === "RETURN_TO_SENDER") nextStatus = "CANCELLED";
+    if (input.action === "RESCHEDULE") nextStatus = "RESCHEDULED";
+    const updated = await client.query(
+      `UPDATE deliveries
+          SET status=$2,
+              reschedule_count = CASE WHEN $2='RESCHEDULED' THEN reschedule_count + 1 ELSE reschedule_count END,
+              updated_at=now()
+        WHERE id=$1
+        RETURNING *`,
+      [input.deliveryId, nextStatus]
+    );
+    await client.query("COMMIT");
+    return { attemptId: attempt.rows[0].id, delivery: rowToDelivery(updated.rows[0]) };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function rescheduleDelivery(input: {
+  deliveryId: string;
+  userId: string;
+  scheduledFor: string;
+}): Promise<StoredDelivery | null> {
+  if (!pool) return null;
+  const scheduled = new Date(input.scheduledFor);
+  if (!Number.isFinite(scheduled.getTime()) || scheduled.getTime() <= Date.now()) return null;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `SELECT d.*
+         FROM deliveries d
+        WHERE d.id=$1
+          AND d.status='RESCHEDULED'
+          AND d.sender_id=$2
+        FOR UPDATE`,
+      [input.deliveryId, input.userId]
+    );
+    const row = result.rows[0];
+    if (!row || Number(row.reschedule_count) > 3) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    const updated = await client.query(
+      `UPDATE deliveries
+          SET status='IN_TRANSIT', rescheduled_for=$2, updated_at=now()
+        WHERE id=$1
+        RETURNING *`,
+      [input.deliveryId, scheduled.toISOString()]
+    );
+    await client.query("COMMIT");
+    return updated.rows[0] ? rowToDelivery(updated.rows[0]) : null;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function listDeliveryAttempts(deliveryId: string) {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT id, driver_id AS "driverId", outcome, notes, contact_attempted AS "contactAttempted",
+            wait_minutes AS "waitMinutes", action, created_at AS "createdAt"
+       FROM delivery_attempts
+      WHERE delivery_id=$1
+      ORDER BY created_at DESC`,
+    [deliveryId]
+  );
+  return result.rows.map(row => ({ ...row, createdAt: new Date(row.createdAt).toISOString() }));
+}
+
 export async function assignNextDeliveryToDriver(driverId: string): Promise<StoredDelivery | null> {
   if (!pool) return null;
   const verified = await pool.query(
