@@ -16,7 +16,8 @@ const migrations = [
   { id: "013_payment_refund_totals", file: "013_payment_refund_totals.sql" },
   { id: "014_payment_refund_events", file: "014_payment_refund_events.sql" },
   { id: "015_product_plans_ai_agents", file: "015_product_plans_ai_agents.sql" },
-  { id: "016_ai_daily_spend_reset", file: "016_ai_daily_spend_reset.sql" }
+  { id: "016_ai_daily_spend_reset", file: "016_ai_daily_spend_reset.sql" },
+  { id: "017_payment_authorization_details", file: "017_payment_authorization_details.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
