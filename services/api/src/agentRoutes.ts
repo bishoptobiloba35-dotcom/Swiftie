@@ -89,6 +89,10 @@ router.post("/buy-orders/:id/claim", requireAuth("AGENT"), async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(409).json({ error: "This order is not available for assignment" });
     }
+    if (order.payment_status !== "HELD") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Customer payment must be held before an agent can be assigned", code: "PAYMENT_NOT_HELD" });
+    }
     const updated = await client.query(
       `UPDATE buy_orders
           SET agent_id=$2, status='AGENT_ASSIGNED', assigned_at=now(), updated_at=now()
@@ -156,6 +160,7 @@ router.post("/buy-orders/:id/purchase", requireAuth("AGENT"), async (req, res) =
   const order = await getOrder(id);
   if (!order || order.agent_id !== agent.id) return res.status(404).json({ error: "Buy & Deliver order not found" });
   if (order.status !== "PURCHASING") return res.status(409).json({ error: "Order must be in purchasing state" });
+  if (order.payment_status !== "HELD") return res.status(409).json({ error: "Customer payment must be held before purchase", code: "PAYMENT_NOT_HELD" });
   if (parsed.data.actualPurchaseMinor > Number(order.purchase_budget_minor)) {
     return res.status(409).json({ error: "Actual purchase amount exceeds the authorized budget", code: "PURCHASE_BUDGET_EXCEEDED" });
   }
