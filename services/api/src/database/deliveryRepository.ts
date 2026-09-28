@@ -469,6 +469,35 @@ export async function listSupportTickets(userId?: string): Promise<SupportTicket
   return result.rows.map(rowToSupportTicket);
 }
 
+export type SupportAiActionRecord = {
+  id: string; ticketId: string; actionType: string;
+  decision: "AUTO_RESOLVED" | "ESCALATED" | "BLOCKED";
+  reason: string; response: string; actor: string; createdAt: string;
+};
+
+export async function recordSupportAiAction(ticketId: string, actionType: string, decision: SupportAiActionRecord["decision"], reason: string, response: string): Promise<SupportAiActionRecord | null> {
+  if (!pool) return null;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const action = (await client.query(`INSERT INTO support_ai_actions (ticket_id, action_type, decision, reason, response) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [ticketId, actionType, decision, reason, response])).rows[0];
+    await client.query(`UPDATE support_tickets SET ai_handled=true, ai_action_id=$2, human_required=$3, status=CASE WHEN $3 THEN 'IN_REVIEW' ELSE 'RESOLVED' END, resolution_note=$4, updated_at=now() WHERE id=$1 AND status IN ('OPEN','IN_REVIEW')`, [ticketId, action.id, decision === "ESCALATED", response]);
+    await client.query("COMMIT");
+    return { id: action.id, ticketId: action.ticket_id, actionType: action.action_type, decision: action.decision, reason: action.reason, response: action.response, actor: action.actor, createdAt: action.created_at };
+  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+}
+
+export async function listOpenSupportAiTickets(limit = 20): Promise<SupportTicketRecord[]> {
+  if (!pool) return [];
+  const result = await pool.query(`SELECT * FROM support_tickets WHERE status='OPEN' AND ai_handled=false AND human_required=false ORDER BY created_at ASC LIMIT $1`, [Math.min(Math.max(limit, 1), 50)]);
+  return result.rows.map(rowToSupportTicket);
+}
+
+export async function notifyAdminsOfSupportAiAction(ticketId: string, actionId: string, decision: string, response: string): Promise<void> {
+  if (!pool) return;
+  const body = "Support AI " + decision.toLowerCase() + " ticket " + ticketId + ". Action " + actionId + ". " + response;
+  await pool.query(`INSERT INTO notifications (user_id, title, body, type, created_at) SELECT id, 'Support AI action', $1, 'SUPPORT_AI_ACTION', now() FROM users WHERE role='ADMIN'`, [body]);
+}
 export async function resolveSupportTicket(id: string, status: "IN_REVIEW" | "RESOLVED" | "CLOSED", note: string): Promise<SupportTicketRecord | null> {
   if (!pool) return null;
   const result = await pool.query(
