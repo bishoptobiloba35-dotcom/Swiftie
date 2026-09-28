@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
+import path from "node:path";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
@@ -18,6 +19,11 @@ import { getPrivateObject, objectStorageEnabled, putPrivateObject } from "./stor
 import { enqueueNotification, processNotificationOutbox } from "./notificationOutbox.js";
 
 const app = express();
+
+function routeParam(value: string | string[] | undefined, name: string): string {
+  if (typeof value === "string" && value.length > 0) return value;
+  throw new Error(`Missing or invalid route parameter: ${name}`);
+}
 
 const httpServer = createServer(app);
 const allowedOrigins = (process.env.CORS_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean);
@@ -39,10 +45,25 @@ app.use(express.json({
 app.use("/api/auth", authRoutes);
 
 type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED";
+type DeliveryLocation = { latitude: number; longitude: number; recordedAt?: string };
+type DeliveryQuote = {
+  currency: "NGN";
+  distanceMeters: number;
+  durationSeconds: number;
+  baseFareMinor: number;
+  distanceFareMinor: number;
+  weightFareMinor: number;
+  sizeFareMinor: number;
+  perishableSurchargeMinor: number;
+  serviceFeeMinor: number;
+  totalMinor: number;
+};
 type MemoryDelivery = {
   id: string; trackingCode: string; senderId: string; receiverName: string; receiverPhone: string;
-  pickup: { label: string; formattedAddress: string }; dropoff: { label: string; formattedAddress: string };
-  status: Status; driverId?: string; pickupPhotoUrl?: string; receiverPin: string; createdAt: string; updatedAt: string;
+  pickup: { label: string; formattedAddress: string; location: DeliveryLocation };
+  dropoff: { label: string; formattedAddress: string; location: DeliveryLocation };
+  status: Status; driverId?: string; pickupPhotoUrl?: string; receiverPin: string;
+  quote?: DeliveryQuote; createdAt: string; updatedAt: string;
 };
 const deliveries = new Map<string, MemoryDelivery>();
 const locationRateLimit = new Map<string, number>();
@@ -177,7 +198,7 @@ app.get("/ready", async (_req, res) => {
 app.post("/api/deliveries/:id/rating", requireAuth(), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Ratings require the production database" });
   const userId = identity(req);
-  const delivery = await findDeliveryForUser(req.params.id, userId, "CUSTOMER");
+  const delivery = await findDeliveryForUser(routeParam(req.params.id, "id"), userId, "CUSTOMER");
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   if (delivery.status !== "DELIVERED") return res.status(409).json({ error: "Only completed deliveries can be rated" });
   if (!delivery.driverId) return res.status(409).json({ error: "Delivery has no driver to rate" });
@@ -205,7 +226,7 @@ app.post("/api/deliveries/:id/rating/receiver", async (req, res) => {
   const receiverPin = String(req.body?.receiverPin ?? "").trim();
   const parsed = z.object({ stars: z.number().int().min(1).max(5), comment: z.string().max(500).optional() }).safeParse(req.body);
   if (!receiverPhone || !/^\d{6}$/.test(receiverPin) || !parsed.success) return res.status(400).json({ error: "Receiver phone, six-digit PIN, rating and optional comment are required" });
-  const delivery = await findByTrackingCode(String(req.params.id).trim().toUpperCase()).catch(() => null) ?? await findDelivery(req.params.id);
+  const delivery = await findByTrackingCode(String(routeParam(req.params.id, "id")).trim().toUpperCase()).catch(() => null) ?? await findDelivery(routeParam(req.params.id, "id"));
   if (!delivery || delivery.status !== "DELIVERED" || delivery.receiverPhone !== receiverPhone || !delivery.driverId) return res.status(403).json({ error: "Receiver details could not be verified" });
   const pinKey = "rating:" + delivery.id + ":" + receiverPhone;
   const pinRate = checkReceiverPinRate(pinKey);
@@ -297,9 +318,9 @@ app.get("/api/driver/payouts", requireAuth("DRIVER"), async (req, res) => {
 
 app.get("/api/deliveries/:id/payout", requireAuth(), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Payouts require the production database" });
-  const delivery = await findDeliveryForUser(req.params.id, identity(req), "DRIVER");
+  const delivery = await findDeliveryForUser(routeParam(req.params.id, "id"), identity(req), "DRIVER");
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
-  const payout = await findPayout(req.params.id);
+  const payout = await findPayout(routeParam(req.params.id, "id"));
   return res.json({ payout });
 });
 
@@ -307,16 +328,16 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
   if (!databaseEnabled()) return res.status(503).json({ error: "Payouts require the production database" });
   const driver = await driverForUser(identity(req));
   if (!driver) return res.status(404).json({ error: "Driver profile not found" });
-  const delivery = await findDeliveryForUser(req.params.id, identity(req), "DRIVER");
+  const delivery = await findDeliveryForUser(routeParam(req.params.id, "id"), identity(req), "DRIVER");
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
-  const payout = await findPayout(req.params.id);
+  const payout = await findPayout(routeParam(req.params.id, "id"));
   if (!payout || payout.status !== "ELIGIBLE") return res.status(409).json({ error: "Payout is not eligible yet. The receiver must confirm delivery first." });
   const account = await getDriverPayoutAccount(driver.id);
   if (!account) return res.status(409).json({ error: "Add and verify a payout bank account before withdrawing." });
-  const processing = await setPayoutProcessing(req.params.id);
+  const processing = await setPayoutProcessing(routeParam(req.params.id, "id"));
   if (!processing) return res.status(409).json({ error: "Payout is already being processed." });
   const secret = process.env.PAYSTACK_SECRET_KEY;
-  if (!secret) { await markPayoutFailed(req.params.id); return res.status(503).json({ error: "Paystack transfers are not configured" }); }
+  if (!secret) { await markPayoutFailed(routeParam(req.params.id, "id")); return res.status(503).json({ error: "Paystack transfers are not configured" }); }
   const reference = "sd_payout_" + randomUUID().replaceAll("-", "");
   const response = await fetch("https://api.paystack.co/transfer", {
     method: "POST",
@@ -325,12 +346,12 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
   });
   const data = await response.json() as { status?: boolean; message?: string; data?: { reference?: string; status?: string } };
   if (!response.ok || !data.status || !data.data?.reference) {
-    await markPayoutFailed(req.params.id);
+    await markPayoutFailed(routeParam(req.params.id, "id"));
     return res.status(502).json({ error: data.message ?? "Paystack transfer could not be initiated" });
   }
-  await setPayoutProviderReference(req.params.id, data.data.reference);
+  await setPayoutProviderReference(routeParam(req.params.id, "id"), data.data.reference);
   return res.status(202).json({
-    payout: await findPayout(req.params.id),
+    payout: await findPayout(routeParam(req.params.id, "id")),
     providerStatus: data.data.status ?? "pending",
     message: "Transfer initiated. Final payout status will be updated from Paystack's transfer webhook."
   });
@@ -340,7 +361,7 @@ app.get("/api/drivers/:driverId/ratings", requireAuth(), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Ratings require the production database" });
   const result = await pool!.query(
     `SELECT stars, comment, created_at FROM ratings WHERE rated_user_id=$1 ORDER BY created_at DESC LIMIT 100`,
-    [req.params.driverId]
+    [routeParam(req.params.driverId, "driverId")]
   );
   const average = result.rows.length
     ? result.rows.reduce((sum: number, row: { stars: number }) => sum + Number(row.stars), 0) / result.rows.length
@@ -351,7 +372,7 @@ app.get("/api/drivers/:driverId/ratings", requireAuth(), async (req, res) => {
 app.post("/api/deliveries/:id/rating/driver", requireAuth("DRIVER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Ratings require the production database" });
   const userId = identity(req);
-  const delivery = await findDeliveryForUser(req.params.id, userId, "DRIVER");
+  const delivery = await findDeliveryForUser(routeParam(req.params.id, "id"), userId, "DRIVER");
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   if (delivery.status !== "DELIVERED") return res.status(409).json({ error: "Only completed deliveries can be rated" });
   const parsed = z.object({ stars: z.number().int().min(1).max(5), comment: z.string().max(500).optional() }).safeParse(req.body);
@@ -384,7 +405,7 @@ app.post("/api/notifications/:id/read", requireAuth(), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Notifications require the production database" });
   const result = await pool!.query(
     "UPDATE notifications SET read_at=COALESCE(read_at, now()) WHERE id=$1 AND user_id=$2 RETURNING id, read_at",
-    [req.params.id, identity(req)]
+    [routeParam(req.params.id, "id"), identity(req)]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Notification not found" });
   res.json({ notification: result.rows[0] });
@@ -473,7 +494,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
 
 app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), async (req, res) => {
   const userId = identity(req);
-  const delivery = databaseEnabled() ? await findDeliveryForUser(req.params.id, userId, "CUSTOMER") : await getOne(req.params.id);
+  const delivery = databaseEnabled() ? await findDeliveryForUser(routeParam(req.params.id, "id"), userId, "CUSTOMER") : await getOne(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   if (!databaseEnabled()) return res.status(503).json({ error: "Payments require the production database" });
 
@@ -525,8 +546,8 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
 app.post("/api/deliveries/:id/payment", requireAuth("CUSTOMER"), async (req, res) => {
   const userId = identity(req);
   const delivery = databaseEnabled()
-    ? await findDeliveryForUser(req.params.id, userId, "CUSTOMER")
-    : await getOne(req.params.id);
+    ? await findDeliveryForUser(routeParam(req.params.id, "id"), userId, "CUSTOMER")
+    : await getOne(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
 
   const amountMinor = delivery.quote?.totalMinor;
@@ -667,10 +688,10 @@ app.get("/api/deliveries/:id/payment/status", requireAuth("CUSTOMER", "ADMIN"), 
   const userId = identity(req);
   const role = (req as typeof req & { user?: { role: "CUSTOMER" | "ADMIN" } }).user!.role;
   const delivery = databaseEnabled()
-    ? await findDeliveryForUser(req.params.id, userId, role)
-    : await getOne(req.params.id);
+    ? await findDeliveryForUser(routeParam(req.params.id, "id"), userId, role)
+    : await getOne(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
-  const payment = await findPayment(req.params.id);
+  const payment = await findPayment(routeParam(req.params.id, "id"));
   if (!payment) return res.status(404).json({ error: "Payment not found" });
   res.json({ payment });
 });
@@ -678,7 +699,7 @@ app.get("/api/deliveries/:id/payment/status", requireAuth("CUSTOMER", "ADMIN"), 
 app.post("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER"), async (req, res) => {
   const userId = identity(req);
   const delivery = databaseEnabled()
-    ? await findDeliveryForUser(req.params.id, userId, (req as any).user.role)
+    ? await findDeliveryForUser(routeParam(req.params.id, "id"), userId, (req as any).user.role)
     : null;
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   if (delivery.status === "CANCELLED") {
@@ -687,10 +708,10 @@ app.post("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER"), async
   const reason = String(req.body?.reason ?? "").trim();
   const description = String(req.body?.description ?? "").trim();
   if (!reason) return res.status(400).json({ error: "Dispute reason is required" });
-  const dispute = await createDispute(req.params.id, userId, reason, description);
+  const dispute = await createDispute(routeParam(req.params.id, "id"), userId, reason, description);
   if (!dispute) return res.status(409).json({ error: "A dispute already exists or database is unavailable" });
   await recordDeliveryEvent({
-    deliveryId: req.params.id,
+    deliveryId: routeParam(req.params.id, "id"),
     eventType: "DISPUTE_OPENED",
     actorUserId: userId,
     metadata: { reason }
@@ -707,7 +728,7 @@ app.post("/api/track/:trackingCode/dispute", async (req, res) => {
   if (!receiverPhone || !/^\d{6}$/.test(receiverPin) || !reason) {
     return res.status(400).json({ error: "Receiver phone, six-digit PIN and dispute reason are required" });
   }
-  const delivery = await findByTrackingCode(String(req.params.trackingCode).trim().toUpperCase());
+  const delivery = await findByTrackingCode(String(routeParam(req.params.trackingCode, "trackingCode")).trim().toUpperCase());
   if (!delivery || delivery.receiverPhone !== receiverPhone) {
     return res.status(403).json({ error: "Receiver details could not be verified" });
   }
@@ -733,9 +754,9 @@ app.post("/api/track/:trackingCode/dispute", async (req, res) => {
 app.get("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER", "ADMIN"), async (req, res) => {
   const userId = identity(req);
   const role = (req as any).user.role;
-  const delivery = await findDeliveryForUser(req.params.id, userId, role);
+  const delivery = await findDeliveryForUser(routeParam(req.params.id, "id"), userId, role);
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
-  const dispute = await findDispute(req.params.id);
+  const dispute = await findDispute(routeParam(req.params.id, "id"));
   if (!dispute) return res.status(404).json({ error: "No dispute found" });
   res.json({ dispute });
 });
@@ -807,7 +828,7 @@ app.post("/api/driver/documents/upload", requireAuth("DRIVER"), async (req, res)
 
 app.get("/api/driver/documents/file/:filename", requireAuth(), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
-  const filename = path.basename(req.params.filename);
+  const filename = path.basename(routeParam(req.params.filename, "filename"));
   const documentUrl = "/api/driver/documents/file/" + filename;
   const result = await pool!.query("SELECT driver_id FROM driver_documents WHERE document_url=$1 LIMIT 1", [documentUrl]);
   const row = result.rows[0];
@@ -859,7 +880,7 @@ app.get("/api/admin/drivers/:driverId/documents", requireAuth("ADMIN"), async (r
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool!.query(
     "SELECT id, document_type, document_url, status, review_note, created_at, updated_at FROM driver_documents WHERE driver_id=$1 ORDER BY created_at DESC",
-    [req.params.driverId]
+    [routeParam(req.params.driverId, "driverId")]
   );
   res.json({ documents: result.rows });
 });
@@ -871,7 +892,7 @@ app.post("/api/admin/driver-documents/:documentId/review", requireAuth("ADMIN"),
   if (status !== "APPROVED" && status !== "REJECTED") return res.status(400).json({ error: "Status must be APPROVED or REJECTED" });
   const result = await pool!.query(
     "UPDATE driver_documents SET status=$2, review_note=$3, updated_at=now() WHERE id=$1 RETURNING id, driver_id, document_type, status, review_note, updated_at",
-    [req.params.documentId, status, note || null]
+    [routeParam(req.params.documentId, "documentId"), status, note || null]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Document not found" });
   await recordAdminCaseAudit({
@@ -912,7 +933,7 @@ app.post("/api/admin/drivers/:driverId/approve", requireAuth("ADMIN"), async (re
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
   const documents = await pool!.query(
     "SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status='APPROVED')::int AS approved FROM driver_documents WHERE driver_id=$1",
-    [req.params.driverId]
+    [routeParam(req.params.driverId, "driverId")]
   );
   const documentSummary = documents.rows[0];
   if (!documentSummary || documentSummary.total < 1 || documentSummary.approved < 1) {
@@ -920,7 +941,7 @@ app.post("/api/admin/drivers/:driverId/approve", requireAuth("ADMIN"), async (re
   }
   const result = await pool!.query(
     "UPDATE drivers SET status='APPROVED' WHERE id=$1 AND status='PENDING' RETURNING id, user_id, status",
-    [req.params.driverId]
+    [routeParam(req.params.driverId, "driverId")]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Pending driver not found" });
   await recordAdminCaseAudit({ adminUserId: identity(req), action: "DRIVER_APPROVED", metadata: { driverId: result.rows[0].id } });
@@ -931,7 +952,7 @@ app.post("/api/admin/drivers/:driverId/suspend", requireAuth("ADMIN"), async (re
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool!.query(
     "UPDATE drivers SET status='SUSPENDED', online=false WHERE id=$1 AND status <> 'SUSPENDED' RETURNING id, user_id, status",
-    [req.params.driverId]
+    [routeParam(req.params.driverId, "driverId")]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Driver not found" });
   await recordAdminCaseAudit({ adminUserId: identity(req), action: "DRIVER_SUSPENDED", metadata: { driverId: result.rows[0].id } });
@@ -1009,25 +1030,25 @@ app.get("/api/admin/disputes/:deliveryId", requireAuth("ADMIN"), async (req, res
        LEFT JOIN drivers dr ON dr.id=d.driver_id
        LEFT JOIN users du ON du.id=dr.user_id
       WHERE d.id=$1`,
-    [req.params.deliveryId]
+    [routeParam(req.params.deliveryId, "deliveryId")]
   );
   const row = result.rows[0];
   if (!row) return res.status(404).json({ error: "Delivery not found" });
   const [events, locations, audit] = await Promise.all([
-    pool!.query(`SELECT id, event_type, actor_user_id, metadata, created_at FROM delivery_events WHERE delivery_id=$1 ORDER BY created_at ASC LIMIT 200`, [req.params.deliveryId]),
-    pool!.query(`SELECT latitude::float AS latitude, longitude::float AS longitude, accuracy_meters::float AS accuracy_meters, recorded_at FROM location_events WHERE delivery_id=$1 ORDER BY recorded_at DESC LIMIT 100`, [req.params.deliveryId]),
-    listAdminCaseAudit(req.params.deliveryId)
+    pool!.query(`SELECT id, event_type, actor_user_id, metadata, created_at FROM delivery_events WHERE delivery_id=$1 ORDER BY created_at ASC LIMIT 200`, [routeParam(req.params.deliveryId, "deliveryId")]),
+    pool!.query(`SELECT latitude::float AS latitude, longitude::float AS longitude, accuracy_meters::float AS accuracy_meters, recorded_at FROM location_events WHERE delivery_id=$1 ORDER BY recorded_at DESC LIMIT 100`, [routeParam(req.params.deliveryId, "deliveryId")]),
+    listAdminCaseAudit(routeParam(req.params.deliveryId, "deliveryId"))
   ]);
   return res.json({ case: row, events: events.rows, locations: locations.rows, audit });
 });
 
 app.post("/api/admin/disputes/:deliveryId/review", requireAuth("ADMIN"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
-  const dispute = await markDisputeUnderReview(req.params.deliveryId);
+  const dispute = await markDisputeUnderReview(routeParam(req.params.deliveryId, "deliveryId"));
   if (!dispute) return res.status(409).json({ error: "Only open disputes can be moved to review" });
   const note = String(req.body?.note ?? "").trim() || "Case moved to investigation";
-  await recordAdminCaseAudit({ deliveryId: req.params.deliveryId, disputeId: dispute.id, adminUserId: identity(req), action: "DISPUTE_UNDER_REVIEW", note });
-  await recordDeliveryEvent({ deliveryId: req.params.deliveryId, eventType: "DISPUTE_UNDER_REVIEW", actorUserId: identity(req), metadata: { disputeId: dispute.id } });
+  await recordAdminCaseAudit({ deliveryId: routeParam(req.params.deliveryId, "deliveryId"), disputeId: dispute.id, adminUserId: identity(req), action: "DISPUTE_UNDER_REVIEW", note });
+  await recordDeliveryEvent({ deliveryId: routeParam(req.params.deliveryId, "deliveryId"), eventType: "DISPUTE_UNDER_REVIEW", actorUserId: identity(req), metadata: { disputeId: dispute.id } });
   return res.json({ dispute });
 });
 
@@ -1041,7 +1062,7 @@ app.post("/api/admin/support/tickets/:id/resolve", requireAuth("ADMIN"), async (
   const status = String(req.body?.status ?? "");
   const note = String(req.body?.note ?? "").trim();
   if (!["IN_REVIEW","RESOLVED","CLOSED"].includes(status) || !note) return res.status(400).json({ error: "A valid status and resolution note are required" });
-  const ticket = await resolveSupportTicket(req.params.id, status as "IN_REVIEW" | "RESOLVED" | "CLOSED", note);
+  const ticket = await resolveSupportTicket(routeParam(req.params.id, "id"), status as "IN_REVIEW" | "RESOLVED" | "CLOSED", note);
   if (!ticket) return res.status(404).json({ error: "Support ticket not found or already resolved" });
   if (ticket.deliveryId) {
     await recordAdminCaseAudit({
@@ -1063,7 +1084,7 @@ app.get("/api/admin/payouts", requireAuth("ADMIN"), async (_req, res) => {
 
 app.post("/api/admin/payouts/:deliveryId/retry", requireAuth("ADMIN"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
-  const payout = await retryFailedPayout(req.params.deliveryId);
+  const payout = await retryFailedPayout(routeParam(req.params.deliveryId, "deliveryId"));
   if (!payout) return res.status(409).json({ error: "Only failed or reversed payouts can be retried" });
   await recordDeliveryEvent({
     deliveryId: payout.deliveryId,
@@ -1088,7 +1109,7 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
 
   if (status === "RESOLVED_REFUND") {
     if (!databaseEnabled()) return res.status(503).json({ error: "Refunds require the production database and Paystack" });
-    const paymentBefore = await findPayment(req.params.id);
+    const paymentBefore = await findPayment(routeParam(req.params.id, "id"));
     if (!paymentBefore) return res.status(409).json({ error: "No payment was found for this delivery" });
     const requestedAmount = Number(req.body?.refundAmountMinor);
     const refundAmountMinor = Number.isInteger(requestedAmount) && requestedAmount > 0 ? requestedAmount : paymentBefore.amountMinor;
@@ -1096,7 +1117,7 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
     const secret = process.env.PAYSTACK_SECRET_KEY;
     if (!secret) return res.status(503).json({ error: "Paystack refund configuration is not ready" });
 
-    const prepared = await prepareRefund(req.params.id, refundAmountMinor);
+    const prepared = await prepareRefund(routeParam(req.params.id, "id"), refundAmountMinor);
     if (!prepared) return res.status(409).json({ error: "This case is no longer refundable. Check the payment, existing refund and courier payout status." });
 
     const response = await fetch("https://api.paystack.co/refund", {
@@ -1112,44 +1133,44 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
     });
     const payload = await response.json() as any;
     if (!response.ok || !payload.status) {
-      await recordAdminCaseAudit({ deliveryId: req.params.id, disputeId: prepared.dispute.id, adminUserId: identity(req), action: "REFUND_INITIATION_FAILED", note, metadata: { provider: "paystack", amountMinor: refundAmountMinor, error: payload.message ?? "Paystack refund failed" } });
+      await recordAdminCaseAudit({ deliveryId: routeParam(req.params.id, "id"), disputeId: prepared.dispute.id, adminUserId: identity(req), action: "REFUND_INITIATION_FAILED", note, metadata: { provider: "paystack", amountMinor: refundAmountMinor, error: payload.message ?? "Paystack refund failed" } });
       return res.status(502).json({ error: payload.message ?? "Paystack could not initiate the refund" });
     }
     const refundReference = String(payload.data?.refund_reference ?? payload.data?.id ?? "");
     const refundStatus = String(payload.data?.status ?? "pending");
-    await markPaymentRefund(req.params.id, refundReference, refundStatus, refundAmountMinor);
-    const dispute = await resolveDispute(req.params.id, status, note);
+    await markPaymentRefund(routeParam(req.params.id, "id"), refundReference, refundStatus, refundAmountMinor);
+    const dispute = await resolveDispute(routeParam(req.params.id, "id"), status, note);
     if (!dispute) return res.status(409).json({ error: "The dispute could not be resolved after refund initiation. Review the audit trail before retrying." });
     await recordAdminCaseAudit({
-      deliveryId: req.params.id,
+      deliveryId: routeParam(req.params.id, "id"),
       disputeId: dispute.id,
       adminUserId: identity(req),
       action: "REFUND_INITIATED",
       note,
       metadata: { provider: "paystack", transactionReference: prepared.payment.providerReference, refundReference, refundStatus, amountMinor: refundAmountMinor, payoutCancelled: Boolean(prepared.payout) }
     });
-    await recordDeliveryEvent({ deliveryId: req.params.id, eventType: "REFUND_INITIATED", actorUserId: identity(req), metadata: { provider: "paystack", transactionReference: prepared.payment.providerReference, refundReference, refundStatus, amountMinor: refundAmountMinor } });
+    await recordDeliveryEvent({ deliveryId: routeParam(req.params.id, "id"), eventType: "REFUND_INITIATED", actorUserId: identity(req), metadata: { provider: "paystack", transactionReference: prepared.payment.providerReference, refundReference, refundStatus, amountMinor: refundAmountMinor } });
     return res.json({ dispute, refund: { status: refundStatus, reference: refundReference, amountMinor: refundAmountMinor } });
   }
 
-  const dispute = await resolveDispute(req.params.id, status, note);
+  const dispute = await resolveDispute(routeParam(req.params.id, "id"), status, note);
   if (!dispute) return res.status(404).json({ error: "Open dispute not found" });
   if (databaseEnabled()) {
-    const payment = await findPayment(req.params.id);
-    if (payment && ["HELD", "AUTHORIZED"].includes(payment.status)) await updatePaymentStatus(req.params.id, "RELEASED");
+    const payment = await findPayment(routeParam(req.params.id, "id"));
+    if (payment && ["HELD", "AUTHORIZED"].includes(payment.status)) await updatePaymentStatus(routeParam(req.params.id, "id"), "RELEASED");
   }
-  await recordAdminCaseAudit({ deliveryId: req.params.id, disputeId: dispute.id, adminUserId: identity(req), action: "DISPUTE_RELEASED", note, metadata: { resolution: status } });
-  await recordDeliveryEvent({ deliveryId: req.params.id, eventType: "DISPUTE_RESOLVED", actorUserId: identity(req), metadata: { resolution: status } });
+  await recordAdminCaseAudit({ deliveryId: routeParam(req.params.id, "id"), disputeId: dispute.id, adminUserId: identity(req), action: "DISPUTE_RELEASED", note, metadata: { resolution: status } });
+  await recordDeliveryEvent({ deliveryId: routeParam(req.params.id, "id"), eventType: "DISPUTE_RESOLVED", actorUserId: identity(req), metadata: { resolution: status } });
   return res.json({ dispute });
 });
 app.get("/api/deliveries/:id/payout", requireAuth("DRIVER", "ADMIN"), async (req, res) => {
   const userId = identity(req);
   const role = (req as typeof req & { user?: { role: "DRIVER" | "ADMIN" } }).user!.role;
   const delivery = databaseEnabled()
-    ? await findDeliveryForUser(req.params.id, userId, role)
-    : await getOne(req.params.id);
+    ? await findDeliveryForUser(routeParam(req.params.id, "id"), userId, role)
+    : await getOne(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
-  const payout = await findPayout(req.params.id);
+  const payout = await findPayout(routeParam(req.params.id, "id"));
   if (!payout) return res.status(404).json({ error: "Payout has not been created" });
   res.json({ payout });
 });
@@ -1157,8 +1178,8 @@ app.get("/api/deliveries/:id/payout", requireAuth("DRIVER", "ADMIN"), async (req
 app.get("/api/deliveries/:id/events", requireAuth("CUSTOMER", "DRIVER", "ADMIN"), async (req, res) => {
   const user = (req as typeof req & { user?: { userId: string; role: "CUSTOMER" | "DRIVER" | "ADMIN" } }).user!;
   const delivery = databaseEnabled()
-    ? await findDeliveryForUser(req.params.id, user.userId, user.role)
-    : await getOne(req.params.id);
+    ? await findDeliveryForUser(routeParam(req.params.id, "id"), user.userId, user.role)
+    : await getOne(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   res.json({ events: await listDeliveryEvents(delivery.id) });
 });
@@ -1166,8 +1187,8 @@ app.get("/api/deliveries/:id/events", requireAuth("CUSTOMER", "DRIVER", "ADMIN")
 app.get("/api/deliveries/:id", requireAuth("CUSTOMER", "DRIVER", "ADMIN"), async (req, res) => {
   const user = (req as typeof req & { user?: { userId: string; role: "CUSTOMER" | "DRIVER" | "ADMIN" } }).user!;
   const delivery = databaseEnabled()
-    ? await findDeliveryForUser(req.params.id, user.userId, user.role)
-    : await getOne(req.params.id);
+    ? await findDeliveryForUser(routeParam(req.params.id, "id"), user.userId, user.role)
+    : await getOne(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   res.json(safeDelivery(delivery));
 });
@@ -1185,7 +1206,7 @@ app.post("/api/track/session", async (req, res) => {
 });
 
 app.get("/api/track/:trackingCode", async (req, res) => {
-  const code = String(req.params.trackingCode ?? "").trim().toUpperCase();
+  const code = String(routeParam(req.params.trackingCode, "trackingCode") ?? "").trim().toUpperCase();
   const receiverPhone = String(req.query.receiverPhone ?? "").trim();
   if (!receiverPhone) return res.status(400).json({ error: "receiverPhone is required" });
   const delivery = databaseEnabled()
@@ -1261,7 +1282,7 @@ app.get("/api/driver/me", requireAuth("DRIVER"), async (req, res) => {
 app.get("/api/driver/:driverId/jobs", requireAuth("DRIVER"), async (req, res) => {
   const driverId = await authenticatedDriverId(req);
   if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
-  if (req.params.driverId !== driverId) return res.status(403).json({ error: "Driver identity mismatch" });
+  if (routeParam(req.params.driverId, "driverId") !== driverId) return res.status(403).json({ error: "Driver identity mismatch" });
   const jobs = databaseEnabled()
     ? await listOpenJobs(driverId)
     : [...deliveries.values()].filter(d => !d.driverId && ["CREATED", "PAYMENT_AUTHORIZED"].includes(d.status));
@@ -1272,14 +1293,14 @@ app.post("/api/deliveries/:id/accept", requireAuth("DRIVER"), async (req, res) =
   const driverId = await authenticatedDriverId(req);
   if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
   if (databaseEnabled()) {
-    const updated = await transitionDelivery(req.params.id, "PAYMENT_AUTHORIZED", "DRIVER_ASSIGNED", driverId);
+    const updated = await transitionDelivery(routeParam(req.params.id, "id"), "PAYMENT_AUTHORIZED", "DRIVER_ASSIGNED", driverId);
     if (!updated) return res.status(409).json({ error: "Delivery is no longer available" });
     await recordDeliveryEvent({ deliveryId: updated.id, eventType: "DRIVER_ASSIGNED", actorUserId: identity(req), metadata: { driverId } });
     await notificationForDelivery(updated.id, updated.senderId, "Driver assigned", "A driver has accepted your SwiftDrop delivery.", "DRIVER_ASSIGNED");
-    publishDeliveryUpdate(req.params.id, safeDelivery(updated));
+    publishDeliveryUpdate(routeParam(req.params.id, "id"), safeDelivery(updated));
     return res.json(safeDelivery(updated));
   }
-  const delivery = deliveries.get(req.params.id);
+  const delivery = deliveries.get(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   if (delivery.driverId || !["CREATED", "PAYMENT_AUTHORIZED"].includes(delivery.status)) return res.status(409).json({ error: "Delivery is no longer available" });
   delivery.driverId = driverId; delivery.status = "DRIVER_ASSIGNED"; delivery.updatedAt = new Date().toISOString();
@@ -1291,13 +1312,13 @@ app.post("/api/deliveries/:id/at-pickup", requireAuth("DRIVER"), async (req, res
   const driverId = await authenticatedDriverId(req);
   if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
   if (databaseEnabled()) {
-    const updated = await transitionDelivery(req.params.id, "DRIVER_ASSIGNED", "DRIVER_AT_PICKUP", driverId);
+    const updated = await transitionDelivery(routeParam(req.params.id, "id"), "DRIVER_ASSIGNED", "DRIVER_AT_PICKUP", driverId);
     if (!updated) return res.status(409).json({ error: "Delivery is not awaiting pickup or driver is not assigned" });
     await recordDeliveryEvent({ deliveryId: updated.id, eventType: "DRIVER_AT_PICKUP", actorUserId: identity(req), metadata: {} });
     await notificationForDelivery(updated.id, updated.senderId, "Driver has arrived", "Your SwiftDrop driver is at the pickup location.", "DRIVER_AT_PICKUP");
     return res.json(safeDelivery(updated));
   }
-  const delivery = deliveries.get(req.params.id);
+  const delivery = deliveries.get(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   if (delivery.driverId !== driverId) return res.status(403).json({ error: "Driver is not assigned to this delivery" });
   if (delivery.status !== "DRIVER_ASSIGNED") return res.status(409).json({ error: "Delivery is not awaiting pickup" });
@@ -1337,8 +1358,8 @@ app.post("/api/uploads/pickup-photo", requireAuth("DRIVER"), async (req, res) =>
 app.get("/api/deliveries/:id/pickup-photo", requireAuth("CUSTOMER", "DRIVER", "ADMIN"), async (req, res) => {
   const user = (req as typeof req & { user?: { userId: string; role: "CUSTOMER" | "DRIVER" | "ADMIN" } }).user!;
   const delivery = databaseEnabled()
-    ? await findDeliveryForUser(req.params.id, user.userId, user.role)
-    : await getOne(req.params.id);
+    ? await findDeliveryForUser(routeParam(req.params.id, "id"), user.userId, user.role)
+    : await getOne(routeParam(req.params.id, "id"));
   if (!delivery || !delivery.pickupPhotoUrl) return res.status(404).json({ error: "Pickup photo not found" });
   if (!objectStorageEnabled && process.env.NODE_ENV === "production") return res.status(503).json({ error: "Private object storage is not configured" });
   try {
@@ -1352,7 +1373,7 @@ app.get("/api/deliveries/:id/pickup-photo", requireAuth("CUSTOMER", "DRIVER", "A
 });
 
 app.get("/api/track/:trackingCode/pickup-photo", async (req, res) => {
-  const code = String(req.params.trackingCode ?? "").trim().toUpperCase();
+  const code = String(routeParam(req.params.trackingCode, "trackingCode") ?? "").trim().toUpperCase();
   const receiverPhone = String(req.query.receiverPhone ?? "").trim();
   if (!receiverPhone) return res.status(400).json({ error: "receiverPhone is required" });
   const delivery = databaseEnabled()
@@ -1376,15 +1397,15 @@ app.post("/api/deliveries/:id/pickup", requireAuth("DRIVER"), async (req, res) =
   const driverId = await authenticatedDriverId(req);
   if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
   const photo = String(req.body?.pickupPhotoUrl ?? "");
-  if (!photo || !photo.startsWith("/api/deliveries/" + req.params.id + "/pickup-photo")) return res.status(400).json({ error: "A valid pickup parcel photo is required" });
+  if (!photo || !photo.startsWith("/api/deliveries/" + routeParam(req.params.id, "id") + "/pickup-photo")) return res.status(400).json({ error: "A valid pickup parcel photo is required" });
   if (databaseEnabled()) {
-    const updated = await savePickupPhoto(req.params.id, driverId, photo);
+    const updated = await savePickupPhoto(routeParam(req.params.id, "id"), driverId, photo);
     if (!updated) return res.status(409).json({ error: "Driver must be assigned and at pickup before confirming pickup" });
     await recordDeliveryEvent({ deliveryId: updated.id, eventType: "PICKED_UP", actorUserId: identity(req), metadata: { pickupPhotoUrl: photo } });
     await notificationForDelivery(updated.id, updated.senderId, "Parcel picked up", "Your parcel has been picked up and the pickup photo is available.", "PICKED_UP");
     return res.json(safeDelivery(updated));
   }
-  const delivery = deliveries.get(req.params.id);
+  const delivery = deliveries.get(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   if (delivery.driverId !== driverId) return res.status(403).json({ error: "Driver is not assigned to this delivery" });
   if (delivery.status !== "DRIVER_AT_PICKUP") return res.status(409).json({ error: "Driver must be at pickup first" });
@@ -1397,13 +1418,13 @@ app.post("/api/deliveries/:id/start-trip", requireAuth("DRIVER"), async (req, re
   const driverId = await authenticatedDriverId(req);
   if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
   if (databaseEnabled()) {
-    const updated = await transitionDelivery(req.params.id, "PICKED_UP", "IN_TRANSIT", driverId);
+    const updated = await transitionDelivery(routeParam(req.params.id, "id"), "PICKED_UP", "IN_TRANSIT", driverId);
     if (!updated) return res.status(409).json({ error: "Parcel must be picked up first or driver is not assigned" });
     await recordDeliveryEvent({ deliveryId: updated.id, eventType: "IN_TRANSIT", actorUserId: identity(req), metadata: {} });
     await notificationForDelivery(updated.id, updated.senderId, "Parcel is moving", "Your parcel is now in transit. Live tracking is active.", "IN_TRANSIT");
     return res.json(safeDelivery(updated));
   }
-  const delivery = deliveries.get(req.params.id);
+  const delivery = deliveries.get(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   if (delivery.driverId !== driverId) return res.status(403).json({ error: "Driver is not assigned to this delivery" });
   if (delivery.status !== "PICKED_UP") return res.status(409).json({ error: "Parcel must be picked up first" });
@@ -1413,7 +1434,7 @@ app.post("/api/deliveries/:id/start-trip", requireAuth("DRIVER"), async (req, re
 });
 
 app.post("/api/deliveries/:id/location", requireAuth("DRIVER"), async (req, res) => {
-  const delivery = await getOne(req.params.id);
+  const delivery = await getOne(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   const driverId = await authenticatedDriverId(req);
   if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
@@ -1441,13 +1462,13 @@ app.post("/api/deliveries/:id/arrived", requireAuth("DRIVER"), async (req, res) 
   const driverId = await authenticatedDriverId(req);
   if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
   if (databaseEnabled()) {
-    const updated = await transitionDelivery(req.params.id, "IN_TRANSIT", "ARRIVED", driverId);
+    const updated = await transitionDelivery(routeParam(req.params.id, "id"), "IN_TRANSIT", "ARRIVED", driverId);
     if (!updated) return res.status(409).json({ error: "Delivery is not in transit or driver is not assigned" });
     await recordDeliveryEvent({ deliveryId: updated.id, eventType: "ARRIVED", actorUserId: identity(req), metadata: {} });
     await notificationForDelivery(updated.id, updated.senderId, "Driver has arrived", "Your driver has arrived at the delivery location.", "ARRIVED");
     return res.json(safeDelivery(updated));
   }
-  const delivery = deliveries.get(req.params.id);
+  const delivery = deliveries.get(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   if (delivery.driverId !== driverId) return res.status(403).json({ error: "Driver is not assigned to this delivery" });
   if (delivery.status !== "IN_TRANSIT") return res.status(409).json({ error: "Delivery is not in transit" });
@@ -1459,7 +1480,7 @@ app.post("/api/deliveries/:id/arrived", requireAuth("DRIVER"), async (req, res) 
 app.post("/api/deliveries/:id/complete", requireAuth("DRIVER"), async (req, res) => {
   const driverId = await authenticatedDriverId(req);
   if (!driverId) return res.status(403).json({ error: "Only KYC-verified drivers can manage deliveries" });
-  const current = databaseEnabled() ? await findDelivery(req.params.id) : deliveries.get(req.params.id);
+  const current = databaseEnabled() ? await findDelivery(routeParam(req.params.id, "id")) : deliveries.get(routeParam(req.params.id, "id"));
   if (!current || current.driverId !== driverId) return res.status(403).json({ error: "Driver is not assigned to this delivery" });
   if (current.status !== "ARRIVED") return res.status(409).json({ error: "Driver must mark the parcel arrived before receiver confirmation" });
   return res.status(409).json({ error: "Receiver confirmation is required to complete delivery and release payment" });
@@ -1470,9 +1491,9 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
   const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
   const receiverPin = String(req.body?.receiverPin ?? "").trim();
   if (!receiverPhone || !/^\d{6}$/.test(receiverPin)) return res.status(400).json({ error: "Receiver phone and six-digit PIN are required" });
-  const payment = await findPayment(req.params.id);
+  const payment = await findPayment(routeParam(req.params.id, "id"));
   if (!payment || payment.status !== "HELD") return res.status(409).json({ error: "Payment is not currently held for delivery release" });
-  const deliveryForPin = await findDelivery(req.params.id);
+  const deliveryForPin = await findDelivery(routeParam(req.params.id, "id"));
   if (!deliveryForPin || deliveryForPin.receiverPhone !== receiverPhone) return res.status(403).json({ error: "Receiver details could not be verified" });
   const pinKey = "confirm:" + deliveryForPin.id + ":" + receiverPhone;
   const pinRate = checkReceiverPinRate(pinKey);
@@ -1484,7 +1505,7 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
   clearReceiverPinFailures(pinKey);
   try {
     const result = await confirmReceiverAndReleaseEscrow(
-      req.params.id,
+      routeParam(req.params.id, "id"),
       receiverPhone,
       receiverPin,
       Number(process.env.DRIVER_PAYOUT_PERCENT ?? 90)
