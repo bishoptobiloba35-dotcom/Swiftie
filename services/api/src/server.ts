@@ -10,7 +10,7 @@ import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
-import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, prepareRefund } from "./database/deliveryRepository.js";
+import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, prepareRefund, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -1204,15 +1204,28 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
     return res.json({ dispute, refund: { status: refundStatus, reference: refundReference, amountMinor: refundAmountMinor } });
   }
 
-  const dispute = await resolveDispute(routeParam(req.params.id, "id"), status, note);
-  if (!dispute) return res.status(404).json({ error: "Open dispute not found" });
-  if (databaseEnabled()) {
-    const payment = await findPayment(routeParam(req.params.id, "id"));
-    if (payment && ["HELD", "AUTHORIZED"].includes(payment.status)) await updatePaymentStatus(routeParam(req.params.id, "id"), "RELEASED");
-  }
-  await recordAdminCaseAudit({ deliveryId: routeParam(req.params.id, "id"), disputeId: dispute.id, adminUserId: identity(req), action: "DISPUTE_RELEASED", note, metadata: { resolution: status } });
-  await recordDeliveryEvent({ deliveryId: routeParam(req.params.id, "id"), eventType: "DISPUTE_RESOLVED", actorUserId: identity(req), metadata: { resolution: status } });
-  return res.json({ dispute });
+  if (!databaseEnabled()) return res.status(503).json({ error: "Dispute release requires the production database" });
+  const released = await releaseDisputeAndCreatePayout(
+    routeParam(req.params.id, "id"),
+    Number(process.env.DRIVER_PAYOUT_PERCENT ?? 90),
+    note
+  );
+  if (!released) return res.status(409).json({ error: "This dispute cannot be released. Verify that the payment is held and an assigned driver is eligible for payout." });
+  await recordAdminCaseAudit({
+    deliveryId: routeParam(req.params.id, "id"),
+    disputeId: released.dispute.id,
+    adminUserId: identity(req),
+    action: "DISPUTE_RELEASED",
+    note,
+    metadata: { resolution: status, payoutCreated: Boolean(released.payout), payoutAmountMinor: released.payout?.amountMinor ?? 0 }
+  });
+  await recordDeliveryEvent({
+    deliveryId: routeParam(req.params.id, "id"),
+    eventType: "DISPUTE_RESOLVED",
+    actorUserId: identity(req),
+    metadata: { resolution: status, escrowReleased: true, payoutEligible: Boolean(released.payout) }
+  });
+  return res.json({ dispute: released.dispute, payment: released.payment, payout: released.payout });
 });
 app.get("/api/deliveries/:id/payout", requireAuth("DRIVER", "ADMIN"), async (req, res) => {
   const userId = identity(req);
