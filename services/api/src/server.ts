@@ -8,7 +8,7 @@ import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
-import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, confirmReceiverAndReleaseEscrow, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout } from "./database/deliveryRepository.js";
+import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
 import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus } from "./database/deliveryRepository.js";
@@ -513,6 +513,29 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
     const claimed = await claimPaystackWebhookEvent({ payloadHash: webhookHash, eventType: String(event?.event ?? ""), providerReference: webhookReference || null });
     if (!claimed) return res.status(200).json({ received: true, duplicate: true });
   }
+  if (typeof event?.event === "string" && event.event.startsWith("refund.")) {
+    const transactionReference = String(event?.data?.transaction_reference ?? event?.data?.transaction?.reference ?? "");
+    const refundReference = String(event?.data?.refund_reference ?? event?.data?.id ?? "");
+    if (transactionReference && databaseEnabled()) {
+      const result = await pool!.query("SELECT delivery_id FROM payments WHERE provider_reference=$1", [transactionReference]);
+      const deliveryId = result.rows[0]?.delivery_id as string | undefined;
+      if (deliveryId) {
+        const refundStatus = String(event.event).replace("refund.", "");
+        const amountMinor = Number(event?.data?.amount ?? 0);
+        await markPaymentRefund(deliveryId, refundReference, refundStatus, amountMinor);
+        if (refundStatus === "processed") {
+          await updatePaymentStatus(deliveryId, "REFUNDED", transactionReference);
+          await recordDeliveryEvent({ deliveryId, eventType: "REFUND_PROCESSED", metadata: { provider: "paystack", transactionReference, refundReference, amountMinor } });
+        } else if (refundStatus === "failed") {
+          await recordDeliveryEvent({ deliveryId, eventType: "REFUND_FAILED", metadata: { provider: "paystack", transactionReference, refundReference } });
+        } else {
+          await recordDeliveryEvent({ deliveryId, eventType: "REFUND_" + refundStatus.toUpperCase(), metadata: { provider: "paystack", transactionReference, refundReference } });
+        }
+      }
+    }
+    return res.status(200).json({ received: true });
+  }
+
   if (event?.event === "transfer.success" || event?.event === "transfer.failed" || event?.event === "transfer.reversed") {
     const reference = String(event?.data?.reference ?? "");
     if (reference) {
@@ -892,13 +915,47 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
   }
   const note = String(req.body?.note ?? "").trim();
   if (!note) return res.status(400).json({ error: "Resolution note is required" });
+
+  if (status === "RESOLVED_REFUND") {
+    if (!databaseEnabled()) return res.status(503).json({ error: "Refunds require the production database and Paystack" });
+    const payment = await findPayment(req.params.id);
+    const secret = process.env.PAYSTACK_SECRET_KEY;
+    if (!payment || payment.provider !== "paystack" || !payment.providerReference) return res.status(409).json({ error: "No refundable Paystack payment was found" });
+    if (!secret) return res.status(503).json({ error: "Paystack refund configuration is not ready" });
+    const response = await fetch("https://api.paystack.co/refund", {
+      method: "POST",
+      headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
+      body: JSON.stringify({
+        transaction: payment.providerReference,
+        amount: payment.amountMinor,
+        currency: payment.currency,
+        customer_note: "SwiftDrop delivery dispute refund",
+        merchant_note: note
+      })
+    });
+    const payload = await response.json() as any;
+    if (!response.ok || !payload.status) {
+      return res.status(502).json({ error: payload.message ?? "Paystack could not initiate the refund" });
+    }
+    const refundReference = String(payload.data?.refund_reference ?? payload.data?.id ?? "");
+    const refundStatus = String(payload.data?.status ?? "pending");
+    await markPaymentRefund(req.params.id, refundReference, refundStatus, Number(payload.data?.amount ?? payment.amountMinor));
+    const dispute = await resolveDispute(req.params.id, status, note);
+    if (!dispute) return res.status(404).json({ error: "Open dispute not found" });
+    await recordDeliveryEvent({
+      deliveryId: req.params.id,
+      eventType: "REFUND_INITIATED",
+      actorUserId: identity(req),
+      metadata: { provider: "paystack", transactionReference: payment.providerReference, refundReference, refundStatus, amountMinor: payment.amountMinor }
+    });
+    return res.json({ dispute, refund: { status: refundStatus, reference: refundReference, amountMinor: payment.amountMinor } });
+  }
+
   const dispute = await resolveDispute(req.params.id, status, note);
   if (!dispute) return res.status(404).json({ error: "Open dispute not found" });
   if (databaseEnabled()) {
     const payment = await findPayment(req.params.id);
-    if (payment && ["HELD", "AUTHORIZED"].includes(payment.status)) {
-      await updatePaymentStatus(req.params.id, status === "RESOLVED_REFUND" ? "REFUNDED" : "RELEASED");
-    }
+    if (payment && ["HELD", "AUTHORIZED"].includes(payment.status)) await updatePaymentStatus(req.params.id, "RELEASED");
   }
   await recordDeliveryEvent({
     deliveryId: req.params.id,
@@ -906,7 +963,7 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
     actorUserId: identity(req),
     metadata: { resolution: status }
   });
-  res.json({ dispute });
+  return res.json({ dispute });
 });
 
 app.get("/api/deliveries/:id/payout", requireAuth("DRIVER", "ADMIN"), async (req, res) => {
