@@ -15,6 +15,7 @@ import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
 import { validateProductionConfig } from "./productionConfig.js";
+import { ensureAiDefaults, getAiPermission, updateAiPermission, auditAiAction, evaluateAiPayment, type AiMode } from "./aiPolicy.js";
 import { getPrivateObject, objectStorageEnabled, putPrivateObject } from "./storage.js";
 import { enqueueNotification, processNotificationOutbox, processNotificationPushReceipts } from "./notificationOutbox.js";
 
@@ -61,6 +62,174 @@ app.use((req, res, next) => {
   next();
 });
 app.use("/api/auth", authRoutes);
+
+app.get("/api/me/product-profile", requireAuth("CUSTOMER", "DRIVER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Product profile requires the production database" });
+  const userId = identity(req);
+  try {
+    const result = await pool!.query(
+      `INSERT INTO user_plans (user_id) VALUES ($1)
+       ON CONFLICT (user_id) DO UPDATE SET updated_at=now()
+       RETURNING user_id, individual_plan, business_plan`,
+      [userId]
+    );
+    const business = await pool!.query(
+      `SELECT id, name, status FROM business_accounts WHERE owner_user_id=$1 LIMIT 1`,
+      [userId]
+    );
+    return res.json({ plan: result.rows[0], business: business.rows[0] ?? null });
+  } catch {
+    return res.status(500).json({ error: "Unable to load product profile" });
+  }
+});
+
+app.get("/api/ai/permissions", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "AI permissions require the production database" });
+  try {
+    return res.json({ permissions: await getAiPermission(identity(req)) });
+  } catch {
+    return res.status(500).json({ error: "Unable to load AI permissions" });
+  }
+});
+
+app.patch("/api/ai/permissions", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "AI permissions require the production database" });
+  const parsed = z.object({
+    mode: z.enum(["ASSIST", "AUTHORIZED", "AUTONOMOUS"]).optional(),
+    autoPayEnabled: z.boolean().optional(),
+    autoPayLimitMinor: z.number().int().min(0).max(100_000_000).optional(),
+    dailySpendLimitMinor: z.number().int().min(0).max(500_000_000).optional(),
+    preferredVehicle: z.string().trim().max(40).nullable().optional(),
+    maxDeliveryCostMinor: z.number().int().min(0).max(100_000_000).nullable().optional(),
+    approvalThresholdMinor: z.number().int().min(0).max(100_000_000).nullable().optional()
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (parsed.data.mode === "AUTONOMOUS" && !parsed.data.autoPayEnabled) {
+    return res.status(400).json({ error: "Autonomous mode requires automatic payments to be explicitly enabled" });
+  }
+  try {
+    const permissions = await updateAiPermission(identity(req), parsed.data);
+    await auditAiAction({ userId: identity(req), actionType: "UPDATE_AI_PERMISSIONS", status: "EXECUTED", details: { mode: permissions.mode } });
+    return res.json({ permissions });
+  } catch {
+    return res.status(500).json({ error: "Unable to update AI permissions" });
+  }
+});
+
+app.post("/api/ai/actions", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "AI actions require the production database" });
+  const parsed = z.object({
+    actionType: z.string().trim().min(2).max(80),
+    amountMinor: z.number().int().positive().max(500_000_000).optional(),
+    targetType: z.string().trim().max(80).optional(),
+    targetId: z.string().uuid().optional(),
+    details: z.record(z.string(), z.unknown()).default({})
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const userId = identity(req);
+  try {
+    const permissions = await getAiPermission(userId);
+    const payment = parsed.data.amountMinor == null
+      ? { allowed: true, requiresApproval: permissions.mode === "ASSIST", reason: permissions.mode === "ASSIST" ? "AI is configured for assisted actions" : undefined }
+      : evaluateAiPayment(permissions, parsed.data.amountMinor);
+    if (!payment.allowed) {
+      const audit = await auditAiAction({ userId, actionType: parsed.data.actionType, status: "REJECTED", amountMinor: parsed.data.amountMinor, targetType: parsed.data.targetType, targetId: parsed.data.targetId, details: { reason: payment.reason } });
+      return res.status(403).json({ error: payment.reason ?? "AI action rejected", audit });
+    }
+    const status = payment.requiresApproval ? "PREPARED" : "EXECUTED";
+    const audit = await auditAiAction({
+      userId,
+      actionType: parsed.data.actionType,
+      status,
+      amountMinor: parsed.data.amountMinor,
+      targetType: parsed.data.targetType,
+      targetId: parsed.data.targetId,
+      details: { ...parsed.data.details, requiresApproval: payment.requiresApproval, reason: payment.reason }
+    });
+    return res.status(201).json({ action: audit, requiresApproval: payment.requiresApproval, reason: payment.reason });
+  } catch {
+    return res.status(500).json({ error: "Unable to evaluate AI action" });
+  }
+});
+
+app.get("/api/ai/activity", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "AI activity requires the production database" });
+  const result = await pool!.query(
+    `SELECT id, action_type, status, amount_minor, currency, target_type, target_id, details, created_at
+       FROM ai_action_audit WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100`,
+    [identity(req)]
+  );
+  return res.json({ activity: result.rows });
+});
+
+app.post("/api/business", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Business accounts require the production database" });
+  const parsed = z.object({ name: z.string().trim().min(2).max(160) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  try {
+    const result = await pool!.query(
+      `INSERT INTO business_accounts (owner_user_id, name) VALUES ($1,$2)
+       ON CONFLICT (owner_user_id) DO UPDATE SET name=EXCLUDED.name, updated_at=now()
+       RETURNING id, name, status`,
+      [identity(req), parsed.data.name]
+    );
+    await pool!.query(`INSERT INTO business_ai_rules (business_id) VALUES ($1) ON CONFLICT (business_id) DO NOTHING`, [result.rows[0].id]);
+    return res.status(201).json({ business: result.rows[0] });
+  } catch {
+    return res.status(500).json({ error: "Unable to create business account" });
+  }
+});
+
+app.get("/api/business/ai-rules", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Business AI requires the production database" });
+  const business = await pool!.query(`SELECT id FROM business_accounts WHERE owner_user_id=$1 LIMIT 1`, [identity(req)]);
+  if (!business.rows[0]) return res.status(404).json({ error: "Business account not found" });
+  const rules = await pool!.query(`SELECT * FROM business_ai_rules WHERE business_id=$1`, [business.rows[0].id]);
+  return res.json({ businessId: business.rows[0].id, rules: rules.rows[0] ?? null });
+});
+
+app.patch("/api/business/ai-rules", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Business AI requires the production database" });
+  const parsed = z.object({
+    autoDispatchEnabled: z.boolean().optional(),
+    weekdaySchedule: z.string().trim().max(100).nullable().optional(),
+    dailySpendLimitMinor: z.number().int().min(0).max(2_000_000_000).optional(),
+    approvalThresholdMinor: z.number().int().min(0).max(2_000_000_000).optional(),
+    maxDeliveryCostMinor: z.number().int().min(0).max(500_000_000).nullable().optional(),
+    preferredVehicle: z.string().trim().max(40).nullable().optional(),
+    autoReplaceCancelled: z.boolean().optional()
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const business = await pool!.query(`SELECT id FROM business_accounts WHERE owner_user_id=$1 LIMIT 1`, [identity(req)]);
+  if (!business.rows[0]) return res.status(404).json({ error: "Business account not found" });
+  const current = await pool!.query(`SELECT * FROM business_ai_rules WHERE business_id=$1`, [business.rows[0].id]);
+  const row = current.rows[0] ?? {};
+  const next = { autoDispatchEnabled: parsed.data.autoDispatchEnabled ?? Boolean(row.auto_dispatch_enabled), weekdaySchedule: parsed.data.weekdaySchedule === undefined ? row.weekday_schedule : parsed.data.weekdaySchedule, dailySpendLimitMinor: parsed.data.dailySpendLimitMinor ?? Number(row.daily_spend_limit_minor ?? 0), approvalThresholdMinor: parsed.data.approvalThresholdMinor ?? Number(row.approval_threshold_minor ?? 0), maxDeliveryCostMinor: parsed.data.maxDeliveryCostMinor === undefined ? (row.max_delivery_cost_minor == null ? null : Number(row.max_delivery_cost_minor)) : parsed.data.maxDeliveryCostMinor, preferredVehicle: parsed.data.preferredVehicle === undefined ? row.preferred_vehicle : parsed.data.preferredVehicle, autoReplaceCancelled: parsed.data.autoReplaceCancelled ?? Boolean(row.auto_replace_cancelled) };
+  const updated = await pool!.query(
+    `UPDATE business_ai_rules SET auto_dispatch_enabled=$2, weekday_schedule=$3, daily_spend_limit_minor=$4,
+       approval_threshold_minor=$5, max_delivery_cost_minor=$6, preferred_vehicle=$7, auto_replace_cancelled=$8, updated_at=now()
+     WHERE business_id=$1 RETURNING *`,
+    [business.rows[0].id, next.autoDispatchEnabled, next.weekdaySchedule, next.dailySpendLimitMinor, next.approvalThresholdMinor, next.maxDeliveryCostMinor, next.preferredVehicle, next.autoReplaceCancelled]
+  );
+  return res.json({ rules: updated.rows[0] });
+});
+
+app.post("/api/agents/apply", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Agent applications require the production database" });
+  const parsed = z.object({
+    businessName: z.string().trim().min(2).max(160),
+    category: z.string().trim().min(2).max(80),
+    address: z.string().trim().min(5).max(500),
+    services: z.array(z.enum(["DROP_OFF","PICKUP","RETURNS"])).min(1).max(3)
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const result = await pool!.query(
+    `INSERT INTO agent_applications (applicant_user_id, business_name, category, address, services)
+     VALUES ($1,$2,$3,$4,$5) RETURNING id, business_name, category, address, services, status, created_at`,
+    [identity(req), parsed.data.businessName, parsed.data.category, parsed.data.address, parsed.data.services]
+  );
+  return res.status(201).json({ application: result.rows[0] });
+});
 
 type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED";
 type DeliveryLocation = { latitude: number; longitude: number; recordedAt?: string };
