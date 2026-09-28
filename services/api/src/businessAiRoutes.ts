@@ -351,4 +351,61 @@ router.get("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, r
   res.json({ businesses: result.rows });
 });
 
+const dropOffApplicationSchema = z.object({
+  businessId: z.string().uuid().optional(), legalName: z.string().trim().min(2).max(200).optional(), displayName: z.string().trim().min(2).max(120).optional(),
+  registrationNumber: z.string().trim().max(100).optional(), name: z.string().trim().min(2).max(160), address: z.string().trim().min(5).max(500),
+  latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180), phone: z.string().trim().min(7).max(30),
+  operatingHours: z.record(z.string(), z.string()).default({}), capacity: z.number().int().min(1).max(10000).default(50),
+  commissionMinor: z.number().int().nonnegative().max(100000000).default(50000)
+});
+async function managesDropOff(userId: string, locationId: string): Promise<boolean> {
+  if (!pool) return false;
+  const result = await pool.query("SELECT 1 FROM drop_off_locations dl JOIN business_accounts ba ON ba.id=dl.business_id LEFT JOIN business_members bm ON bm.business_id=ba.id AND bm.user_id=$2 AND bm.active=true WHERE dl.id=$1 AND (ba.owner_user_id=$2 OR bm.member_role IN ('OWNER','ADMIN'))",[locationId,userId]);
+  return Boolean(result.rows[0]);
+}
+router.post("/drop-off/applications", requireAuth("CUSTOMER","AGENT","ADMIN"), async (req,res) => {
+  if (!pool) return res.status(503).json({error:"Drop-off applications require the production database"});
+  const parsed=dropOffApplicationSchema.safeParse(req.body); if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
+  const d=parsed.data,userId=identity(req),client=await pool.connect();
+  try {
+    await client.query("BEGIN"); let businessId=d.businessId;
+    if(businessId){
+      const managed=await client.query("SELECT 1 FROM business_accounts ba LEFT JOIN business_members bm ON bm.business_id=ba.id AND bm.user_id=$2 AND bm.active=true WHERE ba.id=$1 AND (ba.owner_user_id=$2 OR bm.member_role IN ('OWNER','ADMIN'))",[businessId,userId]);
+      if(!managed.rows[0]){await client.query("ROLLBACK");return res.status(403).json({error:"You do not manage this business"});}
+    } else {
+      const b=await client.query("INSERT INTO business_accounts(owner_user_id,legal_name,display_name,registration_number,status) VALUES($1,$2,$3,$4,'PENDING') RETURNING id",[userId,d.legalName??d.displayName??d.name,d.displayName??d.name,d.registrationNumber??null]);
+      businessId=b.rows[0].id; await client.query("INSERT INTO business_members(business_id,user_id,member_role) VALUES($1,$2,'OWNER')",[businessId,userId]);
+    }
+    const location=await client.query("INSERT INTO drop_off_locations(business_id,name,address,latitude,longitude,phone,operating_hours,capacity,commission_minor) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) RETURNING *",[businessId,d.name,d.address,d.latitude,d.longitude,d.phone,JSON.stringify(d.operatingHours),d.capacity,d.commissionMinor]);
+    await client.query("INSERT INTO drop_off_application_audit(location_id,actor_user_id,new_status,note) VALUES($1,$2,'PENDING','Application submitted')",[location.rows[0].id,userId]);
+    await client.query("COMMIT"); res.status(201).json({location:location.rows[0]});
+  } catch(e){await client.query("ROLLBACK");res.status(400).json({error:e instanceof Error?e.message:"Unable to submit application"});} finally{client.release();}
+});
+router.get("/drop-off/locations", requireAuth("CUSTOMER","AGENT","ADMIN"), async (req,res) => {
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const latitude=Number(req.query.latitude),longitude=Number(req.query.longitude),radiusKm=Math.min(100,Math.max(1,Number(req.query.radiusKm)||25));
+  if(!Number.isFinite(latitude)||!Number.isFinite(longitude))return res.status(400).json({error:"latitude and longitude are required"});
+  const latDelta=radiusKm/111,lngDelta=radiusKm/(111*Math.max(.2,Math.cos(latitude*Math.PI/180)));
+  const result=await pool.query("SELECT dl.*,ba.display_name AS business_name FROM drop_off_locations dl JOIN business_accounts ba ON ba.id=dl.business_id WHERE dl.status='ACTIVE' AND dl.verification_status='VERIFIED' AND dl.latitude BETWEEN $1 AND $2 AND dl.longitude BETWEEN $3 AND $4 LIMIT 200",[latitude-latDelta,latitude+latDelta,longitude-lngDelta,longitude+lngDelta]);
+  const locations=result.rows.map(row=>{const p1=latitude*Math.PI/180,p2=Number(row.latitude)*Math.PI/180,dp=(Number(row.latitude)-latitude)*Math.PI/180,dl=(Number(row.longitude)-longitude)*Math.PI/180,h=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return {...row,distanceKm:6371*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));}}).filter(row=>row.distanceKm<=radiusKm).sort((a,b)=>a.distanceKm-b.distanceKm);
+  res.json({locations});
+});
+router.get("/drop-off/locations/mine", requireAuth("CUSTOMER","AGENT","ADMIN"), async(req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const result=await pool.query("SELECT dl.*,ba.display_name AS business_name FROM drop_off_locations dl JOIN business_accounts ba ON ba.id=dl.business_id WHERE ba.owner_user_id=$1 OR EXISTS (SELECT 1 FROM business_members bm WHERE bm.business_id=ba.id AND bm.user_id=$1 AND bm.active=true AND bm.member_role IN ('OWNER','ADMIN')) ORDER BY dl.created_at DESC",[identity(req)]);
+  res.json({locations:result.rows});
+});
+router.get("/admin/drop-off/applications", requireAuth("ADMIN"), async(_req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const result=await pool.query("SELECT dl.*,ba.display_name AS business_name,(SELECT count(*) FROM drop_off_location_documents d WHERE d.location_id=dl.id) AS document_count FROM drop_off_locations dl JOIN business_accounts ba ON ba.id=dl.business_id ORDER BY dl.created_at DESC LIMIT 500");
+  res.json({applications:result.rows});
+});
+router.post("/admin/drop-off/locations/:id/review", requireAuth("ADMIN"), async(req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const parsed=z.object({status:z.enum(["ACTIVE","SUSPENDED","REJECTED","PENDING"]),note:z.string().max(1000).optional()}).safeParse(req.body);if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
+  const locationId=String(req.params.id),current=await pool.query("SELECT * FROM drop_off_locations WHERE id=$1",[locationId]);if(!current.rows[0])return res.status(404).json({error:"Location not found"});
+  const verified=parsed.data.status==="ACTIVE",client=await pool.connect();
+  try{await client.query("BEGIN");const updated=await client.query("UPDATE drop_off_locations SET status=$2,verification_status=$3,verified_by_user_id=CASE WHEN $3='VERIFIED' THEN $4 ELSE verified_by_user_id END,verified_at=CASE WHEN $3='VERIFIED' THEN now() ELSE verified_at END,updated_at=now() WHERE id=$1 RETURNING *",[locationId,parsed.data.status,verified?"VERIFIED":"REJECTED",identity(req)]);await client.query("UPDATE drop_off_location_documents SET status=$2,updated_at=now() WHERE location_id=$1 AND status='PENDING'",[locationId,verified?"APPROVED":"REJECTED"]);await client.query("INSERT INTO drop_off_application_audit(location_id,actor_user_id,old_status,new_status,note) VALUES($1,$2,$3,$4,$5)",[locationId,identity(req),current.rows[0].status,parsed.data.status,parsed.data.note??null]);await client.query("COMMIT");res.json({location:updated.rows[0]});}catch(e){await client.query("ROLLBACK");throw e}finally{client.release();}
+});
+
 export default router;
