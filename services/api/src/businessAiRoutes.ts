@@ -5,6 +5,7 @@ import { requireAuth } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
 import { driverForUser } from "./database/deliveryRepository.js";
 import { canCreatePersonalBuyOrder, canDispatchBusiness, canManageBusiness, canUseAiAction } from "./aiPolicy.js";
+import { putPrivateObject } from "./storage.js";
 
 const router = Router();
 
