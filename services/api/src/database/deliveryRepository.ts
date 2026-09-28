@@ -999,7 +999,7 @@ export async function listBusinessReadyDeliveries(businessId: string): Promise<B
   return result.rows.map(row => ({ delivery: rowToDelivery(row), status: row.business_status, priority: Number(row.priority), scheduledFor: row.scheduled_for ? new Date(row.scheduled_for).toISOString() : undefined }));
 }
 
-export async function dispatchBusinessDelivery(businessId: string, deliveryId: string): Promise<StoredDelivery | null> {
+export async function dispatchBusinessDelivery(businessId: string, deliveryId: string, preferredVehicle?: string): Promise<StoredDelivery | null> {
   if (!pool) return null;
   const client = await pool.connect();
   try {
@@ -1007,11 +1007,12 @@ export async function dispatchBusinessDelivery(businessId: string, deliveryId: s
     const candidate = await client.query(
       `SELECT d.id FROM deliveries d JOIN business_deliveries bd ON bd.delivery_id=d.id
         WHERE bd.business_id=$1 AND bd.delivery_id=$2 AND bd.status='READY'
-          AND d.status='PAYMENT_AUTHORIZED' AND d.driver_id IS NULL FOR UPDATE`, [businessId, deliveryId]);
+          AND d.status='PAYMENT_AUTHORIZED' AND d.driver_id IS NULL FOR UPDATE`, [businessId, deliveryId, preferredVehicle ?? null]);
     if (!candidate.rowCount) { await client.query('ROLLBACK'); return null; }
     const driver = await client.query(
       `SELECT d.id FROM drivers d WHERE d.status='APPROVED' AND d.online=true
         AND EXISTS (SELECT 1 FROM driver_documents dd WHERE dd.driver_id=d.id AND dd.status='APPROVED')
+        AND ($3::text IS NULL OR UPPER(COALESCE(d.vehicle_type,''))=UPPER($3::text))
         AND NOT EXISTS (SELECT 1 FROM deliveries x WHERE x.driver_id=d.id AND x.status IN ('DRIVER_ASSIGNED','DRIVER_AT_PICKUP','PICKED_UP','IN_TRANSIT','ARRIVED'))
        ORDER BY d.updated_at ASC NULLS FIRST LIMIT 1 FOR UPDATE SKIP LOCKED`);
     if (!driver.rowCount) { await client.query('ROLLBACK'); return null; }
@@ -1024,6 +1025,81 @@ export async function dispatchBusinessDelivery(businessId: string, deliveryId: s
     await client.query('COMMIT');
     return rowToDelivery(updated.rows[0]);
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
+
+export type BusinessAiRules = {
+  autoDispatchEnabled: boolean;
+  weekdaySchedule?: string | null;
+  dailySpendLimitMinor: number;
+  dailySpendUsedMinor: number;
+  dailySpendDate: string;
+  approvalThresholdMinor: number;
+  maxDeliveryCostMinor?: number | null;
+  preferredVehicle?: string | null;
+  autoReplaceCancelled: boolean;
+};
+
+export async function getBusinessAiRules(businessId: string): Promise<BusinessAiRules | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `SELECT auto_dispatch_enabled, weekday_schedule, daily_spend_limit_minor, daily_spend_used_minor,
+            daily_spend_date, approval_threshold_minor, max_delivery_cost_minor, preferred_vehicle,
+            auto_replace_cancelled
+       FROM business_ai_rules WHERE business_id=$1`,
+    [businessId]
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  if (new Date(row.daily_spend_date).toISOString().slice(0,10) !== new Date().toISOString().slice(0,10)) {
+    const reset = await pool.query(
+      `UPDATE business_ai_rules SET daily_spend_used_minor=0, daily_spend_date=CURRENT_DATE, updated_at=now()
+        WHERE business_id=$1 RETURNING auto_dispatch_enabled, weekday_schedule, daily_spend_limit_minor,
+          daily_spend_used_minor, daily_spend_date, approval_threshold_minor, max_delivery_cost_minor,
+          preferred_vehicle, auto_replace_cancelled`,
+      [businessId]
+    );
+    return mapBusinessAiRules(reset.rows[0]);
+  }
+  return mapBusinessAiRules(row);
+}
+
+function mapBusinessAiRules(row: any): BusinessAiRules {
+  return {
+    autoDispatchEnabled: Boolean(row.auto_dispatch_enabled),
+    weekdaySchedule: row.weekday_schedule ?? null,
+    dailySpendLimitMinor: Number(row.daily_spend_limit_minor ?? 0),
+    dailySpendUsedMinor: Number(row.daily_spend_used_minor ?? 0),
+    dailySpendDate: String(row.daily_spend_date),
+    approvalThresholdMinor: Number(row.approval_threshold_minor ?? 0),
+    maxDeliveryCostMinor: row.max_delivery_cost_minor == null ? null : Number(row.max_delivery_cost_minor),
+    preferredVehicle: row.preferred_vehicle ?? null,
+    autoReplaceCancelled: Boolean(row.auto_replace_cancelled)
+  };
+}
+
+export async function reserveBusinessSpend(businessId: string, amountMinor: number): Promise<boolean> {
+  if (!pool || !Number.isInteger(amountMinor) || amountMinor <= 0) return false;
+  await getBusinessAiRules(businessId);
+  const result = await pool.query(
+    `UPDATE business_ai_rules
+        SET daily_spend_used_minor=daily_spend_used_minor+$2, updated_at=now()
+      WHERE business_id=$1 AND daily_spend_date=CURRENT_DATE
+        AND (daily_spend_limit_minor=0 OR daily_spend_used_minor+$2<=daily_spend_limit_minor)
+      RETURNING daily_spend_used_minor`,
+    [businessId, amountMinor]
+  );
+  return result.rowCount === 1;
+}
+
+export async function releaseBusinessSpend(businessId: string, amountMinor: number): Promise<boolean> {
+  if (!pool || !Number.isInteger(amountMinor) || amountMinor <= 0) return false;
+  const result = await pool.query(
+    `UPDATE business_ai_rules SET daily_spend_used_minor=GREATEST(0,daily_spend_used_minor-$2), updated_at=now()
+      WHERE business_id=$1 AND daily_spend_date=CURRENT_DATE RETURNING daily_spend_used_minor`,
+    [businessId, amountMinor]
+  );
+  return result.rowCount === 1;
 }
 
 export async function assignNextDeliveryToDriver(driverId: string): Promise<StoredDelivery | null> {
