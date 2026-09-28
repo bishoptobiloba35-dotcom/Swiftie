@@ -586,10 +586,19 @@ router.post("/admin/buy-order-settlements/:id/status", requireAuth("ADMIN"), asy
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const parsed=z.object({status:z.enum(["PROCESSING","PAID","FAILED","REVERSED"]),providerReference:z.string().trim().max(200).optional(),failureReason:z.string().trim().max(500).optional()}).safeParse(req.body);
   if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
-  const result=await pool.query("UPDATE buy_order_settlements SET status=$2,provider_reference=COALESCE($3,provider_reference),failure_reason=COALESCE($4,failure_reason),updated_at=now() WHERE id=$1 RETURNING *",[String(req.params.id),parsed.data.status,parsed.data.providerReference??null,parsed.data.failureReason??null]);
-  if(!result.rows[0])return res.status(404).json({error:"Settlement not found"});
-  await pool.query("INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,(SELECT ai_plan FROM users WHERE id=$1),'SETTLEMENT_STATUS','UPDATE',true,'Admin settlement status update',$2::jsonb)",[identity(req),JSON.stringify({settlementId:String(req.params.id),status:parsed.data.status})]);
-  return res.json({settlement:result.rows[0]});
+  const id=String(req.params.id),client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const current=(await client.query("SELECT * FROM buy_order_settlements WHERE id=$1 FOR UPDATE",[id])).rows[0];
+    if(!current){await client.query("ROLLBACK");return res.status(404).json({error:"Settlement not found"});}
+    const reference=parsed.data.providerReference??current.provider_reference??current.transfer_reference;
+    if(parsed.data.status==="PAID"&&!reference){await client.query("ROLLBACK");return res.status(400).json({error:"A provider transfer reference is required before marking a settlement paid"});}
+    if(parsed.data.status==="PAID"&&current.status==="REVERSED"){await client.query("ROLLBACK");return res.status(409).json({error:"A reversed settlement cannot be marked paid manually"});}
+    const result=await client.query("UPDATE buy_order_settlements SET status=$2,provider_reference=COALESCE($3,provider_reference,transfer_reference),failure_reason=COALESCE($4,failure_reason),paid_at=CASE WHEN $2='PAID' THEN COALESCE(paid_at,now()) ELSE paid_at END,updated_at=now() WHERE id=$1 RETURNING *",[id,parsed.data.status,reference??null,parsed.data.failureReason??null]);
+    await client.query("INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,(SELECT ai_plan FROM users WHERE id=$1),'SETTLEMENT_STATUS','UPDATE',true,'Admin settlement status update',$2::jsonb)",[identity(req),JSON.stringify({settlementId:id,status:parsed.data.status,providerReference:reference??null})]);
+    await client.query("COMMIT");
+    return res.json({settlement:result.rows[0]});
+  }catch(error){try{await client.query("ROLLBACK")}catch{}throw error}finally{client.release();}
 });
 
 router.get("/admin/drop-off/locations/:locationId/documents", requireAuth("ADMIN"), async(req,res)=>{
