@@ -21,7 +21,7 @@ const client = objectStorageEnabled
 
 const localRoot = path.resolve(process.env.LOCAL_PRIVATE_STORAGE_DIR ?? "uploads/private");
 
-function safeStorageKey(key: string): string {
+export function safeStorageKey(key: string): string {
   const normalized = key.replaceAll("\\", "/").replace(/^\/+/, "");
   const parts = normalized.split("/");
   if (!normalized || parts.some(part => part === ".." || part === "." || part.length === 0)) {
