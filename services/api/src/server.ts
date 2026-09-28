@@ -511,6 +511,18 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   const pin = parsed.data.receiverPin;
   try {
     if (databaseEnabled()) {
+      const selectedLocationIds = [input.pickupDropOffLocationId, input.dropoffDropOffLocationId].filter((id): id is string => Boolean(id));
+      if (selectedLocationIds.length > 0) {
+        const locationResult = await pool!.query(
+          "SELECT id,status,verification_status FROM drop_off_locations WHERE id = ANY($1::uuid[])",
+          [selectedLocationIds]
+        );
+        const approvedIds = new Set(locationResult.rows.filter((row: { status: string; verification_status: string }) => row.status === "ACTIVE" && row.verification_status === "VERIFIED").map((row: { id: string }) => row.id));
+        if (approvedIds.size !== new Set(selectedLocationIds).size) {
+          return res.status(409).json({ error: "One or more selected drop-off locations are not active and verified" });
+        }
+      }
+
       const created = await createPersistentDelivery({
         senderId: input.senderId,
         receiverName: input.receiverName,
@@ -523,14 +535,8 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
         isPerishable: input.isPerishable,
         quote: input.quote
       });
-      if (input.pickupDropOffLocationId || input.dropoffDropOffLocationId) {
-        for (const locationId of [input.pickupDropOffLocationId, input.dropoffDropOffLocationId].filter(Boolean)) {
-          const location = await pool!.query("SELECT id,status,verification_status FROM drop_off_locations WHERE id=$1", [locationId]);
-          if (!location.rows[0] || location.rows[0].status !== "ACTIVE" || location.rows[0].verification_status !== "VERIFIED") return res.status(409).json({ error: "Selected drop-off location is not active" });
-        }
-        if (input.pickupDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'PICKUP',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.pickupDropOffLocationId]);
-        if (input.dropoffDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'DROPOFF',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.dropoffDropOffLocationId]);
-      }
+      if (input.pickupDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'PICKUP',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.pickupDropOffLocationId]);
+      if (input.dropoffDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'DROPOFF',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.dropoffDropOffLocationId]);
       return res.status(201).json(safeDelivery(created));
     }
     const now = new Date().toISOString();
