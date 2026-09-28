@@ -200,6 +200,42 @@ router.post("/buy-orders/:id/purchase", requireAuth("AGENT"), async (req, res) =
   res.status(201).json({ buyOrder: result.rows[0] });
 });
 
+router.post("/buy-orders/:id/create-delivery", requireAuth("AGENT"), async (req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const agent=await getAgent(identity(req));
+  if(!agent||agent.status!=="APPROVED")return res.status(403).json({error:"Approved agent status is required"});
+  const id=orderId(req);
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const order=(await client.query("SELECT * FROM buy_orders WHERE id=$1 FOR UPDATE",[id])).rows[0];
+    if(!order||order.agent_id!==agent.id){await client.query("ROLLBACK");return res.status(404).json({error:"Buy & Deliver order not found"});}
+    if(order.status!=="PURCHASED"){await client.query("ROLLBACK");return res.status(409).json({error:"The order must be purchased before delivery is created"});}
+    if(order.payment_status!=="HELD"){await client.query("ROLLBACK");return res.status(409).json({error:"Customer payment is not held"});}
+    if(order.delivery_id){const existing=(await client.query("SELECT id,tracking_code,status FROM deliveries WHERE id=$1",[order.delivery_id])).rows[0];await client.query("COMMIT");return res.json({delivery:existing,buyOrder:order});}
+    if(!order.receiver_name||!order.receiver_phone||!order.receiver_pin_hash||!order.destination_address||order.destination_lat==null||order.destination_lng==null){
+      await client.query("ROLLBACK");return res.status(409).json({error:"Receiver and delivery destination details are incomplete",code:"DESTINATION_INCOMPLETE"});
+    }
+    const deliveryId=crypto.randomUUID();
+    const trackingCode="SD-"+crypto.randomUUID().replaceAll("-","").slice(0,8).toUpperCase();
+    const pickupAddress=String(order.merchant_address||order.merchant_name||"Merchant pickup");
+    const pickupLat=order.merchant_lat==null?order.destination_lat:order.merchant_lat;
+    const pickupLng=order.merchant_lng==null?order.destination_lng:order.merchant_lng;
+    const delivery=(await client.query(
+      `INSERT INTO deliveries
+        (id,tracking_code,sender_id,receiver_name,receiver_phone,pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng,status,receiver_pin_hash,weight_kg,is_perishable,quote_currency)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'CREATED',$12,0,false,$13)
+       RETURNING id,tracking_code,status`,
+      [deliveryId,trackingCode,order.customer_user_id,order.receiver_name,order.receiver_phone,pickupAddress,pickupLat,pickupLng,order.destination_address,order.destination_lat,order.destination_lng,order.receiver_pin_hash,order.currency||"NGN"]
+    )).rows[0];
+    await client.query("UPDATE buy_orders SET delivery_id=$2,status='IN_TRANSIT',updated_at=now() WHERE id=$1",[id,deliveryId]);
+    await client.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'DELIVERY_CREATED',$3::jsonb)",[id,identity(req),JSON.stringify({deliveryId,trackingCode})]);
+    await client.query("INSERT INTO delivery_events(delivery_id,event_type,actor_user_id,metadata) VALUES($1,'BUY_AND_DELIVER_CREATED',$2,$3::jsonb)",[deliveryId,identity(req),JSON.stringify({buyOrderId:id,agentId:agent.id})]);
+    await client.query("COMMIT");
+    return res.status(201).json({delivery,buyOrderId:id});
+  }catch(e){await client.query("ROLLBACK");throw e}finally{client.release();}
+});
+
 router.get("/buy-orders/:id/receipt", requireAuth("CUSTOMER", "AGENT", "ADMIN"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const order = await getOrder(orderId(req));
