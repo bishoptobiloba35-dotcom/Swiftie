@@ -569,7 +569,7 @@ export default function App() {
 
     {payout && <View style={styles.card}>
       <Text style={styles.title}>Current payout</Text>
-      <Text style={styles.earnings}>₦{(payout.amount_minor / 100).toLocaleString()}</Text>
+      <Text style={styles.title}>₦{(payout.amount_minor / 100).toLocaleString()}</Text>
       <Text style={styles.muted}>Status: {payout.status.replaceAll("_", " ")}{payout.provider_status ? " · Paystack: " + payout.provider_status : ""}</Text>
       {payout.provider_reference ? <Text style={styles.muted}>Transfer: {payout.provider_reference}</Text> : null}
       {payout.failure_reason ? <Text style={styles.muted}>Reason: {payout.failure_reason}</Text> : null}

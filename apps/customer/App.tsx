@@ -397,7 +397,7 @@ export default function App() {
       <Text style={styles.status}>{delivery.status.replaceAll("_", " ")}</Text>
       <Text>Pickup: {delivery.pickup.formattedAddress}</Text>
       <Text>Drop-off: {delivery.dropoff.formattedAddress}</Text>
-      {location ? <View style={styles.locationBox}>
+      {location && delivery.dropoff.location ? <View style={styles.locationBox}>
         <Text style={styles.photoTitle}>Live driver position</Text>
         <MapView
           style={styles.map}
@@ -416,11 +416,11 @@ export default function App() {
           }}
         >
           <Marker coordinate={{ latitude: location.latitude, longitude: location.longitude }} title="SwiftDrop driver" description="Live driver location" />
-          <Marker coordinate={{ latitude: delivery.dropoff.latitude, longitude: delivery.dropoff.longitude }} title="Drop-off" description={delivery.dropoff.formattedAddress} />
+          <Marker coordinate={{ latitude: delivery.dropoff.location.latitude, longitude: delivery.dropoff.location.longitude }} title="Drop-off" description={delivery.dropoff.formattedAddress} />
           <Polyline
             coordinates={[
               { latitude: location.latitude, longitude: location.longitude },
-              { latitude: delivery.dropoff.latitude, longitude: delivery.dropoff.longitude }
+              { latitude: delivery.dropoff.location.latitude, longitude: delivery.dropoff.location.longitude }
             ]}
             strokeWidth={4}
           />
