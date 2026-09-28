@@ -818,7 +818,7 @@ app.get("/api/driver/documents/file/:filename", requireAuth(), async (req, res) 
     if (!driver || driver.id !== row.driver_id) return res.status(403).json({ error: "Not authorized to view this document" });
   }
 
-  if (!objectStorageEnabled) return res.status(503).json({ error: "Private object storage is not configured" });
+  if (!objectStorageEnabled && process.env.NODE_ENV === "production") return res.status(503).json({ error: "Private object storage is not configured" });
   try {
     const stored = await getPrivateObject("kyc/" + row.driver_id + "/" + filename);
     res.setHeader("content-type", stored.contentType ?? "application/octet-stream");
@@ -1340,7 +1340,7 @@ app.get("/api/deliveries/:id/pickup-photo", requireAuth("CUSTOMER", "DRIVER", "A
     ? await findDeliveryForUser(req.params.id, user.userId, user.role)
     : await getOne(req.params.id);
   if (!delivery || !delivery.pickupPhotoUrl) return res.status(404).json({ error: "Pickup photo not found" });
-  if (!objectStorageEnabled) return res.status(503).json({ error: "Private object storage is not configured" });
+  if (!objectStorageEnabled && process.env.NODE_ENV === "production") return res.status(503).json({ error: "Private object storage is not configured" });
   try {
     const stored = await getPrivateObject("pickups/" + delivery.id + "/photo.jpg").catch(async () => getPrivateObject("pickups/" + delivery.id + "/photo.png"));
     res.setHeader("content-type", stored.contentType ?? "image/jpeg");
@@ -1361,7 +1361,7 @@ app.get("/api/track/:trackingCode/pickup-photo", async (req, res) => {
   if (!delivery || delivery.receiverPhone !== receiverPhone || !delivery.pickupPhotoUrl) {
     return res.status(403).json({ error: "Tracking details could not be verified" });
   }
-  if (!objectStorageEnabled) return res.status(503).json({ error: "Private object storage is not configured" });
+  if (!objectStorageEnabled && process.env.NODE_ENV === "production") return res.status(503).json({ error: "Private object storage is not configured" });
   try {
     const stored = await getPrivateObject("pickups/" + delivery.id + "/photo.jpg").catch(async () => getPrivateObject("pickups/" + delivery.id + "/photo.png"));
     res.setHeader("content-type", stored.contentType ?? "image/jpeg");
