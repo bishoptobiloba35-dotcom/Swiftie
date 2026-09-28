@@ -514,7 +514,7 @@ router.post("/admin/buy-order-settlements/:id/status", requireAuth("ADMIN"), asy
   if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
   const result=await pool.query("UPDATE buy_order_settlements SET status=$2,provider_reference=COALESCE($3,provider_reference),failure_reason=COALESCE($4,failure_reason),updated_at=now() WHERE id=$1 RETURNING *",[String(req.params.id),parsed.data.status,parsed.data.providerReference??null,parsed.data.failureReason??null]);
   if(!result.rows[0])return res.status(404).json({error:"Settlement not found"});
-  await pool.query("INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,'ADMIN','SETTLEMENT_STATUS','UPDATE',true,'Admin settlement status update',$2::jsonb)",[identity(req),JSON.stringify({settlementId:String(req.params.id),status:parsed.data.status})]);
+  await pool.query("INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,(SELECT ai_plan FROM users WHERE id=$1),'SETTLEMENT_STATUS','UPDATE',true,'Admin settlement status update',$2::jsonb)",[identity(req),JSON.stringify({settlementId:String(req.params.id),status:parsed.data.status})]);
   return res.json({settlement:result.rows[0]});
 });
 
