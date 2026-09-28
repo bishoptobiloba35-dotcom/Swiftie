@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { pool } from "./db.js";
 import { hashPin, verifyPin } from "../security.js";
+import { canTransition } from "../deliveryState.js";
 
 export type PaymentRecord = {
   id: string;
@@ -731,11 +732,17 @@ export async function listOpenJobs(driverId: string): Promise<StoredDelivery[]> 
 }
 
 export async function transitionDelivery(id: string, from: string, to: string, driverId?: string): Promise<StoredDelivery | null> {
-  if (!pool) return null;
+  if (!pool || !canTransition(from as any, to as any)) return null;
   const result = await pool.query(
     `UPDATE deliveries
      SET status=$2, driver_id=COALESCE($3, driver_id), updated_at=now()
-     WHERE id=$1 AND status=$4
+     WHERE id=$1
+       AND status=$4
+       AND (
+         ($4='PAYMENT_AUTHORIZED' AND driver_id IS NULL AND $3 IS NOT NULL)
+         OR ($4<>'PAYMENT_AUTHORIZED' AND $3 IS NOT NULL AND driver_id=$3)
+         OR ($3 IS NULL)
+       )
      RETURNING *`,
     [id, to, driverId ?? null, from]
   );
