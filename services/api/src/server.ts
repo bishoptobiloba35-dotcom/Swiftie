@@ -1621,6 +1621,63 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
   const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
   const receiverPin = String(req.body?.receiverPin ?? "").trim();
   if (!receiverPhone || !/^\d{6}$/.test(receiverPin)) return res.status(400).json({ error: "Receiver phone and six-digit PIN are required" });
+
+  // Buy & Deliver has its own escrow record; do not route it through the normal delivery payment table.
+  const buyOrderResult = await pool!.query(
+    "SELECT bo.*, d.status AS delivery_status, d.driver_id FROM buy_orders bo JOIN deliveries d ON d.id=bo.delivery_id WHERE bo.delivery_id=$1 FOR UPDATE OF bo, d",
+    [routeParam(req.params.id, "id")]
+  );
+  const buyOrder = buyOrderResult.rows[0];
+  if (buyOrder) {
+    if (buyOrder.payment_status !== "HELD") return res.status(409).json({ error: "Buy & Deliver payment is not currently held for release" });
+    if (buyOrder.delivery_status !== "ARRIVED" || !buyOrder.driver_id) return res.status(409).json({ error: "The courier must arrive before receiver confirmation" });
+    const client = await pool!.connect();
+    try {
+      await client.query("BEGIN");
+      const locked = (await client.query(
+        "SELECT bo.*, d.status AS delivery_status, d.driver_id FROM buy_orders bo JOIN deliveries d ON d.id=bo.delivery_id WHERE bo.id=$1 FOR UPDATE OF bo, d",
+        [buyOrder.id]
+      )).rows[0];
+      if (!locked || locked.payment_status !== "HELD" || locked.delivery_status !== "ARRIVED") {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Buy & Deliver order changed before receiver confirmation" });
+      }
+      const updatedDelivery = (await client.query(
+        "UPDATE deliveries SET status='DELIVERED', updated_at=now() WHERE id=$1 AND status='ARRIVED' RETURNING *",
+        [locked.delivery_id]
+      )).rows[0];
+      if (!updatedDelivery) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Delivery is no longer awaiting receiver confirmation" });
+      }
+      await client.query(
+        "UPDATE buy_order_payments SET status='RELEASED', updated_at=now() WHERE buy_order_id=$1 AND status='HELD'",
+        [locked.id]
+      );
+      await client.query(
+        "UPDATE buy_orders SET payment_status='RELEASED', status='DELIVERED', updated_at=now() WHERE id=$1 AND payment_status='HELD'",
+        [locked.id]
+      );
+      await client.query(
+        "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,NULL,'PAYMENT_RELEASED',$2::jsonb)",
+        [locked.id, JSON.stringify({ deliveryId: locked.delivery_id, receiverPhoneVerified: true, releaseReason: "receiver_pin_confirmed" })]
+      );
+      await client.query(
+        "INSERT INTO delivery_events (delivery_id,event_type,actor_user_id,metadata) VALUES ($1,'RECEIVER_CONFIRMED_DELIVERY',$2,$3::jsonb)",
+        [locked.delivery_id, identity(req), JSON.stringify({ buyOrderId: locked.id, escrowReleased: true })]
+      );
+      await client.query("COMMIT");
+      await notificationForDelivery(locked.delivery_id, locked.customer_user_id, "Delivery confirmed", "The receiver confirmed receipt. Your Buy & Deliver payment has been released.", "DELIVERED");
+      publishDeliveryUpdate(locked.delivery_id, safeDelivery(updatedDelivery));
+      return res.json({ delivery: safeDelivery(updatedDelivery), buyOrderId: locked.id, escrowStatus: "RELEASED" });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to release Buy & Deliver payment" });
+    } finally {
+      client.release();
+    }
+  }
+
   const payment = await findPayment(routeParam(req.params.id, "id"));
   if (!payment || payment.status !== "HELD") return res.status(409).json({ error: "Payment is not currently held for delivery release" });
   const deliveryForPin = await findDelivery(routeParam(req.params.id, "id"));
