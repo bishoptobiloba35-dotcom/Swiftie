@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export type AuthRole = "CUSTOMER" | "DRIVER" | "ADMIN";
+export type AuthRole = "CUSTOMER" | "DRIVER" | "AGENT" | "ADMIN";
 export type AuthUser = { userId: string; role: AuthRole };
 
 const secret = () => process.env.JWT_SECRET || "development-only-change-me";
@@ -28,7 +28,7 @@ export function verifyAccessToken(token: string): AuthUser {
   const b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b)) throw new Error("Invalid access token");
   const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { userId?: string; role?: string; exp?: number };
-  if (!decoded.userId || !decoded.role || !["CUSTOMER", "DRIVER", "ADMIN"].includes(decoded.role)) throw new Error("Invalid access token");
+  if (!decoded.userId || !decoded.role || !["CUSTOMER", "DRIVER", "AGENT", "ADMIN"].includes(decoded.role)) throw new Error("Invalid access token");
   if (!decoded.exp || decoded.exp < Math.floor(Date.now() / 1000)) throw new Error("Access token expired");
   return { userId: decoded.userId, role: decoded.role as AuthRole };
 }

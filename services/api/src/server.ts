@@ -17,6 +17,8 @@ import { identity } from "./requestIdentity.js";
 import { validateProductionConfig } from "./productionConfig.js";
 import { getPrivateObject, objectStorageEnabled, putPrivateObject } from "./storage.js";
 import { enqueueNotification, processNotificationOutbox, processNotificationPushReceipts } from "./notificationOutbox.js";
+import businessAiRoutes from "./businessAiRoutes.js";
+import agentRoutes from "./agentRoutes.js";
 
 const app = express();
 
@@ -61,6 +63,8 @@ app.use((req, res, next) => {
   next();
 });
 app.use("/api/auth", authRoutes);
+app.use("/api", businessAiRoutes);
+app.use("/api", agentRoutes);
 
 type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED";
 type DeliveryLocation = { latitude: number; longitude: number; recordedAt?: string };
@@ -127,6 +131,8 @@ const createDeliverySchema = z.object({
   isPerishable: z.boolean(),
   pickup: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   dropoff: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
+  pickupDropOffLocationId: z.string().uuid().optional(),
+  dropoffDropOffLocationId: z.string().uuid().optional(),
   quote: z.object({
     currency: z.literal("NGN"),
     distanceMeters: z.number().int().nonnegative(),
@@ -505,6 +511,18 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   const pin = parsed.data.receiverPin;
   try {
     if (databaseEnabled()) {
+      const selectedLocationIds = [input.pickupDropOffLocationId, input.dropoffDropOffLocationId].filter((id): id is string => Boolean(id));
+      if (selectedLocationIds.length > 0) {
+        const locationResult = await pool!.query(
+          "SELECT id,status,verification_status FROM drop_off_locations WHERE id = ANY($1::uuid[])",
+          [selectedLocationIds]
+        );
+        const approvedIds = new Set(locationResult.rows.filter((row: { status: string; verification_status: string }) => row.status === "ACTIVE" && row.verification_status === "VERIFIED").map((row: { id: string }) => row.id));
+        if (approvedIds.size !== new Set(selectedLocationIds).size) {
+          return res.status(409).json({ error: "One or more selected drop-off locations are not active and verified" });
+        }
+      }
+
       const created = await createPersistentDelivery({
         senderId: input.senderId,
         receiverName: input.receiverName,
@@ -517,6 +535,8 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
         isPerishable: input.isPerishable,
         quote: input.quote
       });
+      if (input.pickupDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'PICKUP',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.pickupDropOffLocationId]);
+      if (input.dropoffDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'DROPOFF',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.dropoffDropOffLocationId]);
       return res.status(201).json(safeDelivery(created));
     }
     const now = new Date().toISOString();
@@ -650,8 +670,37 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
       providerReference: webhookReference || null
     }));
   }
+  if (duplicateWebhook) return res.status(200).json({ received: true, duplicate: true });
+
   if (typeof event?.event === "string" && event.event.startsWith("refund.")) {
     const transactionReference = String(event?.data?.transaction_reference ?? event?.data?.transaction?.reference ?? "");
+    if(transactionReference&&databaseEnabled()){
+      const buyPayment=(await pool!.query("SELECT bop.*,bo.customer_user_id FROM buy_order_payments bop JOIN buy_orders bo ON bo.id=bop.buy_order_id WHERE bop.provider_reference=$1",[transactionReference])).rows[0];
+      if(buyPayment){
+        const refundStatus=String(event.event).replace("refund.","");
+        const refundReference=String(event?.data?.refund_reference??event?.data?.id??"");
+        const amountMinor=Number(event?.data?.amount??0);
+        if(!Number.isSafeInteger(amountMinor)||amountMinor<0){
+          return res.status(200).json({received:true});
+        }
+        if(refundStatus==="processed"){
+          await pool!.query(
+            "UPDATE buy_order_payments SET refund_status='PROCESSED',refund_reference=COALESCE(refund_reference,$2),refund_amount_minor=$3,total_refunded_minor=total_refunded_minor+$3,status=CASE WHEN total_refunded_minor+$3>=amount_minor THEN 'REFUNDED' ELSE status END,updated_at=now() WHERE id=$1",
+            [buyPayment.id,refundReference||null,amountMinor]
+          );
+          await pool!.query(
+            "UPDATE buy_orders SET refunded_minor=refunded_minor+$2,payment_status=CASE WHEN payment_status<>'REFUNDED' AND $2>=COALESCE((SELECT amount_minor FROM buy_order_payments WHERE id=$1),0) THEN 'REFUNDED' ELSE payment_status END,updated_at=now() WHERE id=$3",
+            [buyPayment.id,amountMinor,buyPayment.buy_order_id]
+          );
+        }else if(refundStatus==="failed"){
+          await pool!.query("UPDATE buy_order_payments SET refund_status='FAILED',updated_at=now() WHERE id=$1",[buyPayment.id]);
+        }else{
+          await pool!.query("UPDATE buy_order_payments SET refund_status=$2,updated_at=now() WHERE id=$1",[buyPayment.id,refundStatus.toUpperCase()]);
+        }
+        await pool!.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,$3,$4::jsonb)",[buyPayment.buy_order_id,buyPayment.customer_user_id,"REFUND_"+refundStatus.toUpperCase(),JSON.stringify({transactionReference,refundReference,amountMinor})]);
+        return res.status(200).json({received:true});
+      }
+    }
     const refundReference = String(event?.data?.refund_reference ?? event?.data?.id ?? "");
     if (transactionReference && databaseEnabled()) {
       const result = await pool!.query("SELECT delivery_id FROM payments WHERE provider_reference=$1", [transactionReference]);
@@ -684,21 +733,59 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
 
   if (event?.event === "transfer.success" || event?.event === "transfer.failed" || event?.event === "transfer.reversed") {
     const reference = String(event?.data?.reference ?? "");
-    if (reference) {
-      const status = event.event === "transfer.success" ? "RELEASED" : event.event === "transfer.failed" ? "FAILED" : "CANCELLED";
-      const failureReason = event?.data?.failures?.message ?? event?.data?.failures?.reason ?? event?.data?.reason ?? null;
-      const payout = await updatePayoutProviderStatus(
-        reference,
-        status,
-        failureReason,
-        Number(event?.data?.amount),
-        String(event?.data?.currency ?? "")
-      );
-      if (payout) {
-        await recordDeliveryEvent({ deliveryId: payout.deliveryId, eventType: "PAYOUT_" + status, metadata: { provider: "paystack", reference } });
+    if (reference && databaseEnabled()) {
+      const failureReason = event?.data?.failures?.message ?? event?.data?.failures?.reason ?? null;
+      const providerAmount = Number(event?.data?.amount);
+      const providerCurrency = String(event?.data?.currency ?? "");
+      if (!Number.isSafeInteger(providerAmount) || providerAmount < 0) return res.status(200).json({ received: true });
+      const buySettlement=(await pool!.query("SELECT id,buy_order_id,amount_minor,currency,status FROM buy_order_settlements WHERE transfer_reference=$1 FOR UPDATE",[reference])).rows[0];
+      if(buySettlement){
+        const next=event.event==="transfer.success"?"PAID":event.event==="transfer.failed"?"FAILED":"REVERSED";
+        if(event.event==="transfer.success" && (providerAmount!==Number(buySettlement.amount_minor) || providerCurrency!==String(buySettlement.currency))){
+          await pool!.query("UPDATE buy_order_settlements SET status='FAILED',provider_status='amount_mismatch',failure_reason='Paystack transfer amount mismatch',updated_at=now() WHERE id=$1",[buySettlement.id]);
+        }else{
+          await pool!.query("UPDATE buy_order_settlements SET status=$2,provider_status=$3,failure_reason=$4,paid_at=CASE WHEN $2='PAID' THEN now() ELSE paid_at END,updated_at=now() WHERE id=$1",[buySettlement.id,next,String(event.event),failureReason]);
+        }
       }
+      const commission=(await pool!.query("SELECT id,amount_minor,status FROM drop_off_commission_ledger WHERE provider_reference=$1 FOR UPDATE",[reference])).rows[0];
+      if(commission){
+        const next=event.event==="transfer.success"?"PAID":event.event==="transfer.failed"?"AVAILABLE":"AVAILABLE";
+        if(event.event==="transfer.success" && (providerAmount!==Number(commission.amount_minor) || providerCurrency!=="NGN")){
+          await pool!.query("UPDATE drop_off_commission_ledger SET status='AVAILABLE',provider_status='amount_mismatch',updated_at=now() WHERE id=$1",[commission.id]);
+        }else{
+          await pool!.query("UPDATE drop_off_commission_ledger SET status=$2,provider_status=$3,paid_at=CASE WHEN $2='PAID' THEN now() ELSE paid_at END,updated_at=now() WHERE id=$1",[commission.id,next,String(event.event)]);
+        }
+      }
+      const status = event.event === "transfer.success" ? "RELEASED" : event.event === "transfer.failed" ? "FAILED" : "CANCELLED";
+      const payout = await updatePayoutProviderStatus(reference,status,failureReason,Number(event?.data?.amount),String(event?.data?.currency ?? ""));
+      if(payout) await recordDeliveryEvent({deliveryId:payout.deliveryId,eventType:"PAYOUT_"+status,metadata:{provider:"paystack",reference}});
     }
     return res.status(200).json({ received: true });
+  }
+
+  const buyReference = String(event?.data?.reference ?? "");
+  if (buyReference && databaseEnabled() && (event?.event === "charge.success" || event?.event === "charge.failed")) {
+    const buyPaymentResult = await pool!.query(
+      "SELECT bop.*, bo.customer_user_id, bo.payment_status AS order_payment_status FROM buy_order_payments bop JOIN buy_orders bo ON bo.id=bop.buy_order_id WHERE bop.provider_reference=$1",
+      [buyReference]
+    );
+    const buyPayment = buyPaymentResult.rows[0];
+    if (buyPayment) {
+      if (event.event === "charge.failed") {
+        await pool!.query("UPDATE buy_order_payments SET status='FAILED', updated_at=now() WHERE id=$1 AND status NOT IN ('HELD','RELEASED','REFUNDED')", [buyPayment.id]);
+        await pool!.query("UPDATE buy_orders SET payment_status='FAILED', updated_at=now() WHERE id=$1 AND payment_status NOT IN ('HELD','REFUNDED')", [buyPayment.buy_order_id]);
+        return res.status(200).json({ received: true, duplicate: duplicateWebhook });
+      }
+      if (Number(event?.data?.amount) !== Number(buyPayment.amount_minor) || String(event?.data?.currency ?? "") !== String(buyPayment.currency)) {
+        await pool!.query("UPDATE buy_order_payments SET status='FAILED', updated_at=now() WHERE id=$1", [buyPayment.id]);
+        await pool!.query("UPDATE buy_orders SET payment_status='FAILED', updated_at=now() WHERE id=$1", [buyPayment.buy_order_id]);
+        return res.status(200).json({ received: true, duplicate: duplicateWebhook });
+      }
+      await pool!.query("UPDATE buy_order_payments SET status='HELD', updated_at=now() WHERE id=$1 AND status NOT IN ('RELEASED','REFUNDED')", [buyPayment.id]);
+      await pool!.query("UPDATE buy_orders SET payment_status='HELD', updated_at=now() WHERE id=$1 AND payment_status NOT IN ('REFUNDED')", [buyPayment.buy_order_id]);
+      await pool!.query("INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'PAYMENT_HELD',$3::jsonb)", [buyPayment.buy_order_id, buyPayment.customer_user_id, JSON.stringify({ provider: "paystack", reference: buyReference, amountMinor: Number(buyPayment.amount_minor) })]);
+      return res.status(200).json({ received: true, duplicate: duplicateWebhook });
+    }
   }
 
   if (event?.event !== "charge.success") return res.status(200).json({ received: true });
@@ -955,7 +1042,7 @@ app.get("/api/admin/users", requireAuth("ADMIN"), async (req, res) => {
   const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 50)));
   const search = String(req.query.search ?? "").trim();
   const result = await pool!.query(
-    `SELECT u.id, u.role, u.full_name, u.phone, u.email, u.created_at,
+    `SELECT u.id, u.role, u.full_name, u.phone, u.email, u.ai_plan, u.created_at,
             d.id AS driver_id, d.status AS driver_status, d.online AS driver_online
        FROM users u
        LEFT JOIN drivers d ON d.user_id=u.id
@@ -1550,6 +1637,72 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
   const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
   const receiverPin = String(req.body?.receiverPin ?? "").trim();
   if (!receiverPhone || !/^\d{6}$/.test(receiverPin)) return res.status(400).json({ error: "Receiver phone and six-digit PIN are required" });
+
+  // Buy & Deliver has its own escrow record; do not route it through the normal delivery payment table.
+  const buyOrderResult = await pool!.query(
+    "SELECT bo.*, d.status AS delivery_status, d.driver_id FROM buy_orders bo JOIN deliveries d ON d.id=bo.delivery_id WHERE bo.delivery_id=$1 FOR UPDATE OF bo, d",
+    [routeParam(req.params.id, "id")]
+  );
+  const buyOrder = buyOrderResult.rows[0];
+  if (buyOrder) {
+    if (buyOrder.payment_status !== "HELD") return res.status(409).json({ error: "Buy & Deliver payment is not currently held for release" });
+    if (buyOrder.delivery_status !== "ARRIVED" || !buyOrder.driver_id) return res.status(409).json({ error: "The courier must arrive before receiver confirmation" });
+    const client = await pool!.connect();
+    try {
+      await client.query("BEGIN");
+      const locked = (await client.query(
+        "SELECT bo.*, d.status AS delivery_status, d.driver_id FROM buy_orders bo JOIN deliveries d ON d.id=bo.delivery_id WHERE bo.id=$1 FOR UPDATE OF bo, d",
+        [buyOrder.id]
+      )).rows[0];
+      if (!locked || locked.payment_status !== "HELD" || locked.delivery_status !== "ARRIVED") {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Buy & Deliver order changed before receiver confirmation" });
+      }
+      const updatedDelivery = (await client.query(
+        "UPDATE deliveries SET status='DELIVERED', updated_at=now() WHERE id=$1 AND status='ARRIVED' RETURNING *",
+        [locked.delivery_id]
+      )).rows[0];
+      if (!updatedDelivery) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Delivery is no longer awaiting receiver confirmation" });
+      }
+      await client.query(
+        "UPDATE drop_off_parcels SET status='COMPLETED', completed_at=now(), updated_at=now() WHERE delivery_id=$1 AND status='COURIER_COLLECTED'",
+        [locked.delivery_id]
+      );
+      await client.query(
+        "INSERT INTO buy_order_settlements (buy_order_id,agent_id,amount_minor,currency,status) VALUES ($1,$2,$3,$4,'PENDING') ON CONFLICT (buy_order_id) DO NOTHING",
+        [locked.id, locked.agent_id, Number(locked.actual_purchase_minor ?? 0), locked.currency ?? "NGN"]
+      );
+      await client.query(
+        "UPDATE buy_order_payments SET status='RELEASED', updated_at=now() WHERE buy_order_id=$1 AND status='HELD'",
+        [locked.id]
+      );
+      await client.query(
+        "UPDATE buy_orders SET payment_status='RELEASED', status='DELIVERED', updated_at=now() WHERE id=$1 AND payment_status='HELD'",
+        [locked.id]
+      );
+      await client.query(
+        "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,NULL,'PAYMENT_RELEASED',$2::jsonb)",
+        [locked.id, JSON.stringify({ deliveryId: locked.delivery_id, receiverPhoneVerified: true, releaseReason: "receiver_pin_confirmed" })]
+      );
+      await client.query(
+        "INSERT INTO delivery_events (delivery_id,event_type,actor_user_id,metadata) VALUES ($1,'RECEIVER_CONFIRMED_DELIVERY',$2,$3::jsonb)",
+        [locked.delivery_id, identity(req), JSON.stringify({ buyOrderId: locked.id, escrowReleased: true })]
+      );
+      await client.query("UPDATE drop_off_commission_ledger SET status='AVAILABLE', updated_at=now() WHERE parcel_id IN (SELECT id FROM drop_off_parcels WHERE delivery_id=$1) AND status='EARNED'", [locked.delivery_id]);
+      await client.query("COMMIT");
+      await notificationForDelivery(locked.delivery_id, locked.customer_user_id, "Delivery confirmed", "The receiver confirmed receipt. Your Buy & Deliver payment has been released.", "DELIVERED");
+      publishDeliveryUpdate(locked.delivery_id, safeDelivery(updatedDelivery));
+      return res.json({ delivery: safeDelivery(updatedDelivery), buyOrderId: locked.id, escrowStatus: "RELEASED" });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to release Buy & Deliver payment" });
+    } finally {
+      client.release();
+    }
+  }
+
   const payment = await findPayment(routeParam(req.params.id, "id"));
   if (!payment || payment.status !== "HELD") return res.status(409).json({ error: "Payment is not currently held for delivery release" });
   const deliveryForPin = await findDelivery(routeParam(req.params.id, "id"));
@@ -1575,6 +1728,14 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
       eventType: "RECEIVER_CONFIRMED_DELIVERY",
       metadata: { receiverPhoneVerified: true, escrowReleased: true, payoutEligible: result.payoutAmountMinor > 0 }
     });
+    await pool!.query(
+      "UPDATE drop_off_parcels SET status='COMPLETED', completed_at=now(), updated_at=now() WHERE delivery_id=$1 AND status='COURIER_COLLECTED'",
+      [result.delivery.id]
+    );
+    await pool!.query(
+      "UPDATE drop_off_commission_ledger SET status='AVAILABLE', updated_at=now() WHERE parcel_id IN (SELECT id FROM drop_off_parcels WHERE delivery_id=$1) AND status='EARNED'",
+      [result.delivery.id]
+    );
     await notificationForDelivery(result.delivery.id, result.delivery.senderId, "Delivery confirmed", "The receiver confirmed receipt. Your held payment has been released for courier payout.", "DELIVERED");
     if (result.delivery.driverId) {
       const driver = await driverForUser(result.delivery.driverId);

@@ -27,6 +27,10 @@ export default function App() {
   const [dropoffResults, setDropoffResults] = React.useState<Array<{ formattedAddress?: string; latitude: number; longitude: number }>>([]);
   const [dropoffLat, setDropoffLat] = React.useState("");
   const [dropoffLng, setDropoffLng] = React.useState("");
+  const [pickupDropOffId, setPickupDropOffId] = React.useState("");
+  const [dropoffDropOffId, setDropoffDropOffId] = React.useState("");
+  const [pickupDropOffLocations, setPickupDropOffLocations] = React.useState<any[]>([]);
+  const [dropoffDropOffLocations, setDropoffDropOffLocations] = React.useState<any[]>([]);
   const [receiver, setReceiver] = React.useState("");
   const [phone, setPhone] = React.useState("");
   const [receiverPin, setReceiverPin] = React.useState("");
@@ -158,6 +162,27 @@ export default function App() {
     }
   }
 
+  async function loadNearbyDropOffs(target: "pickup" | "dropoff") {
+    try {
+      const lat = Number(target === "pickup" ? pickupLat : dropoffLat);
+      const lng = Number(target === "pickup" ? pickupLng : dropoffLng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error("Select or enter a valid location first.");
+      const locations = await api.nearbyDropOffLocations(lat, lng, 25);
+      target === "pickup" ? setPickupDropOffLocations(locations) : setDropoffDropOffLocations(locations);
+    } catch (error) {
+      Alert.alert("Drop-off locations", error instanceof Error ? error.message : "Unable to load nearby SwiftDrop drop-off locations.");
+    }
+  }
+
+  function chooseDropOffLocation(location: any, target: "pickup" | "dropoff") {
+    const address = String(location.address ?? location.name ?? "");
+    if (target === "pickup") {
+      setPickupDropOffId(String(location.id)); setPickup(address); setPickupLat(String(location.latitude)); setPickupLng(String(location.longitude)); setPickupDropOffLocations([]);
+    } else {
+      setDropoffDropOffId(String(location.id)); setDropoff(address); setDropoffLat(String(location.latitude)); setDropoffLng(String(location.longitude)); setDropoffDropOffLocations([]);
+    }
+  }
+
   function coordinates() {
     const values = [pickupLat, pickupLng, dropoffLat, dropoffLng].map(Number);
     if (values.some(Number.isNaN) || values[0] < -90 || values[0] > 90 || values[2] < -90 || values[2] > 90 || values[1] < -180 || values[1] > 180 || values[3] < -180 || values[3] > 180) {
@@ -204,8 +229,10 @@ export default function App() {
         weightKg: Number(weightKg),
         dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) },
         isPerishable,
-        pickup: { label: "Pickup", formattedAddress: pickup.trim(), ...coords.pickup },
-        dropoff: { label: "Drop-off", formattedAddress: dropoff.trim(), ...coords.dropoff },
+        pickup: { label: pickupDropOffId ? "SwiftDrop drop-off point" : "Pickup", formattedAddress: pickup.trim(), ...coords.pickup },
+        dropoff: { label: dropoffDropOffId ? "SwiftDrop drop-off point" : "Drop-off", formattedAddress: dropoff.trim(), ...coords.dropoff },
+        pickupDropOffLocationId: pickupDropOffId || undefined,
+        dropoffDropOffLocationId: dropoffDropOffId || undefined,
         quote: { ...serverQuote, currency: "NGN" }
       });
       setDelivery(created);
@@ -354,14 +381,20 @@ export default function App() {
       {supportTickets.length === 0 ? <Text style={styles.muted}>No support requests yet.</Text> : supportTickets.map(ticket => <View key={ticket.id} style={styles.notification}><Text style={styles.notificationTitle}>{ticket.subject}</Text><Text>{ticket.message}</Text><Text style={styles.muted}>{ticket.category} · {ticket.status.replaceAll("_"," ")}</Text></View>)}
     </View>}
     <Text style={styles.eyebrow}>SEND A PARCEL</Text><Text style={styles.heroTitle}>Where is your parcel going?</Text><Text style={styles.subtitle}>Book a trusted courier, pay securely and follow every movement.</Text>
-    <TextInput style={styles.input} placeholder="Pickup address" value={pickup} onChangeText={value => { setPickup(value); void searchAddress(value, "pickup"); }} />
+    <Text style={styles.eyebrow}>DELIVERY ENDPOINTS</Text>
+    <Text style={styles.hint}>You can use an approved SwiftDrop business drop-off point instead of a home address. The parcel will be checked in there and handed to the assigned courier.</Text>
+    <Pressable style={styles.secondary} onPress={() => void loadNearbyDropOffs("pickup")}><Text style={styles.secondaryText}>Find nearby pickup drop-off points</Text></Pressable>
+    {pickupDropOffLocations.map(item => <Pressable key={"pickup-point-" + item.id} style={styles.suggestion} onPress={() => chooseDropOffLocation(item, "pickup")}><Text style={styles.notificationTitle}>{item.name} · {Number(item.distanceKm).toFixed(1)} km</Text><Text>{item.address}</Text><Text style={styles.muted}>{item.business_name ?? "SwiftDrop partner"} · Capacity {item.capacity}</Text></Pressable>)}
+    <TextInput style={styles.input} placeholder="Pickup address" value={pickup} onChangeText={value => { setPickup(value); setPickupDropOffId(""); void searchAddress(value, "pickup"); }} />
     {pickupResults.map((result, index) => <Pressable key={"pickup-" + index} style={styles.suggestion} onPress={() => chooseAddress(result, "pickup")}><Text>{result.formattedAddress}</Text></Pressable>)}
-    <TextInput style={styles.input} placeholder="Drop-off address" value={dropoff} onChangeText={value => { setDropoff(value); void searchAddress(value, "dropoff"); }} />
+    <TextInput style={styles.input} placeholder="Drop-off address" value={dropoff} onChangeText={value => { setDropoff(value); setDropoffDropOffId(""); void searchAddress(value, "dropoff"); }} />
     {dropoffResults.map((result, index) => <Pressable key={"dropoff-" + index} style={styles.suggestion} onPress={() => chooseAddress(result, "dropoff")}><Text>{result.formattedAddress}</Text></Pressable>)}
+    <Pressable style={styles.secondary} onPress={() => void loadNearbyDropOffs("dropoff")}><Text style={styles.secondaryText}>Find nearby destination drop-off points</Text></Pressable>
+    {dropoffDropOffLocations.map(item => <Pressable key={"dropoff-point-" + item.id} style={styles.suggestion} onPress={() => chooseDropOffLocation(item, "dropoff")}><Text style={styles.notificationTitle}>{item.name} · {Number(item.distanceKm).toFixed(1)} km</Text><Text>{item.address}</Text><Text style={styles.muted}>{item.business_name ?? "SwiftDrop partner"} · Capacity {item.capacity}</Text></Pressable>)}
     <Text style={styles.hint}>Choose your current location for pickup, or enter coordinates from a map/address search.</Text>
     <Pressable style={styles.secondary} onPress={() => void useCurrentPickupLocation()}><Text style={styles.secondaryText}>Use my current location for pickup</Text></Pressable>
-    <View style={styles.row}><TextInput style={styles.half} placeholder="Pickup latitude" value={pickupLat} onChangeText={setPickupLat} keyboardType="decimal-pad" /><TextInput style={styles.half} placeholder="Pickup longitude" value={pickupLng} onChangeText={setPickupLng} keyboardType="decimal-pad" /></View>
-    <View style={styles.row}><TextInput style={styles.half} placeholder="Drop-off latitude" value={dropoffLat} onChangeText={setDropoffLat} keyboardType="decimal-pad" /><TextInput style={styles.half} placeholder="Drop-off longitude" value={dropoffLng} onChangeText={setDropoffLng} keyboardType="decimal-pad" /></View>
+    <View style={styles.row}><TextInput style={styles.half} placeholder="Pickup latitude" value={pickupLat} onChangeText={value => { setPickupLat(value); setPickupDropOffId(""); }} keyboardType="decimal-pad" /><TextInput style={styles.half} placeholder="Pickup longitude" value={pickupLng} onChangeText={value => { setPickupLng(value); setPickupDropOffId(""); }} keyboardType="decimal-pad" /></View>
+    <View style={styles.row}><TextInput style={styles.half} placeholder="Drop-off latitude" value={dropoffLat} onChangeText={value => { setDropoffLat(value); setDropoffDropOffId(""); }} keyboardType="decimal-pad" /><TextInput style={styles.half} placeholder="Drop-off longitude" value={dropoffLng} onChangeText={value => { setDropoffLng(value); setDropoffDropOffId(""); }} keyboardType="decimal-pad" /></View>
     <TextInput style={styles.input} placeholder="Receiver name" value={receiver} onChangeText={setReceiver} />
     <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
     <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={receiverPin} onChangeText={setReceiverPin} />
