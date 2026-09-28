@@ -484,7 +484,20 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
       return res.status(201).json(safeDelivery(created));
     }
     const now = new Date().toISOString();
-    const delivery: MemoryDelivery = { id: randomUUID(), trackingCode: trackingCode(), ...input, status: "CREATED", receiverPin: pin, createdAt: now, updatedAt: now };
+    const delivery: MemoryDelivery = {
+      id: randomUUID(),
+      trackingCode: trackingCode(),
+      senderId: input.senderId,
+      receiverName: input.receiverName,
+      receiverPhone: input.receiverPhone,
+      pickup: { label: input.pickup.label, formattedAddress: input.pickup.formattedAddress, location: { latitude: input.pickup.latitude, longitude: input.pickup.longitude } },
+      dropoff: { label: input.dropoff.label, formattedAddress: input.dropoff.formattedAddress, location: { latitude: input.dropoff.latitude, longitude: input.dropoff.longitude } },
+      quote: input.quote,
+      status: "CREATED",
+      receiverPin: pin,
+      createdAt: now,
+      updatedAt: now
+    };
     deliveries.set(delivery.id, delivery);
     return res.status(201).json(safeDelivery(delivery));
   } catch (error) {
