@@ -730,19 +730,31 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
 
   if (event?.event === "transfer.success" || event?.event === "transfer.failed" || event?.event === "transfer.reversed") {
     const reference = String(event?.data?.reference ?? "");
-    if (reference) {
-      const status = event.event === "transfer.success" ? "RELEASED" : event.event === "transfer.failed" ? "FAILED" : "CANCELLED";
+    if (reference && databaseEnabled()) {
       const failureReason = event?.data?.failures?.message ?? event?.data?.failures?.reason ?? event?.data?.reason ?? null;
-      const payout = await updatePayoutProviderStatus(
-        reference,
-        status,
-        failureReason,
-        Number(event?.data?.amount),
-        String(event?.data?.currency ?? "")
-      );
-      if (payout) {
-        await recordDeliveryEvent({ deliveryId: payout.deliveryId, eventType: "PAYOUT_" + status, metadata: { provider: "paystack", reference } });
+      const buySettlement=(await pool!.query("SELECT id,buy_order_id,amount_minor,status FROM buy_order_settlements WHERE transfer_reference=$1 FOR UPDATE",[reference])).rows[0];
+      if(buySettlement){
+        const next=event.event==="transfer.success"?"PAID":event.event==="transfer.failed"?"FAILED":"REVERSED";
+        const providerAmount=Number(event?.data?.amount);
+        if(event.event==="transfer.success" && Number.isFinite(providerAmount) && providerAmount!==Number(buySettlement.amount_minor)){
+          await pool!.query("UPDATE buy_order_settlements SET status='FAILED',provider_status='amount_mismatch',failure_reason='Paystack transfer amount mismatch',updated_at=now() WHERE id=$1",[buySettlement.id]);
+        }else{
+          await pool!.query("UPDATE buy_order_settlements SET status=$2,provider_status=$3,failure_reason=$4,paid_at=CASE WHEN $2='PAID' THEN now() ELSE paid_at END,updated_at=now() WHERE id=$1",[buySettlement.id,next,String(event.event),failureReason]);
+        }
       }
+      const commission=(await pool!.query("SELECT id,amount_minor,status FROM drop_off_commission_ledger WHERE provider_reference=$1 FOR UPDATE",[reference])).rows[0];
+      if(commission){
+        const next=event.event==="transfer.success"?"PAID":event.event==="transfer.failed"?"AVAILABLE":"AVAILABLE";
+        const providerAmount=Number(event?.data?.amount);
+        if(event.event==="transfer.success" && Number.isFinite(providerAmount) && providerAmount!==Number(commission.amount_minor)){
+          await pool!.query("UPDATE drop_off_commission_ledger SET status='AVAILABLE',provider_status='amount_mismatch',updated_at=now() WHERE id=$1",[commission.id]);
+        }else{
+          await pool!.query("UPDATE drop_off_commission_ledger SET status=$2,provider_status=$3,paid_at=CASE WHEN $2='PAID' THEN now() ELSE paid_at END,updated_at=now() WHERE id=$1",[commission.id,next,String(event.event)]);
+        }
+      }
+      const status = event.event === "transfer.success" ? "RELEASED" : event.event === "transfer.failed" ? "FAILED" : "CANCELLED";
+      const payout = await updatePayoutProviderStatus(reference,status,failureReason,Number(event?.data?.amount),String(event?.data?.currency ?? ""));
+      if(payout) await recordDeliveryEvent({deliveryId:payout.deliveryId,eventType:"PAYOUT_"+status,metadata:{provider:"paystack",reference}});
     }
     return res.status(200).json({ received: true });
   }
