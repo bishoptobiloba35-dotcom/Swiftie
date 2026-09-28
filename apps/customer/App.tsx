@@ -260,7 +260,7 @@ export default function App() {
 
   if (!signedIn && receiverMode) {
     return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.auth}>
-      <Text style={styles.logo}>SwiftDrop Receiver</Text>
+      <Text style={styles.logo}>SwiftDrop</Text><Text style={styles.brandTag}>MOVE WITH CONFIDENCE</Text><Text style={styles.eyebrow}>RECEIVER</Text>
       <Text style={styles.subtitle}>Confirm that you received the parcel. Your confirmation releases the courier's held payment.</Text>
       <TextInput style={styles.input} placeholder="Tracking code" value={trackingCode} onChangeText={setTrackingCode} autoCapitalize="characters" />
       <TextInput style={styles.input} placeholder="Receiver phone number" value={trackingPhone} onChangeText={setTrackingPhone} keyboardType="phone-pad" />
@@ -306,7 +306,7 @@ export default function App() {
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.container}>
     <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.subtitle}>Send it. Track it. Receive it.</Text></View><View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View></View>
     {showNotifications && <View style={styles.card}><View style={styles.header}><Text style={styles.heading}>Notifications</Text><Pressable onPress={() => void loadNotifications()}><Text>Refresh</Text></Pressable></View>{notifications.length === 0 ? <Text style={styles.muted}>No notifications.</Text> : notifications.map(item => <Pressable key={item.id} style={styles.notification} onPress={() => void markNotificationRead(item.id)}><Text style={styles.notificationTitle}>{item.title}</Text><Text>{item.body}</Text><Text style={styles.muted}>{new Date(item.created_at).toLocaleString()} · {item.read_at ? "Read" : "Tap to mark read"}</Text></Pressable>)}</View>}
-    <Text style={styles.heading}>Create a delivery</Text>
+    <Text style={styles.eyebrow}>SEND A PARCEL</Text><Text style={styles.heroTitle}>Where is your parcel going?</Text><Text style={styles.subtitle}>Book a trusted courier, pay securely and follow every movement.</Text>
     <TextInput style={styles.input} placeholder="Pickup address" value={pickup} onChangeText={value => { setPickup(value); void searchAddress(value, "pickup"); }} />
     {pickupResults.map((result, index) => <Pressable key={"pickup-" + index} style={styles.suggestion} onPress={() => chooseAddress(result, "pickup")}><Text>{result.formattedAddress}</Text></Pressable>)}
     <TextInput style={styles.input} placeholder="Drop-off address" value={dropoff} onChangeText={value => { setDropoff(value); void searchAddress(value, "dropoff"); }} />
@@ -346,7 +346,7 @@ export default function App() {
     <TextInput style={styles.input} placeholder="Receiver phone number" value={trackingPhone} onChangeText={setTrackingPhone} keyboardType="phone-pad" />
     <Pressable style={styles.secondary} onPress={() => void track()}><Text style={styles.secondaryText}>Track delivery</Text></Pressable>
     {delivery && <View style={styles.card}>
-      <Text style={styles.heading}>Live delivery tracking</Text>
+      <Text style={styles.eyebrow}>LIVE TRACKING</Text><Text style={styles.heroTitle}>Your parcel is on the move</Text>
       <Text style={styles.status}>{delivery.status.replaceAll("_", " ")}</Text>
       <Text>Pickup: {delivery.pickup.formattedAddress}</Text>
       <Text>Drop-off: {delivery.dropoff.formattedAddress}</Text>
@@ -402,39 +402,41 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: { flex: 1, backgroundColor: "#F6F8F5" },
   auth: { flex: 1, padding: 24, justifyContent: "center", gap: 14 },
-  container: { padding: 24, gap: 12 },
-  row: { flexDirection: "row", gap: 8 },
+  container: { padding: 20, paddingBottom: 42, gap: 14 },
+  row: { flexDirection: "row", gap: 10 },
   third: { flex: 1 },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   headerActions: { flexDirection: "row", gap: 14, alignItems: "center" },
-  logo: { fontSize: 32, fontWeight: "800", marginTop: 8 },
-  subtitle: { color: "#666", marginBottom: 12 },
-  heading: { fontSize: 20, fontWeight: "700", marginTop: 8 },
-  input: { borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 14, fontSize: 16 },
-  suggestion: { borderWidth: 1, borderColor: "#eee", borderRadius: 10, padding: 12, backgroundColor: "#fafafa" },
-  row: { flexDirection: "row", gap: 10 },
-  half: { flex: 1, borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 14, fontSize: 14 },
-  hint: { color: "#777", fontSize: 12, lineHeight: 18 },
-  primary: { backgroundColor: "#111", padding: 16, borderRadius: 12, alignItems: "center" },
-  primaryText: { color: "#fff", fontWeight: "700" },
-  secondary: { borderWidth: 1, borderColor: "#111", padding: 16, borderRadius: 12, alignItems: "center" },
-  secondaryText: { color: "#111", fontWeight: "700" },
-  link: { color: "#111", fontWeight: "700", textAlign: "center" },
-  code: { fontWeight: "700", marginTop: 4 },
-  divider: { height: 1, backgroundColor: "#eee", marginVertical: 18 },
-  card: { borderWidth: 1, borderColor: "#ddd", borderRadius: 16, padding: 16, gap: 10, marginTop: 12 },
-  status: { fontSize: 18, fontWeight: "800" },
-  locationBox: { borderWidth: 1, borderColor: "#eee", borderRadius: 10, padding: 12, gap: 8 },
-  map: { width: "100%", height: 260, borderRadius: 12 },
-  photoTitle: { fontWeight: "700" },
-  muted: { color: "#666" },
-  done: { fontSize: 17, fontWeight: "800", marginTop: 6 },
-  eta: { fontSize: 18, fontWeight: "800", marginTop: 6 },
-  notification: { borderTopWidth: 1, borderTopColor: "#eee", paddingTop: 10, gap: 4 },
-  notificationTitle: { fontWeight: "800" },
-  ratingBox: { borderTopWidth: 1, borderTopColor: "#eee", paddingTop: 12, marginTop: 8, gap: 10 },
+  logo: { fontSize: 32, fontWeight: "900", color: "#123D2A", letterSpacing: -1 },
+  brandTag: { color: "#6B746E", fontSize: 10, fontWeight: "800", letterSpacing: 1.5, marginTop: 2 },
+  eyebrow: { color: "#178A52", fontSize: 11, fontWeight: "900", letterSpacing: 1.4, marginTop: 10 },
+  heroTitle: { fontSize: 30, lineHeight: 35, fontWeight: "900", color: "#16221B", letterSpacing: -0.7 },
+  subtitle: { color: "#66716A", marginBottom: 12, lineHeight: 20 },
+  heading: { fontSize: 20, fontWeight: "800", color: "#16221B", marginTop: 8 },
+  input: { borderWidth: 1, borderColor: "#D9E0DB", borderRadius: 14, padding: 15, fontSize: 16, backgroundColor: "#FFFFFF", color: "#16221B" },
+  suggestion: { borderWidth: 1, borderColor: "#DDE5DF", borderRadius: 12, padding: 13, backgroundColor: "#FFFFFF" },
+  half: { flex: 1, borderWidth: 1, borderColor: "#D9E0DB", borderRadius: 14, padding: 14, fontSize: 14, backgroundColor: "#FFFFFF" },
+  hint: { color: "#7A847E", fontSize: 12, lineHeight: 18 },
+  primary: { backgroundColor: "#123D2A", padding: 16, borderRadius: 14, alignItems: "center", shadowColor: "#123D2A", shadowOpacity: 0.12, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 2 },
+  primaryText: { color: "#FFFFFF", fontWeight: "800" },
+  secondary: { borderWidth: 1, borderColor: "#BFD0C5", backgroundColor: "#FFFFFF", padding: 16, borderRadius: 14, alignItems: "center" },
+  secondaryText: { color: "#123D2A", fontWeight: "800" },
+  link: { color: "#178A52", fontWeight: "800", textAlign: "center" },
+  code: { fontWeight: "900", color: "#123D2A", marginTop: 4 },
+  divider: { height: 1, backgroundColor: "#E3E9E5", marginVertical: 20 },
+  card: { borderWidth: 1, borderColor: "#DDE5DF", backgroundColor: "#FFFFFF", borderRadius: 20, padding: 17, gap: 10, marginTop: 12, shadowColor: "#183B2A", shadowOpacity: 0.05, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 1 },
+  status: { fontSize: 18, fontWeight: "900", color: "#123D2A" },
+  locationBox: { borderWidth: 1, borderColor: "#E1E8E3", borderRadius: 16, padding: 12, gap: 8, backgroundColor: "#FAFCFA" },
+  map: { width: "100%", height: 260, borderRadius: 14 },
+  photoTitle: { fontWeight: "800", color: "#16221B" },
+  muted: { color: "#68736C" },
+  done: { fontSize: 16, fontWeight: "900", color: "#178A52", marginTop: 6 },
+  eta: { fontSize: 20, fontWeight: "900", color: "#123D2A", marginTop: 6 },
+  notification: { borderTopWidth: 1, borderTopColor: "#E7ECE8", paddingTop: 10, gap: 4 },
+  notificationTitle: { fontWeight: "900", color: "#16221B" },
+  ratingBox: { borderTopWidth: 1, borderTopColor: "#E7ECE8", paddingTop: 12, marginTop: 8, gap: 10 },
   starRow: { flexDirection: "row", gap: 8 },
-  star: { fontSize: 34 }
+  star: { fontSize: 34, color: "#F2A93B" }
 });
