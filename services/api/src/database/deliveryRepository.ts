@@ -292,7 +292,7 @@ function rowToPayout(row: any): PayoutRecord {
 export type DisputeRecord = {
   id: string;
   deliveryId: string;
-  openedBy: string;
+  openedBy?: string | null;
   reason: string;
   description?: string | null;
   status: "OPEN" | "UNDER_REVIEW" | "RESOLVED_REFUND" | "RESOLVED_RELEASE" | "CLOSED";
@@ -303,7 +303,7 @@ function rowToDispute(row: any): DisputeRecord {
   return {
     id: row.id,
     deliveryId: row.delivery_id,
-    openedBy: row.opened_by,
+    openedBy: row.opened_by ?? null,
     reason: row.reason,
     description: row.description ?? null,
     status: row.status,
@@ -321,6 +321,79 @@ export async function createDispute(deliveryId: string, openedBy: string, reason
     [deliveryId, openedBy, reason, description ?? null]
   );
   return result.rows[0] ? rowToDispute(result.rows[0]) : null;
+}
+
+export async function createReceiverDispute(deliveryId: string, receiverPhone: string, reason: string, description?: string): Promise<DisputeRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `INSERT INTO disputes (delivery_id, opened_by, opened_by_phone, opened_by_role, reason, description)
+     VALUES ($1,NULL,$2,'RECEIVER',$3,$4)
+     ON CONFLICT (delivery_id) DO NOTHING
+     RETURNING *`,
+    [deliveryId, receiverPhone, reason, description ?? null]
+  );
+  return result.rows[0] ? rowToDispute(result.rows[0]) : null;
+}
+
+export type SupportTicketRecord = {
+  id: string;
+  userId: string;
+  deliveryId?: string | null;
+  category: "ORDER" | "APP";
+  subject: string;
+  message: string;
+  status: "OPEN" | "IN_REVIEW" | "RESOLVED" | "CLOSED";
+  resolutionNote?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+function rowToSupportTicket(row: any): SupportTicketRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    deliveryId: row.delivery_id ?? null,
+    category: row.category,
+    subject: row.subject,
+    message: row.message,
+    status: row.status,
+    resolutionNote: row.resolution_note ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export async function createSupportTicket(userId: string, category: "ORDER" | "APP", subject: string, message: string, deliveryId?: string): Promise<SupportTicketRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `INSERT INTO support_tickets (user_id, delivery_id, category, subject, message)
+     VALUES ($1,$2,$3,$4,$5)
+     RETURNING *`,
+    [userId, deliveryId || null, category, subject, message]
+  );
+  return result.rows[0] ? rowToSupportTicket(result.rows[0]) : null;
+}
+
+export async function listSupportTickets(userId?: string): Promise<SupportTicketRecord[]> {
+  if (!pool) return [];
+  const result = await pool.query(
+    userId
+      ? "SELECT * FROM support_tickets WHERE user_id=$1 ORDER BY updated_at DESC LIMIT 100"
+      : "SELECT * FROM support_tickets ORDER BY updated_at DESC LIMIT 200",
+    userId ? [userId] : []
+  );
+  return result.rows.map(rowToSupportTicket);
+}
+
+export async function resolveSupportTicket(id: string, status: "IN_REVIEW" | "RESOLVED" | "CLOSED", note: string): Promise<SupportTicketRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `UPDATE support_tickets SET status=$2, resolution_note=$3, updated_at=now()
+     WHERE id=$1 AND status IN ('OPEN','IN_REVIEW')
+     RETURNING *`,
+    [id, status, note]
+  );
+  return result.rows[0] ? rowToSupportTicket(result.rows[0]) : null;
 }
 
 export async function findDispute(deliveryId: string): Promise<DisputeRecord | null> {
