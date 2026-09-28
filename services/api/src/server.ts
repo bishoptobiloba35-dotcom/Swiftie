@@ -761,6 +761,9 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
   }
 
   const existing = await findPayment(delivery.id);
+  if (existing && (existing.amountMinor !== amountMinor || existing.currency !== "NGN")) {
+    return res.status(409).json({ error: "Existing payment amount no longer matches the server quote" });
+  }
   if (existing?.status === "HELD" || existing?.status === "RELEASED") {
     return res.status(409).json({ error: "This delivery already has a completed payment state" });
   }
@@ -783,9 +786,6 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
     currency: "NGN"
   });
 
-  if (existing && (existing.amountMinor !== amountMinor || existing.currency !== "NGN")) {
-    return res.status(409).json({ error: "Existing payment amount no longer matches the server quote" });
-  }
 
   await updatePaymentStatus(delivery.id, "PENDING", reference);
 
