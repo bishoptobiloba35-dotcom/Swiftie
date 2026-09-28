@@ -86,7 +86,7 @@ export class SwiftDropApi {
   }
 
   async register(input: {
-    fullName: string; phone: string; email?: string; password: string; role: "CUSTOMER" | "DRIVER";
+    fullName: string; phone: string; email?: string; password: string; role: "CUSTOMER" | "DRIVER" | "AGENT";
   }): Promise<{ accessToken: string; user: { id: string; role: string; full_name: string; phone: string; email?: string | null } }> {
     const response = await fetch(this.baseUrl + "/api/auth/register", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input)
