@@ -956,6 +956,15 @@ app.post("/api/admin/support/tickets/:id/resolve", requireAuth("ADMIN"), async (
   if (!["IN_REVIEW","RESOLVED","CLOSED"].includes(status) || !note) return res.status(400).json({ error: "A valid status and resolution note are required" });
   const ticket = await resolveSupportTicket(req.params.id, status as "IN_REVIEW" | "RESOLVED" | "CLOSED", note);
   if (!ticket) return res.status(404).json({ error: "Support ticket not found or already resolved" });
+  if (ticket.deliveryId) {
+    await recordAdminCaseAudit({
+      deliveryId: ticket.deliveryId,
+      adminUserId: identity(req),
+      action: "SUPPORT_TICKET_UPDATED",
+      note,
+      metadata: { ticketId: ticket.id, status }
+    });
+  }
   return res.json({ ticket });
 });
 
@@ -973,6 +982,12 @@ app.post("/api/admin/payouts/:deliveryId/retry", requireAuth("ADMIN"), async (re
     deliveryId: payout.deliveryId,
     eventType: "PAYOUT_RETRY_REQUESTED",
     actorUserId: identity(req),
+    metadata: { amountMinor: payout.amountMinor, currency: payout.currency }
+  });
+  await recordAdminCaseAudit({
+    deliveryId: payout.deliveryId,
+    adminUserId: identity(req),
+    action: "PAYOUT_RETRY_REQUESTED",
     metadata: { amountMinor: payout.amountMinor, currency: payout.currency }
   });
   res.json({ payout });
