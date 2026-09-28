@@ -272,6 +272,25 @@ app.get("/api/me/product-profile", requireAuth("CUSTOMER", "DRIVER"), async (req
   }
 });
 
+app.post("/api/business/dispatch/plan", requireAuth("CUSTOMER"), async (req,res)=>{
+  if(!databaseEnabled()) return res.status(503).json({error:"Business dispatch requires the production database"});
+  if(!await hasBusinessPremium(identity(req))) return res.status(403).json({error:"Business Premium is required for AI dispatch"});
+  try {
+    const b=await pool!.query("SELECT id FROM business_accounts WHERE owner_user_id=$1 AND status='ACTIVE' LIMIT 1",[identity(req)]);
+    if(!b.rows[0]) return res.status(404).json({error:"Business profile not found"});
+    const rows=await listBusinessReadyDeliveries(b.rows[0].id);
+    const groups=new Map<string,{destination:string;scheduledFor:string|null;deliveryIds:string[];estimatedTotalMinor:number}>();
+    for(const item of rows){
+      const destination=item.delivery.dropoff.formattedAddress.trim().toLowerCase();
+      const scheduled=item.scheduledFor?new Date(item.scheduledFor).toISOString().slice(0,16):"UNSCHEDULED";
+      const key=destination+"|"+scheduled;
+      const g=groups.get(key)??{destination:item.delivery.dropoff.formattedAddress,scheduledFor:item.scheduledFor??null,deliveryIds:[],estimatedTotalMinor:0};
+      g.deliveryIds.push(item.delivery.id); g.estimatedTotalMinor+=Number(item.delivery.quote?.totalMinor??0); groups.set(key,g);
+    }
+    return res.json({businessId:b.rows[0].id,orderCount:rows.length,groups:[...groups.values()]});
+  } catch { return res.status(500).json({error:"Unable to prepare Business AI dispatch plan"}); }
+});
+
 app.post("/api/business/dispatch/run", requireAuth("CUSTOMER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Business dispatch requires the production database" });
   if (!await hasBusinessPremium(identity(req))) return res.status(403).json({ error: "Business Premium is required for AI dispatch" });
