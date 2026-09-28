@@ -16,7 +16,8 @@ export function validateLocationEvent(
   if (!["PICKED_UP", "IN_TRANSIT", "ARRIVED"].includes(deliveryStatus)) {
     return "Location updates are only accepted after pickup";
   }
-  if (event.latitude < -90 || event.latitude > 90) return "Invalid latitude";
-  if (event.longitude < -180 || event.longitude > 180) return "Invalid longitude";
+  if (!Number.isFinite(event.latitude) || event.latitude < -90 || event.latitude > 90) return "Invalid latitude";
+  if (!Number.isFinite(event.longitude) || event.longitude < -180 || event.longitude > 180) return "Invalid longitude";
+  if (event.accuracyMeters != null && (!Number.isFinite(event.accuracyMeters) || event.accuracyMeters < 0 || event.accuracyMeters > 2000)) return "Location accuracy is outside the accepted range";
   return null;
 }
