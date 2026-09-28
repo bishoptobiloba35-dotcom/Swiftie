@@ -12,7 +12,8 @@
 - Paystack webhook verification uses the exact raw request body and constant-time signature comparison.
 - Payment initialization now uses the same `PAYSTACK_SECRET_KEY` configuration used by Paystack webhooks and transfers.
 - Notification records now use a database-backed outbox with retry/backoff and Expo push delivery; invalid device tokens are removed.
-- CI typechecks shared, API, admin, customer, and driver workspaces and runs API tests. The npm cache dependency was removed because the repository does not currently commit a package-lock file.
+- CI is a genuine quality gate: workspace builds and API tests must pass; failures are fixed at source/configuration level rather than suppressed.
+- The API test job does not depend on an npm lockfile cache until a reproducible lockfile is committed.
 
 ## Remaining production milestones
 
