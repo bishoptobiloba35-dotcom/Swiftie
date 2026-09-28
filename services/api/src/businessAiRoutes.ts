@@ -491,10 +491,11 @@ router.post("/admin/ai/users/:id/plan", requireAuth("ADMIN"), async(req,res)=>{
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
-    const current=(await client.query("SELECT id,ai_plan FROM users WHERE id=$1 FOR UPDATE",[String(req.params.id)])).rows[0];
+    const current=(await client.query("SELECT u.id,COALESCE(up.individual_plan,u.ai_plan,'BASIC') AS ai_plan FROM users u LEFT JOIN user_plans up ON up.user_id=u.id WHERE u.id=$1 FOR UPDATE",[String(req.params.id)])).rows[0];
     if(!current){await client.query("ROLLBACK");return res.status(404).json({error:"User not found"});}
     if(current.ai_plan!==parsed.data.plan){
       await client.query("UPDATE users SET ai_plan=$2 WHERE id=$1",[current.id,parsed.data.plan]);
+      await client.query("INSERT INTO user_plans(user_id,individual_plan) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET individual_plan=EXCLUDED.individual_plan,updated_at=now()",[current.id,parsed.data.plan]);
       await client.query("INSERT INTO ai_entitlement_events(user_id,old_plan,new_plan,changed_by_user_id,reason) VALUES($1,$2,$3,$4,$5)",[current.id,current.ai_plan,parsed.data.plan,identity(req),parsed.data.reason]);
     }
     await client.query("COMMIT");
