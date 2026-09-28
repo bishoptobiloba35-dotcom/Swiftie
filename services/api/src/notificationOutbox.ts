@@ -88,19 +88,27 @@ export async function processNotificationOutbox(): Promise<void> {
         ORDER BY ob.created_at
         FOR UPDATE SKIP LOCKED
         LIMIT 25
+     ),
+     claimed AS (
+       UPDATE notification_outbox ob
+          SET attempts=ob.attempts+1,
+              next_attempt_at=now()+interval '15 minutes'
+         FROM picked
+        WHERE ob.id=picked.id
+        RETURNING ob.id, ob.notification_id, ob.attempts
      )
-     SELECT ob.id, n.user_id AS "userId", n.title, n.body, n.type, n.delivery_id AS "deliveryId", ob.attempts,
+     SELECT claimed.id, n.user_id AS "userId", n.title, n.body, n.type,
+            n.delivery_id AS "deliveryId", claimed.attempts,
             COALESCE(array_agg(dt.push_token) FILTER (WHERE dt.push_token IS NOT NULL), '{}') AS "pushTokens"
-       FROM picked
-       JOIN notification_outbox ob ON ob.id=picked.id
-       JOIN notifications n ON n.id=ob.notification_id
+       FROM claimed
+       JOIN notifications n ON n.id=claimed.notification_id
        LEFT JOIN device_tokens dt ON dt.user_id=n.user_id
-      GROUP BY ob.id, n.id\`,
+      GROUP BY claimed.id, n.id, n.user_id, n.title, n.body, n.type, n.delivery_id, claimed.attempts\`,
     []
   );
 
   for (const row of result.rows as PendingNotification[]) {
-    const attempts = Number(row.attempts) + 1;
+    const attempts = Number(row.attempts);
     if (!row.pushTokens?.length) {
       await pool.query("UPDATE notification_outbox SET sent_at=now(), attempts=$2, last_error=NULL WHERE id=$1", [row.id, attempts]);
       continue;
