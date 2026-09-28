@@ -629,7 +629,7 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  safe:{flex:1,backgroundColor:"#fff"}, auth:{flex:1,padding:24,justifyContent:"center",gap:14}, container:{padding:20,gap:14},
+  safe:{flex:1,backgroundColor:"#F6F8F5"}, auth:{flex:1,padding:24,justifyContent:"center",gap:14}, container:{padding:20,gap:14},
   header:{flexDirection:"row",justifyContent:"space-between",alignItems:"center"}, logo:{fontSize:28,fontWeight:"800",marginTop:8},
   subtitle:{fontSize:14,color:"#666"}, title:{fontSize:18,fontWeight:"700"}, status:{fontSize:18,fontWeight:"800"},
   card:{borderWidth:1,borderColor:"#ddd",borderRadius:16,padding:16,gap:12}, input:{borderWidth:1,borderColor:"#ccc",borderRadius:10,padding:13},
