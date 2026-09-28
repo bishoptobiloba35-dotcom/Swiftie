@@ -503,6 +503,24 @@ router.post("/admin/ai/users/:id/plan", requireAuth("ADMIN"), async(req,res)=>{
   finally{client.release();}
 });
 
+router.get("/admin/drop-off/locations/:locationId/documents/:documentId", requireAuth("ADMIN"), async(req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const row=(await pool.query("SELECT storage_key,document_type,status FROM drop_off_location_documents WHERE id=$1 AND location_id=$2",[String(req.params.documentId),String(req.params.locationId)])).rows[0];
+  if(!row?.storage_key)return res.status(404).json({error:"Drop-off document not found"});
+  try{
+    const object=await getPrivateObject(row.storage_key);
+    res.setHeader("Content-Type",object.contentType??"application/octet-stream");
+    res.setHeader("Cache-Control","private, no-store");
+    return res.send(object.body);
+  }catch{return res.status(404).json({error:"Drop-off document is unavailable"});}
+});
+
+router.get("/admin/drop-off/commission", requireAuth("ADMIN"), async(_req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const result=await pool.query("SELECT l.id AS location_id,l.name,l.address,ba.display_name AS business_name,c.status,c.currency,count(*)::int AS parcels,sum(c.amount_minor)::bigint AS amount_minor FROM drop_off_commission_ledger c JOIN drop_off_locations l ON l.id=c.location_id JOIN business_accounts ba ON ba.id=l.business_id GROUP BY l.id,l.name,l.address,ba.display_name,c.status,c.currency ORDER BY l.name,c.status");
+  return res.json({commission:result.rows});
+});
+
 router.get("/admin/drop-off/applications", requireAuth("ADMIN"), async(_req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const result=await pool.query("SELECT dl.*,ba.display_name AS business_name,(SELECT count(*) FROM drop_off_location_documents d WHERE d.location_id=dl.id) AS document_count FROM drop_off_locations dl JOIN business_accounts ba ON ba.id=dl.business_id ORDER BY dl.created_at DESC LIMIT 500");
