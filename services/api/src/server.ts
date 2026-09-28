@@ -10,7 +10,7 @@ import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, savePaymentAuthorization, markPaymentRefund, confirmReceiverAndReleaseEscrow, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
-import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, prepareRefund, releaseDisputeAndCreatePayout, recordFailedDeliveryAttempt, rescheduleDelivery, listDeliveryAttempts } from "./database/deliveryRepository.js";
+import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, prepareRefund, releaseDisputeAndCreatePayout, recordFailedDeliveryAttempt, rescheduleDelivery, listDeliveryAttempts, createBusinessAccount, attachDeliveryToBusiness, listBusinessReadyDeliveries, dispatchBusinessDelivery } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -89,6 +89,29 @@ async function hasBusinessPremium(userId: string): Promise<boolean> {
   return result.rows.length > 0;
 }
 
+app.post("/api/business/profile", requireAuth("CUSTOMER"), async (req,res)=>{
+ if(!databaseEnabled()) return res.status(503).json({error:"Business profile requires the production database"});
+ const name=String(req.body?.name??"").trim();
+ if(name.length<2||name.length>120) return res.status(400).json({error:"Business name is required"});
+ try{return res.status(201).json({business:await createBusinessAccount(identity(req),name)});}catch{return res.status(500).json({error:"Unable to create business profile"});}
+});
+app.post("/api/business/deliveries/:id/queue", requireAuth("CUSTOMER"), async (req,res)=>{
+ if(!databaseEnabled()) return res.status(503).json({error:"Business dispatch requires the production database"});
+ const priority=Number(req.body?.priority??0), scheduledFor=req.body?.scheduledFor?String(req.body.scheduledFor):undefined;
+ if(!Number.isInteger(priority)||priority<0||priority>100)return res.status(400).json({error:"Invalid priority"});
+ try{
+  const b=await pool!.query("SELECT id FROM business_accounts WHERE owner_user_id=$1 AND status='ACTIVE' LIMIT 1",[identity(req)]);
+  if(!b.rows[0])return res.status(404).json({error:"Business profile not found"});
+  const d=await findDeliveryForUser(routeParam(req.params.id,"id"),identity(req),"CUSTOMER");
+  if(!d)return res.status(404).json({error:"Delivery not found"});
+  const item=await attachDeliveryToBusiness(b.rows[0].id,d.id,priority,scheduledFor);
+  return item?res.status(201).json({item}):res.status(409).json({error:"Unable to queue delivery"});
+ }catch{return res.status(500).json({error:"Unable to queue business delivery"});}
+});
+app.get("/api/business/dispatch/ready", requireAuth("CUSTOMER"), async(req,res)=>{
+ if(!databaseEnabled())return res.status(503).json({error:"Business dispatch requires the production database"});
+ try{const b=await pool!.query("SELECT id FROM business_accounts WHERE owner_user_id=$1 AND status='ACTIVE' LIMIT 1",[identity(req)]);if(!b.rows[0])return res.status(404).json({error:"Business profile not found"});return res.json({deliveries:await listBusinessReadyDeliveries(b.rows[0].id)});}catch{return res.status(500).json({error:"Unable to load business dispatch queue"});}
+});
 app.get("/api/me/product-profile", requireAuth("CUSTOMER", "DRIVER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Product profile requires the production database" });
   const userId = identity(req);
