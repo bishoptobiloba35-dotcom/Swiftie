@@ -2,19 +2,23 @@
 
 ## Completed in the current production-hardening pass
 
-- Pickup-photo uploads are now bound to the authenticated assigned driver and the delivery being collected.
-- Public /uploads serving has been removed; pickup evidence is served through authenticated delivery access or receiver-verified tracking access.
-- Pickup photos are stored under a delivery-scoped directory with non-guessable filenames.
-- GPS updates remain bearer-authenticated and driver-assignment checked, with server-generated timestamps, coordinate validation, accuracy validation, and a minimum update interval to reduce abuse/noisy writes.
+- Pickup-photo uploads are authenticated, bound to the assigned driver and delivery, and stored privately.
+- Production pickup-photo and driver-KYC files now use S3-compatible private object storage; local private storage remains available only for development.
+- Public file serving is not exposed; pickup evidence and KYC documents are returned through authorization-checked API endpoints.
+- Production startup now fails fast when database, JWT, Paystack, CORS, or private object-storage configuration is missing or insecure.
+- GPS updates remain bearer-authenticated and driver-assignment checked, with server-generated timestamps, coordinate validation, accuracy validation, and a minimum update interval.
+- Receiver six-digit PIN verification is rate-limited to reduce brute-force attempts.
 - Background location tracking remains enabled from the driver app while an active delivery is in transit.
-- Driver pickup upload now sends the delivery ID, so the API can enforce the pickup state before accepting evidence.
-- CI now typechecks shared, API, admin, customer, and driver workspaces and runs API tracking-validation tests.
-- Paystack webhook verification now uses the exact raw request body and constant-time signature comparison, preventing JSON re-serialization from invalidating or weakening signature checks.
+- Paystack webhook verification uses the exact raw request body and constant-time signature comparison.
+- Payment initialization now uses the same `PAYSTACK_SECRET_KEY` configuration used by Paystack webhooks and transfers.
+- Notification records now use a database-backed outbox with retry/backoff and Expo push delivery; invalid device tokens are removed.
+- CI typechecks shared, API, admin, customer, and driver workspaces and runs API tests. The npm cache dependency was removed because the repository does not currently commit a package-lock file.
 
-## Next production milestones
+## Remaining production milestones
 
-1. Replace local pickup-photo storage with durable object storage (S3-compatible or equivalent) and signed/private delivery URLs.
-2. Expand automated integration tests from tracking validation to every delivery-state transition, receiver PIN completion, escrow release, disputes, support, and payout webhooks.
-3. Add production observability: structured logs, error tracking, metrics, alerting, and health/readiness endpoints.
-4. Complete mobile push notification delivery and retry handling.
-5. Finish app-store production configuration, privacy disclosures, terms/acceptable-use flows, and release builds.
+1. Add automated database integration coverage for every delivery-state transition, receiver PIN completion, escrow release, disputes, support, payout webhooks, notification outbox, and object-storage authorization.
+2. Add Expo push receipt polling and durable receipt/error records so provider-level delivery failures are reconciled after push tickets are issued.
+3. Add production observability: structured request IDs, error tracking, metrics, alerting, and operational dashboards.
+4. Finish mobile app-store production configuration, privacy disclosures, terms/acceptable-use flows, notification credentials, and release builds.
+5. Commit a reproducible npm lockfile and restore locked installs/caching in CI once dependency resolution is stable.
+6. After CI is verified green, enable branch protection with required production CI checks.
