@@ -905,20 +905,11 @@ app.get("/api/driver/documents/file/:filename", requireAuth(), async (req, res) 
   }
 });
 
-app.post("/api/driver/documents", requireAuth("DRIVER"), async (req, res) => {
-  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
-  const userId = identity(req);
-  const driver = await driverForUser(userId);
-  if (!driver) return res.status(404).json({ error: "Driver profile not found" });
-  const documentType = String(req.body?.documentType ?? "").trim();
-  const documentUrl = String(req.body?.documentUrl ?? "").trim();
-  if (!documentType || !documentUrl) return res.status(400).json({ error: "Document type and document URL are required" });
-  const result = await pool!.query(
-    "INSERT INTO driver_documents (driver_id, document_type, document_url) VALUES ($1,$2,$3) RETURNING id, document_type, status, created_at",
-    [driver.id, documentType, documentUrl]
-  );
-  res.status(201).json({ document: result.rows[0] });
-});
+app.post("/api/driver/documents", requireAuth("DRIVER"), async (_req, res) => {
+  return res.status(410).json({
+    error: "Direct document URLs are no longer accepted. Upload KYC documents through the secure document upload flow."
+  });
+}
 
 app.get("/api/driver/documents", requireAuth("DRIVER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
