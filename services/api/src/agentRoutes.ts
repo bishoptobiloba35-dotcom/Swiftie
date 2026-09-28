@@ -217,7 +217,7 @@ router.post("/buy-orders/:id/create-delivery", requireAuth("AGENT"), async (req,
       await client.query("ROLLBACK");return res.status(409).json({error:"Receiver and delivery destination details are incomplete",code:"DESTINATION_INCOMPLETE"});
     }
     const deliveryId=randomUUID();
-    const trackingCode="SD-"+crypto.randomUUID().replaceAll("-","").slice(0,8).toUpperCase();
+    const trackingCode="SD-"+randomUUID().replaceAll("-","").slice(0,8).toUpperCase();
     const pickupAddress=String(order.merchant_address||order.merchant_name||"Merchant pickup");
     const pickupLat=order.merchant_lat==null?order.destination_lat:order.merchant_lat;
     const pickupLng=order.merchant_lng==null?order.destination_lng:order.merchant_lng;
