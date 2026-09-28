@@ -10,7 +10,8 @@ const migrations = [
   { id: "006_payout_provider_status", file: "006_payout_provider_status.sql" },
   { id: "007_paystack_webhook_events", file: "007_paystack_webhook_events.sql" },
   { id: "008_support_and_receiver_disputes", file: "008_support_and_receiver_disputes.sql" },
-  { id: "009_payment_refunds", file: "009_payment_refunds.sql" }
+  { id: "009_payment_refunds", file: "009_payment_refunds.sql" },
+  { id: "010_admin_case_audit", file: "010_admin_case_audit.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
