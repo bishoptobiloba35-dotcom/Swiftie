@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -29,7 +29,12 @@ app.use(cors({
     : true,
   credentials: true
 }));
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({
+  limit: "10mb",
+  verify: (req, _res, buffer) => {
+    (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buffer);
+  }
+}));
 app.use("/api/auth", authRoutes);
 
 type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED";
@@ -501,14 +506,19 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   const signature = req.header("x-paystack-signature");
   if (!secret || !signature) return res.status(401).end();
 
-  const crypto = await import("node:crypto");
-  const expected = crypto.createHmac("sha512", secret)
-    .update(JSON.stringify(req.body))
-    .digest("hex");
-  if (signature !== expected) return res.status(401).end();
+  const rawBody = (req as express.Request & { rawBody?: Buffer }).rawBody;
+  if (!rawBody) return res.status(400).json({ error: "Webhook body could not be verified" });
+
+  const expected = createHmac("sha512", secret).update(rawBody).digest("hex");
+  const supplied = signature.trim().toLowerCase();
+  const expectedBuffer = Buffer.from(expected, "utf8");
+  const suppliedBuffer = Buffer.from(supplied, "utf8");
+  if (suppliedBuffer.length !== expectedBuffer.length || !timingSafeEqual(suppliedBuffer, expectedBuffer)) {
+    return res.status(401).end();
+  }
 
   const event = req.body as any;
-  const webhookHash = crypto.createHash("sha256").update(JSON.stringify(req.body)).digest("hex");
+  const webhookHash = createHash("sha256").update(rawBody).digest("hex");
   const webhookReference = String(event?.data?.reference ?? "");
   if (databaseEnabled()) {
     const claimed = await claimPaystackWebhookEvent({ payloadHash: webhookHash, eventType: String(event?.event ?? ""), providerReference: webhookReference || null });
