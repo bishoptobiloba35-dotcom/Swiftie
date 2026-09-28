@@ -201,7 +201,7 @@ app.post("/api/ai/actions", requireAuth("CUSTOMER"), async (req, res) => {
 
     let spendReserved = false;
     let shouldReserveSpend = false;
-    if (paymentAction && effectiveAmount != null && !payment.requiresApproval) {
+    if (paymentAction && effectiveAmount != null) {
       const existing = await findPayment(parsed.data.targetId!);
       shouldReserveSpend = !(existing?.status === "PENDING" && Boolean(existing.authorizationUrl) && Boolean(existing.providerReference));
       if (shouldReserveSpend) {
