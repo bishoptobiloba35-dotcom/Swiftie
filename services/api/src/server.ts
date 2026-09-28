@@ -1651,6 +1651,10 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
         return res.status(409).json({ error: "Delivery is no longer awaiting receiver confirmation" });
       }
       await client.query(
+        "UPDATE drop_off_parcels SET status='COMPLETED', completed_at=now(), updated_at=now() WHERE delivery_id=$1 AND status='COURIER_COLLECTED'",
+        [locked.delivery_id]
+      );
+      await client.query(
         "UPDATE buy_order_payments SET status='RELEASED', updated_at=now() WHERE buy_order_id=$1 AND status='HELD'",
         [locked.id]
       );
@@ -1704,6 +1708,10 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
       eventType: "RECEIVER_CONFIRMED_DELIVERY",
       metadata: { receiverPhoneVerified: true, escrowReleased: true, payoutEligible: result.payoutAmountMinor > 0 }
     });
+    await pool!.query(
+      "UPDATE drop_off_parcels SET status='COMPLETED', completed_at=now(), updated_at=now() WHERE delivery_id=$1 AND status='COURIER_COLLECTED'",
+      [result.delivery.id]
+    );
     await pool!.query(
       "UPDATE drop_off_commission_ledger SET status='AVAILABLE', updated_at=now() WHERE parcel_id IN (SELECT id FROM drop_off_parcels WHERE delivery_id=$1) AND status='EARNED'",
       [result.delivery.id]
