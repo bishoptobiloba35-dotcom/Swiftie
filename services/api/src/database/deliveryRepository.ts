@@ -1014,13 +1014,13 @@ export async function dispatchBusinessDelivery(businessId: string, deliveryId: s
         AND EXISTS (SELECT 1 FROM driver_documents dd WHERE dd.driver_id=d.id AND dd.status='APPROVED')
         AND ($3::text IS NULL OR UPPER(COALESCE(d.vehicle_type,''))=UPPER($3::text))
         AND NOT EXISTS (SELECT 1 FROM deliveries x WHERE x.driver_id=d.id AND x.status IN ('DRIVER_ASSIGNED','DRIVER_AT_PICKUP','PICKED_UP','IN_TRANSIT','ARRIVED'))
-       ORDER BY d.updated_at ASC NULLS FIRST LIMIT 1 FOR UPDATE SKIP LOCKED` [businessId, deliveryId, preferredVehicle ?? null]);
+       ORDER BY d.updated_at ASC NULLS FIRST LIMIT 1 FOR UPDATE SKIP LOCKED`, [preferredVehicle ?? null]);
     if (!driver.rowCount) { await client.query('ROLLBACK'); return null; }
     const updated = await client.query(
       `UPDATE deliveries SET driver_id=$2, status='DRIVER_ASSIGNED', updated_at=now()
         WHERE id=$1 AND driver_id IS NULL AND status='PAYMENT_AUTHORIZED' RETURNING *`, [deliveryId, driver.rows[0].id]);
     if (!updated.rowCount) { await client.query('ROLLBACK'); return null; }
-    await client.query(`UPDATE business_deliveries SET status='DISPATCHED', updated_at=now() WHERE business_id=$1 AND delivery_id=$2`, [businessId, deliveryId, preferredVehicle ?? null]);
+    await client.query(`UPDATE business_deliveries SET status='DISPATCHED', updated_at=now() WHERE business_id=$1 AND delivery_id=$2`, [businessId, deliveryId]);
     await client.query(`INSERT INTO business_dispatch_audit (business_id, delivery_id, action, status, details) VALUES ($1,$2,'DISPATCH','EXECUTED',$3::jsonb)`, [businessId, deliveryId, JSON.stringify({ driverId: driver.rows[0].id })]);
     await client.query('COMMIT');
     return rowToDelivery(updated.rows[0]);
