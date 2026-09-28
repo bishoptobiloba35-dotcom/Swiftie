@@ -1238,6 +1238,26 @@ app.post("/api/admin/support/tickets/:id/resolve", requireAuth("ADMIN"), async (
   return res.json({ ticket });
 });
 
+app.post("/api/admin/support/tickets/:id/reply", requireAuth("ADMIN"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Support requires the production database" });
+  const ticketId = routeParam(req.params.id, "id");
+  const message = String(req.body?.message ?? "").trim();
+  if (message.length < 1 || message.length > 4000) return res.status(400).json({ error: "Reply must be between 1 and 4000 characters" });
+  const ticket = await resolveSupportTicket(ticketId, "IN_REVIEW", message);
+  if (!ticket) return res.status(404).json({ error: "Support ticket not found or already closed" });
+  await recordAdminSupportMessage(ticketId, identity(req), message);
+  if (ticket.deliveryId) {
+    await recordAdminCaseAudit({
+      deliveryId: ticket.deliveryId,
+      adminUserId: identity(req),
+      action: "SUPPORT_TICKET_ADMIN_REPLY",
+      note: message,
+      metadata: { ticketId }
+    });
+  }
+  return res.json({ ticket, message });
+});
+
 app.get("/api/admin/payouts", requireAuth("ADMIN"), async (_req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool!.query("SELECT id, delivery_id, driver_id, amount_minor, currency, status, provider, provider_reference, provider_status, failure_reason, processed_at, created_at, updated_at FROM payouts ORDER BY updated_at DESC LIMIT 100");
