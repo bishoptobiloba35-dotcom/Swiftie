@@ -73,7 +73,7 @@ export async function updateShoppingItem(taskId:string,shopperId:string,itemId:s
  const ok=await pool.query("SELECT 1 FROM shopping_tasks WHERE id=$1 AND shopper_id=$2 AND status IN ('ASSIGNED','SHOPPING','AWAITING_APPROVAL')",[taskId,shopperId]);
  if(!ok.rowCount)return null;
  const r=await pool.query(`UPDATE shopping_items SET found_status=$4,actual_unit_price_minor=$5,actual_quantity=$6,substitute_name=$7,updated_at=now()
- WHERE id=$1 AND task_id=$2 RETURNING *`,[itemId,taskId,taskId,input.foundStatus,input.actualUnitPriceMinor??null,input.actualQuantity??null,input.substituteName??null]);
+ WHERE id=$1 AND task_id=$2 RETURNING *`,[itemId,taskId,input.foundStatus,input.actualUnitPriceMinor??null,input.actualQuantity??null,input.substituteName??null]);
  return r.rows[0]??null;
 }
 export async function recordShoppingEvidence(taskId:string,shopperId:string,type:string,objectKey:string,contentType:string){
