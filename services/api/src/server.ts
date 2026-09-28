@@ -447,7 +447,7 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
   if (!amountMinor || !Number.isSafeInteger(amountMinor)) {
     return res.status(409).json({ error: "Delivery does not have a valid server quote" });
   }
-  const secret = process.env.PAYMENT_SECRET_KEY;
+  const secret = process.env.PAYSTACK_SECRET_KEY;
   const provider = process.env.PAYMENT_PROVIDER || "paystack";
   if (provider !== "paystack" || !secret) {
     return res.status(503).json({ error: "Paystack payment configuration is not ready" });
