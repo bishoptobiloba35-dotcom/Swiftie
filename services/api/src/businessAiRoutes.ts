@@ -503,6 +503,12 @@ router.post("/admin/ai/users/:id/plan", requireAuth("ADMIN"), async(req,res)=>{
   finally{client.release();}
 });
 
+router.get("/admin/drop-off/locations/:locationId/documents", requireAuth("ADMIN"), async(req,res)=>{
+  if(!pool)return res.status(503).json({error:"Database is not configured"});
+  const result=await pool.query("SELECT id,document_type,status,review_note,created_at,updated_at FROM drop_off_location_documents WHERE location_id=$1 ORDER BY created_at ASC",[String(req.params.locationId)]);
+  return res.json({documents:result.rows});
+});
+
 router.get("/admin/drop-off/locations/:locationId/documents/:documentId", requireAuth("ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const row=(await pool.query("SELECT storage_key,document_type,status FROM drop_off_location_documents WHERE id=$1 AND location_id=$2",[String(req.params.documentId),String(req.params.locationId)])).rows[0];
