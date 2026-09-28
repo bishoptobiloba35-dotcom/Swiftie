@@ -642,9 +642,13 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   const event = req.body as any;
   const webhookHash = createHash("sha256").update(rawBody).digest("hex");
   const webhookReference = String(event?.data?.reference ?? "");
+  let duplicateWebhook = false;
   if (databaseEnabled()) {
-    const claimed = await claimPaystackWebhookEvent({ payloadHash: webhookHash, eventType: String(event?.event ?? ""), providerReference: webhookReference || null });
-    if (!claimed) return res.status(200).json({ received: true, duplicate: true });
+    duplicateWebhook = !(await claimPaystackWebhookEvent({
+      payloadHash: webhookHash,
+      eventType: String(event?.event ?? ""),
+      providerReference: webhookReference || null
+    }));
   }
   if (typeof event?.event === "string" && event.event.startsWith("refund.")) {
     const transactionReference = String(event?.data?.transaction_reference ?? event?.data?.transaction?.reference ?? "");
@@ -732,7 +736,7 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
     eventType: "PAYMENT_HELD",
     metadata: { provider: "paystack", reference }
   });
-  return res.status(200).json({ received: true });
+  return res.status(200).json({ received: true, duplicate: duplicateWebhook });
 });
 
 app.get("/api/deliveries/:id/payment/status", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
