@@ -35,7 +35,7 @@ The backend is authoritative for delivery state, pricing, GPS events, pickup pro
 - Server-authoritative state transitions
 - Authenticated driver location updates
 - Role-based access control
-- Secure private document/object storage (S3-compatible in production; local private storage in development)
+- Secure private document/object storage (Supabase Storage in production; local private storage in development)
 - Payment-provider abstraction
 - Audit events for sensitive actions
 - Secrets supplied through environment variables
@@ -53,12 +53,10 @@ The backend is authoritative for delivery state, pricing, GPS events, pickup pro
 
 ## Production environment
 
-The API requires, in production, a PostgreSQL `DATABASE_URL`, strong `JWT_SECRET`, `PAYSTACK_SECRET_KEY`, HTTPS `CORS_ORIGINS`, and private S3-compatible object-storage credentials:
+The API requires, in production, a PostgreSQL `DATABASE_URL`, strong `JWT_SECRET`, `PAYSTACK_SECRET_KEY`, HTTPS `CORS_ORIGINS`, and private Supabase Storage credentials:
 
-- `OBJECT_STORAGE_BUCKET`
-- `OBJECT_STORAGE_REGION`
-- `OBJECT_STORAGE_ACCESS_KEY_ID`
-- `OBJECT_STORAGE_SECRET_ACCESS_KEY`
-- optional `OBJECT_STORAGE_ENDPOINT` for S3-compatible providers such as an S3-compatible private endpoint
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_STORAGE_BUCKET` (private bucket)
 
 Pickup evidence and driver KYC files are never served from a public uploads directory.
