@@ -398,34 +398,6 @@ export default function App() {
 
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.container}>
     <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.subtitle}>Send it. Track it. Receive it.</Text></View><View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => { setShowSupport(v => !v); void loadSupportTickets(); }}><Text style={styles.link}>Support</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View></View>
-    {showSwiftAi && <View style={styles.aiCard}>
-      <View style={styles.header}>
-        <View style={{flex:1}}>
-          <Text style={styles.eyebrow}>SWIFT AI</Text>
-          <Text style={styles.heroTitle}>{swiftAiPlan === "PREMIUM" ? "Let Swift AI help me get things done." : "Ask Swift AI."}</Text>
-        </View>
-        <Pressable onPress={() => setShowSwiftAi(false)}><Text style={styles.link}>Hide</Text></Pressable>
-      </View>
-      <Text style={styles.muted}>
-        {swiftAiPlan === "PREMIUM"
-          ? "Premium AI access is enabled. Ask about deliveries, support, or your SwiftDrop account."
-          : "Basic AI gives you informational help about SwiftDrop and your delivery experience."}
-      </Text>
-      {swiftAiPlan === "BASIC" && <Text style={styles.aiNotice}>Basic AI is informational only. Requests that change orders, payments, purchases, or other account state require Premium authorization.</Text>}
-      <TextInput
-        style={styles.input}
-        placeholder="Ask: Where is my parcel? How does tracking work?"
-        value={swiftAiQuestion}
-        onChangeText={setSwiftAiQuestion}
-        maxLength={2000}
-        multiline
-      />
-      <Pressable style={styles.primary} disabled={swiftAiBusy} onPress={() => void askSwiftAi()}>
-        <Text style={styles.primaryText}>{swiftAiBusy ? "Swift AI is thinking…" : "Ask Swift AI"}</Text>
-      </Pressable>
-      {!!swiftAiAnswer && <View style={styles.aiAnswer}><Text style={styles.photoTitle}>Swift AI</Text><Text>{swiftAiAnswer}</Text></View>}
-    </View>}
-    {!showSwiftAi && <Pressable style={styles.secondary} onPress={() => setShowSwiftAi(true)}><Text style={styles.secondaryText}>Open Swift AI</Text></Pressable>}
     {showNotifications && <View style={styles.card}><View style={styles.header}><Text style={styles.heading}>Notifications</Text><Pressable onPress={() => void loadNotifications()}><Text>Refresh</Text></Pressable></View>{notifications.length === 0 ? <Text style={styles.muted}>No notifications.</Text> : notifications.map(item => <Pressable key={item.id} style={styles.notification} onPress={() => void markNotificationRead(item.id)}><Text style={styles.notificationTitle}>{item.title}</Text><Text>{item.body}</Text><Text style={styles.muted}>{new Date(item.created_at).toLocaleString()} · {item.read_at ? "Read" : "Tap to mark read"}</Text></Pressable>)}</View>}
     <View style={styles.card}>
       <View style={styles.header}>
@@ -597,8 +569,6 @@ const styles = StyleSheet.create({
   link: { color: "#178A52", fontWeight: "800", textAlign: "center" },
   code: { fontWeight: "900", color: "#123D2A", marginTop: 4 },
   divider: { height: 1, backgroundColor: "#E3E9E5", marginVertical: 20 },
-  aiCard: { borderWidth: 1, borderColor: "#BFD0C5", backgroundColor: "#FFFFFF", borderRadius: 20, padding: 17, gap: 10, marginTop: 12 },
-  aiNotice: { color: "#5C6B62", fontSize: 12, lineHeight: 18, backgroundColor: "#F3F7F4", borderRadius: 12, padding: 10 },
   aiAnswer: { borderWidth: 1, borderColor: "#E1E8E3", borderRadius: 14, padding: 13, gap: 6, backgroundColor: "#FAFCFA" },
   card: { borderWidth: 1, borderColor: "#DDE5DF", backgroundColor: "#FFFFFF", borderRadius: 20, padding: 17, gap: 10, marginTop: 12, shadowColor: "#183B2A", shadowOpacity: 0.05, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 1 },
   status: { fontSize: 18, fontWeight: "900", color: "#123D2A" },
