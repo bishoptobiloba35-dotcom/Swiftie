@@ -3,10 +3,9 @@ const requiredProductionEnv = [
   "JWT_SECRET",
   "PAYSTACK_SECRET_KEY",
   "CORS_ORIGINS",
-  "OBJECT_STORAGE_BUCKET",
-  "OBJECT_STORAGE_REGION",
-  "OBJECT_STORAGE_ACCESS_KEY_ID",
-  "OBJECT_STORAGE_SECRET_ACCESS_KEY"
+  "SUPABASE_URL",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "SUPABASE_STORAGE_BUCKET"
 ] as const;
 
 export function validateProductionConfig(): void {
@@ -21,10 +20,6 @@ export function validateProductionConfig(): void {
     throw new Error("JWT_SECRET must not use the development fallback in production");
   }
 
-  const objectEndpoint = process.env.OBJECT_STORAGE_ENDPOINT?.trim();
-  if (objectEndpoint && !/^https:\/\//i.test(objectEndpoint)) {
-    throw new Error("OBJECT_STORAGE_ENDPOINT must use HTTPS in production");
-  }
 
   const origins = process.env.CORS_ORIGINS!
     .split(",")
