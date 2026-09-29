@@ -80,3 +80,9 @@ Pickup photos, delivery events, PIN verification and relevant audit events are r
 - Push notifications
 
 The first implementation should prioritize one complete delivery journey from quote to PIN-confirmed delivery before expanding into advanced features.
+
+
+### Business automation
+- Business Premium dispatch permissions are server-authorized.
+- Recurring dispatch rules are stored in PostgreSQL and processed by a background worker.
+- Each due recurrence creates a PREPARED dispatch plan with an audit reference to the recurring rule; approval remains explicit when required.
