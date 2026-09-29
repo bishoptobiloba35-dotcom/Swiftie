@@ -3,7 +3,7 @@
 ## Completed in the current production-hardening pass
 
 - Pickup-photo uploads are authenticated, bound to the assigned driver and delivery, and stored privately.
-- Production pickup-photo and driver-KYC files now use S3-compatible private object storage; local private storage remains available only for development.
+- Production pickup-photo and driver-KYC files now use a private Supabase Storage bucket; local private storage remains available only for development.
 - Public file serving is not exposed; pickup evidence and KYC documents are returned through authorization-checked API endpoints.
 - Production startup now fails fast when database, JWT, Paystack, CORS, or private object-storage configuration is missing or insecure.
 - GPS updates remain bearer-authenticated and driver-assignment checked, with server-generated timestamps, coordinate validation, accuracy validation, and a minimum update interval.
