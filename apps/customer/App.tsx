@@ -121,6 +121,7 @@ export default function App() {
       setSignedIn(true);
       void registerPushNotifications();
       void loadNotifications();
+      void loadSwiftAi();
     } catch (error) {
       Alert.alert("Registration failed", error instanceof Error ? error.message : "Unable to register");
     }
