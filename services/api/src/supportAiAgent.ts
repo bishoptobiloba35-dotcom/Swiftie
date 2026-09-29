@@ -1,4 +1,5 @@
 import { pool } from "./database/db.js";
+import { isSafeInformationalSupportRequest, unsafeSupportRequestPattern } from "./supportAiPolicy.js";
 import {
   listOpenSupportAiTickets,
   recordSupportAiAction,
@@ -13,7 +14,7 @@ type AiDecision = {
   response: string;
 };
 
-const unsafePatterns = /(refund|refunds|payment|paystack|cancel|cancellation|payout|transfer|chargeback|dispute|money|wallet|bank)/i;
+
 
 // Automatic resolution is deliberately narrow. A linked order is not enough by
 // itself to make a ticket safe: the message must be an approved informational
@@ -60,7 +61,7 @@ async function generateAiReply(subject: string, message: string, context: string
 }
 
 async function decideTicket(ticket: any): Promise<AiDecision> {
-  if (unsafePatterns.test(ticket.subject + " " + ticket.message)) {
+  if (unsafeSupportRequestPattern.test(ticket.subject + " " + ticket.message)) {
     return {
       action: "ESCALATED",
       reason: "Financial, cancellation, dispute, or other sensitive action requires human review.",
@@ -83,6 +84,10 @@ async function decideTicket(ticket: any): Promise<AiDecision> {
         reason: "The linked-order request is outside the approved informational support categories.",
         response: "Your request has been received and escalated to SwiftDrop support for human review."
       };
+    }
+
+    if (!isSafeInformationalSupportRequest(ticket.subject, ticket.message)) {
+      return { action: "ESCALATED", reason: "The request is linked to an order but is not an approved informational support category.", response: "Your request has been received and escalated to SwiftDrop support for human review." };
     }
 
     const context = "delivery status=" + delivery.status + ", tracking code=" + delivery.tracking_code + ", last updated=" + delivery.updated_at;
