@@ -1,15 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { isSafeInformationalSupportRequest } from "./supportAiAgent.js";
 
 function classifySupportRequest(subject: string, message: string): "AUTO_RESOLVED" | "ESCALATED" {
-  const text = subject + " " + message;
-  if (/(refund|payment|paystack|cancel|cancellation|payout|transfer|chargeback|dispute|money|wallet|bank)/i.test(text)) {
-    return "ESCALATED";
-  }
-  if (/(how|where|track|tracking|support|help|status|app|driver|drop.?off)/i.test(text)) {
-    return "AUTO_RESOLVED";
-  }
-  return "ESCALATED";
+  return isSafeInformationalSupportRequest(subject, message) ? "AUTO_RESOLVED" : "ESCALATED";
 }
 
 test("support AI safety: informational tracking request can auto-resolve", () => {
@@ -26,5 +20,13 @@ test("support AI safety: cancellation always escalates", () => {
 });
 
 test("support AI safety: unknown requests escalate", () => {
+  assert.equal(classifySupportRequest("Something unusual", "I need help with a special request"), "ESCALATED");
+});
+
+test("support AI safety: generic app guidance remains informational", () => {
+  assert.equal(classifySupportRequest("App help", "How do I use the app?"), "AUTO_RESOLVED");
+});
+
+test("support AI safety: linked-order context alone cannot auto-resolve an unknown request", () => {
   assert.equal(classifySupportRequest("Something unusual", "I need help with a special request"), "ESCALATED");
 });
