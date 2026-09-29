@@ -15,6 +15,23 @@ type AiDecision = {
 
 const unsafePatterns = /(refund|refunds|payment|paystack|cancel|cancellation|payout|transfer|chargeback|dispute|money|wallet|bank)/i;
 
+// Automatic resolution is deliberately narrow. A linked order is not enough by
+// itself to make a ticket safe: the message must be an approved informational
+// tracking/status/FAQ request with no consequential action requested.
+export function isSafeInformationalSupportRequest(subject: string, message: string): boolean {
+  const text = subject + " " + message;
+  if (unsafePatterns.test(text)) return false;
+
+  return [
+    /\\b(where is|where's) (my|the) (order|parcel|package|delivery|driver)\\b/i,
+    /\\b(track|tracking|status|eta|estimated (arrival|delivery)|delivery progress)\\b/i,
+    /\\bhow (do|can) i (track|check|view|use|find)\\b/i,
+    /\\bhow does (swiftdrop|the app|delivery|tracking) work\\b/i,
+    /\\b(app|driver|drop.?off) (help|guide|information|instructions)\\b/i,
+    /\\b(help|guide|instructions) (with|using) (the )?(app|tracking|drop.?off)\\b/i
+  ].some((pattern) => pattern.test(text));
+}
+
 async function generateAiReply(subject: string, message: string, context: string): Promise<string | null> {
   const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
@@ -60,6 +77,14 @@ async function decideTicket(ticket: any): Promise<AiDecision> {
       return { action: "ESCALATED", reason: "The referenced order could not be verified.", response: "We could not verify the referenced order, so a support administrator will review this request." };
     }
 
+    if (!isSafeInformationalSupportRequest(ticket.subject, ticket.message)) {
+      return {
+        action: "ESCALATED",
+        reason: "The linked-order request is outside the approved informational support categories.",
+        response: "Your request has been received and escalated to SwiftDrop support for human review."
+      };
+    }
+
     const context = "delivery status=" + delivery.status + ", tracking code=" + delivery.tracking_code + ", last updated=" + delivery.updated_at;
     const aiReply = await generateAiReply(ticket.subject, ticket.message, context);
     return {
@@ -69,8 +94,7 @@ async function decideTicket(ticket: any): Promise<AiDecision> {
     };
   }
 
-  const faq = /how|where|track|tracking|support|help|status|app|driver|drop.?off/i.test(ticket.subject + " " + ticket.message);
-  if (faq) {
+  if (isSafeInformationalSupportRequest(ticket.subject, ticket.message)) {
     const aiReply = await generateAiReply(ticket.subject, ticket.message, "No order was linked. Only general SwiftDrop support information may be provided.");
     return {
       action: "AUTO_RESOLVED",
