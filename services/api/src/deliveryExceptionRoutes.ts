@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "./database/db.js";
@@ -90,7 +91,7 @@ router.post("/deliveries/:id/failure", requireAuth("DRIVER"), async (req, res) =
         return res.status(413).json({ error: "Evidence photo must not exceed 8MB" });
       }
       const extension = match[1].toLowerCase() === "png" ? "png" : "jpg";
-      evidenceKey = "delivery-exceptions/" + id + "/" + crypto.randomUUID() + "." + extension;
+      evidenceKey = "delivery-exceptions/" + id + "/" + randomUUID() + "." + extension;
       await putPrivateObject(evidenceKey, bytes, extension === "png" ? "image/png" : "image/jpeg");
     }
 
