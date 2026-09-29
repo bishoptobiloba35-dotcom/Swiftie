@@ -1,23 +1,11 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-const bucket = process.env.OBJECT_STORAGE_BUCKET?.trim();
-const region = process.env.OBJECT_STORAGE_REGION?.trim();
-const accessKeyId = process.env.OBJECT_STORAGE_ACCESS_KEY_ID?.trim();
-const secretAccessKey = process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY?.trim();
-const endpoint = process.env.OBJECT_STORAGE_ENDPOINT?.trim();
+const supabaseUrl = process.env.SUPABASE_URL?.trim().replace(/\/$/, "");
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+const bucket = process.env.SUPABASE_STORAGE_BUCKET?.trim() || "swiftdrop-private";
 
-export const objectStorageEnabled = Boolean(bucket && region && accessKeyId && secretAccessKey);
-
-const client = objectStorageEnabled
-  ? new S3Client({
-      region,
-      endpoint: endpoint || undefined,
-      forcePathStyle: Boolean(endpoint),
-      credentials: { accessKeyId: accessKeyId!, secretAccessKey: secretAccessKey! }
-    })
-  : null;
+export const objectStorageEnabled = Boolean(supabaseUrl && supabaseServiceRoleKey);
 
 const localRoot = path.resolve(process.env.LOCAL_PRIVATE_STORAGE_DIR ?? "uploads/private");
 
@@ -31,33 +19,40 @@ export function safeStorageKey(key: string): string {
   return normalized;
 }
 
-function requireStorage(): { client: S3Client; bucket: string } {
-  if (!client || !bucket) throw new Error("Private object storage is not configured");
-  return { client, bucket };
+function requireSupabase(): { url: string; key: string } {
+  if (!supabaseUrl || !supabaseServiceRoleKey) throw new Error("Supabase private storage is not configured");
+  return { url: supabaseUrl, key: supabaseServiceRoleKey };
 }
 
 export async function putPrivateObject(key: string, body: Buffer, contentType: string): Promise<void> {
+  const safeKey = safeStorageKey(key);
   if (!objectStorageEnabled) {
-    if (process.env.NODE_ENV === "production") throw new Error("Private object storage is not configured");
-    const filePath = path.join(localRoot, safeStorageKey(key));
+    if (process.env.NODE_ENV === "production") throw new Error("Supabase private storage is not configured");
+    const filePath = path.join(localRoot, safeKey);
     await mkdir(path.dirname(filePath), { recursive: true });
     await writeFile(filePath, body);
     return;
   }
-  const storage = requireStorage();
-  await storage.client.send(new PutObjectCommand({
-    Bucket: storage.bucket,
-    Key: safeStorageKey(key),
-    Body: body,
-    ContentType: contentType,
-    ServerSideEncryption: endpoint ? undefined : "AES256"
-  }));
+
+  const storage = requireSupabase();
+  const response = await fetch(storage.url + "/storage/v1/object/" + encodeURIComponent(bucket) + "/" + safeKey.split("/").map(encodeURIComponent).join("/"), {
+    method: "POST",
+    headers: {
+      authorization: "Bearer " + storage.key,
+      apikey: storage.key,
+      "content-type": contentType,
+      "x-upsert": "true"
+    },
+    body
+  });
+  if (!response.ok) throw new Error("Supabase Storage upload failed: " + response.status);
 }
 
 export async function getPrivateObject(key: string): Promise<{ body: Buffer; contentType?: string }> {
+  const safeKey = safeStorageKey(key);
   if (!objectStorageEnabled) {
-    if (process.env.NODE_ENV === "production") throw new Error("Private object storage is not configured");
-    const filePath = path.join(localRoot, safeStorageKey(key));
+    if (process.env.NODE_ENV === "production") throw new Error("Supabase private storage is not configured");
+    const filePath = path.join(localRoot, safeKey);
     const body = await readFile(filePath);
     const extension = path.extname(key).toLowerCase();
     return {
@@ -65,9 +60,12 @@ export async function getPrivateObject(key: string): Promise<{ body: Buffer; con
       contentType: extension === ".png" ? "image/png" : extension === ".jpg" || extension === ".jpeg" ? "image/jpeg" : extension === ".pdf" ? "application/pdf" : undefined
     };
   }
-  const storage = requireStorage();
-  const response = await storage.client.send(new GetObjectCommand({ Bucket: storage.bucket, Key: safeStorageKey(key) }));
-  if (!response.Body) throw new Error("Stored object has no body");
-  const bytes = await response.Body.transformToByteArray();
-  return { body: Buffer.from(bytes), contentType: response.ContentType };
+
+  const storage = requireSupabase();
+  const response = await fetch(storage.url + "/storage/v1/object/" + encodeURIComponent(bucket) + "/" + safeKey.split("/").map(encodeURIComponent).join("/"), {
+    headers: { authorization: "Bearer " + storage.key, apikey: storage.key }
+  });
+  if (!response.ok) throw new Error("Supabase Storage download failed: " + response.status);
+  const contentType = response.headers.get("content-type") ?? undefined;
+  return { body: Buffer.from(await response.arrayBuffer()), contentType };
 }
