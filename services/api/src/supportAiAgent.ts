@@ -91,13 +91,28 @@ export async function processSupportAiBatch(limit = 10): Promise<void> {
   const result = await pool.query(
     `SELECT id, user_id, delivery_id, category, subject, message
      FROM support_tickets
-     WHERE status='OPEN' AND ai_handled=false AND human_required=false
-     ORDER BY created_at ASC LIMIT $1
-     FOR UPDATE SKIP LOCKED`,
+     WHERE status='OPEN'
+       AND ai_handled=false
+       AND human_required=false
+       AND (ai_processing_at IS NULL OR ai_processing_at < now() - interval '5 minutes')
+     ORDER BY created_at ASC LIMIT $1`,
     [Math.min(Math.max(limit, 1), 20)]
   );
 
-  for (const ticket of result.rows) {
+  for (const candidate of result.rows) {
+    const claim = await pool.query(
+      `UPDATE support_tickets
+          SET ai_processing_at=now()
+        WHERE id=$1
+          AND status='OPEN'
+          AND ai_handled=false
+          AND human_required=false
+          AND (ai_processing_at IS NULL OR ai_processing_at < now() - interval '5 minutes')
+      RETURNING id, user_id, delivery_id, category, subject, message`,
+      [candidate.id]
+    );
+    if (!claim.rows[0]) continue;
+    const ticket = claim.rows[0];
     try {
       const decision = await decideTicket(ticket);
       const action = await recordSupportAiAction(
@@ -111,6 +126,7 @@ export async function processSupportAiBatch(limit = 10): Promise<void> {
         await notifyAdminsOfSupportAiAction(ticket.id, action.id, decision.action, decision.response);
         await notifySupportUserOfAiAction(ticket.id, action.id, decision.action, decision.response);
       }
+      await pool.query(`UPDATE support_tickets SET ai_processing_at=NULL WHERE id=$1`, [ticket.id]);
     } catch (error) {
       console.error("Support AI ticket processing failed:", error);
       const response = "Support AI could not safely process this request; human review is required.";
@@ -127,6 +143,7 @@ export async function processSupportAiBatch(limit = 10): Promise<void> {
       } else {
         await resolveSupportTicket(ticket.id, "IN_REVIEW", response);
       }
+      await pool.query(`UPDATE support_tickets SET ai_processing_at=NULL WHERE id=$1`, [ticket.id]);
     }
   }
 }
