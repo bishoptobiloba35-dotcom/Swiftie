@@ -135,6 +135,24 @@ export class SwiftDropApi {
     if (!response.ok) throw new Error(data.error ?? "Unable to register notification device");
   }
 
+  async aiEntitlement(): Promise<{ plan: "BASIC" | "PREMIUM"; basic: { informational: boolean; actions: boolean }; premium: { informational: boolean; actions: boolean } }> {
+    const response = await fetch(this.baseUrl + "/api/ai/entitlement", { headers: this.headers() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to load Swift AI access");
+    return data;
+  }
+
+  async aiQuery(question: string): Promise<{ plan: "BASIC" | "PREMIUM"; mode: "INFORMATIONAL"; answer: string; question: string }> {
+    const response = await fetch(this.baseUrl + "/api/ai/query", {
+      method: "POST",
+      headers: this.headers(true),
+      body: JSON.stringify({ question })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Swift AI could not answer");
+    return data;
+  }
+
   async rateDelivery(deliveryId: string, stars: number, comment?: string): Promise<void> {
     const response = await fetch(this.baseUrl + `/api/deliveries/${encodeURIComponent(deliveryId)}/rating`, {
       method: "POST",
