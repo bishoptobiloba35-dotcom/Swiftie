@@ -1,16 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-function classifySupportRequest(subject: string, message: string): "AUTO_RESOLVED" | "ESCALATED" {
-  const text = subject + " " + message;
-  if (/(refund|payment|paystack|cancel|cancellation|payout|transfer|chargeback|dispute|money|wallet|bank)/i.test(text)) {
-    return "ESCALATED";
-  }
-  if (/(how|where|track|tracking|support|help|status|app|driver|drop.?off)/i.test(text)) {
-    return "AUTO_RESOLVED";
-  }
-  return "ESCALATED";
-}
+import { classifySupportRequest } from "./supportAiPolicy.js";
 
 test("support AI safety: informational tracking request can auto-resolve", () => {
   assert.equal(classifySupportRequest("Where is my order?", "Please tell me the tracking status"), "AUTO_RESOLVED");
