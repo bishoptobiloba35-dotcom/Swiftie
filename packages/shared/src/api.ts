@@ -22,6 +22,8 @@ export type ApiDelivery = {
     totalMinor: number;
   };
   status: string;
+  exceptionStatus?: "NONE" | "FAILED_ATTEMPT" | "RESCHEDULED" | "RETURN_REQUESTED" | "RETURN_IN_TRANSIT" | "RETURNED";
+  nextDeliveryAt?: string | null;
   driverId?: string;
   pickupPhotoUrl?: string;
   latestLocation?: {
