@@ -60,3 +60,7 @@ The API requires, in production, a PostgreSQL `DATABASE_URL`, strong `JWT_SECRET
 - `SUPABASE_STORAGE_BUCKET` (private bucket)
 
 Pickup evidence and driver KYC files are never served from a public uploads directory.
+
+## Business automation
+
+Business Premium users with authorized dispatch roles can create recurring dispatch rules. The API validates business membership and limits, stores the rule, and a server worker generates an auditable dispatch plan when the rule is due.
