@@ -60,6 +60,10 @@ export default function App() {
   const [supportSubject, setSupportSubject] = React.useState("");
   const [supportMessage, setSupportMessage] = React.useState("");
   const [supportTickets, setSupportTickets] = React.useState<any[]>([]);
+  const [swiftAiPlan, setSwiftAiPlan] = React.useState<"BASIC" | "PREMIUM">("BASIC");
+  const [swiftAiQuestion, setSwiftAiQuestion] = React.useState("");
+  const [swiftAiAnswer, setSwiftAiAnswer] = React.useState("");
+  const [swiftAiBusy, setSwiftAiBusy] = React.useState(false);
   const [disputeReason, setDisputeReason] = React.useState("");
   const [disputeDescription, setDisputeDescription] = React.useState("");
   const [disputeSubmitted, setDisputeSubmitted] = React.useState(false);
@@ -84,6 +88,7 @@ export default function App() {
         setSignedIn(true);
         void registerPushNotifications();
         void loadNotifications();
+        void loadSwiftAi();
       }
     });
     return () => socketRef.current?.close();
@@ -97,6 +102,7 @@ export default function App() {
       setSignedIn(true);
       void registerPushNotifications();
       void loadNotifications();
+      void loadSwiftAi();
     } catch (error) {
       Alert.alert("Sign in failed", error instanceof Error ? error.message : "Unable to sign in");
     }
@@ -126,6 +132,30 @@ export default function App() {
 
   async function loadSupportTickets() {
     try { setSupportTickets(await api.supportTickets()); } catch {}
+  }
+
+  async function loadSwiftAi() {
+    try {
+      const entitlement = await api.aiEntitlement();
+      setSwiftAiPlan(entitlement.plan);
+    } catch {}
+  }
+
+  async function askSwiftAi() {
+    const question = swiftAiQuestion.trim();
+    if (!question) {
+      Alert.alert("Ask Swift AI", "Enter a question first.");
+      return;
+    }
+    setSwiftAiBusy(true);
+    try {
+      const result = await api.aiQuery(question);
+      setSwiftAiAnswer(result.answer);
+    } catch (error) {
+      Alert.alert("Swift AI", error instanceof Error ? error.message : "Swift AI is unavailable.");
+    } finally {
+      setSwiftAiBusy(false);
+    }
   }
 
   async function submitSupportTicket() {
@@ -366,6 +396,33 @@ export default function App() {
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.container}>
     <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.subtitle}>Send it. Track it. Receive it.</Text></View><View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => { setShowSupport(v => !v); void loadSupportTickets(); }}><Text style={styles.link}>Support</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View></View>
     {showNotifications && <View style={styles.card}><View style={styles.header}><Text style={styles.heading}>Notifications</Text><Pressable onPress={() => void loadNotifications()}><Text>Refresh</Text></Pressable></View>{notifications.length === 0 ? <Text style={styles.muted}>No notifications.</Text> : notifications.map(item => <Pressable key={item.id} style={styles.notification} onPress={() => void markNotificationRead(item.id)}><Text style={styles.notificationTitle}>{item.title}</Text><Text>{item.body}</Text><Text style={styles.muted}>{new Date(item.created_at).toLocaleString()} · {item.read_at ? "Read" : "Tap to mark read"}</Text></Pressable>)}</View>}
+    <View style={styles.card}>
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.eyebrow}>SWIFT AI</Text>
+          <Text style={styles.heading}>{swiftAiPlan === "PREMIUM" ? "Let Swift AI help you get things done." : "Ask Swift AI."}</Text>
+        </View>
+        <Text style={styles.badgeText}>{swiftAiPlan}</Text>
+      </View>
+      <Text style={styles.muted}>
+        {swiftAiPlan === "PREMIUM"
+          ? "Premium AI can provide information and, where an authorized production action exists, help carry it out."
+          : "Basic AI is informational only. It can answer questions about SwiftDrop and your delivery experience, but it cannot perform consequential actions."}
+      </Text>
+      <TextInput
+        style={styles.input}
+        placeholder="Ask about tracking, delivery status, or how SwiftDrop works"
+        value={swiftAiQuestion}
+        onChangeText={setSwiftAiQuestion}
+        maxLength={2000}
+        returnKeyType="send"
+        onSubmitEditing={() => void askSwiftAi()}
+      />
+      <Pressable style={styles.primary} disabled={swiftAiBusy} onPress={() => void askSwiftAi()}>
+        <Text style={styles.primaryText}>{swiftAiBusy ? "Swift AI is thinking…" : "Ask Swift AI"}</Text>
+      </Pressable>
+      {swiftAiAnswer ? <View style={styles.aiAnswer}><Text style={styles.photoTitle}>Swift AI</Text><Text>{swiftAiAnswer}</Text>{swiftAiPlan === "BASIC" && <Text style={styles.hint}>Basic AI cannot change orders, make purchases, reschedule deliveries, or move money.</Text>}</View> : null}
+    </View>
     {showSupport && <View style={styles.card}>
       <View style={styles.header}><View><Text style={styles.eyebrow}>HELP CENTRE</Text><Text style={styles.heroTitle}>How can we help?</Text></View><Pressable onPress={() => setShowSupport(false)}><Text style={styles.link}>Close</Text></Pressable></View>
       <Text style={styles.muted}>Get help with an order, payment, delivery, or the SwiftDrop app itself.</Text>
@@ -515,6 +572,8 @@ const styles = StyleSheet.create({
   map: { width: "100%", height: 260, borderRadius: 14 },
   photoTitle: { fontWeight: "800", color: "#16221B" },
   muted: { color: "#68736C" },
+  badgeText: { color: "#178A52", fontSize: 11, fontWeight: "900" },
+  aiAnswer: { borderWidth: 1, borderColor: "#DDE5DF", borderRadius: 14, padding: 14, gap: 7, backgroundColor: "#F7FAF8" },
   done: { fontSize: 16, fontWeight: "900", color: "#178A52", marginTop: 6 },
   eta: { fontSize: 20, fontWeight: "900", color: "#123D2A", marginTop: 6 },
   notification: { borderTopWidth: 1, borderTopColor: "#E7ECE8", paddingTop: 10, gap: 4 },
