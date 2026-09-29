@@ -404,6 +404,20 @@ router.post("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, 
   res.status(201).json({ business: result.rows[0] });
 });
 
+router.get("/admin/business/recurring-dispatches", requireAuth("ADMIN"), async (_req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool.query(
+    `SELECT rd.*, ba.display_name AS business_name,
+            bdp.status AS plan_status, bdp.created_at AS plan_created_at
+       FROM business_recurring_dispatches rd
+       JOIN business_accounts ba ON ba.id=rd.business_id
+       LEFT JOIN business_dispatch_plans bdp ON bdp.id=rd.last_dispatch_plan_id
+      ORDER BY rd.active DESC, rd.next_run_at ASC
+      LIMIT 200`
+  );
+  res.json({ recurringDispatches: result.rows });
+});
+
 router.get("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Business accounts require the production database" });
   const userId = identity(req);
