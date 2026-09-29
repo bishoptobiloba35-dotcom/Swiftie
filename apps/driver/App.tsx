@@ -131,6 +131,9 @@ export default function App() {
   const [supportCategory, setSupportCategory] = React.useState<"ORDER"|"APP">("ORDER");
   const [supportSubject, setSupportSubject] = React.useState("");
   const [supportMessage, setSupportMessage] = React.useState("");
+  const [showFailure, setShowFailure] = React.useState(false);
+  const [failureReason, setFailureReason] = React.useState("RECIPIENT_UNAVAILABLE");
+  const [failureNotes, setFailureNotes] = React.useState("");
 
   async function registerPushNotifications() {
     try {
@@ -512,6 +515,22 @@ export default function App() {
     }
   }
 
+  async function reportFailedDelivery() {
+    if (!job) return;
+    try {
+      const data = await driverApi("/api/deliveries/" + job.id + "/failure", {
+        reason: failureReason,
+        notes: failureNotes.trim() || undefined
+      });
+      setShowFailure(false);
+      setFailureNotes("");
+      setStatus(data.exceptionStatus);
+      Alert.alert("Attempt recorded", "The failed delivery attempt has been recorded. The sender can now reschedule or request a return.");
+    } catch (error) {
+      Alert.alert("Delivery attempt", error instanceof Error ? error.message : "Unable to record failed delivery");
+    }
+  }
+
   async function complete() {
     Alert.alert("Receiver confirmation required", "The receiver must confirm receipt in the SwiftDrop app using the delivery PIN. Courier payout remains held until the receiver confirms.");
   }
@@ -642,6 +661,16 @@ export default function App() {
         <Text style={styles.done}>Courier payment is held until receiver confirmation.</Text>
       </>}
       {job.status === "DELIVERED" && <Text style={styles.done}>✓ Delivery completed</Text>}
+      {(job.status === "IN_TRANSIT" || job.status === "ARRIVED") && <View style={styles.exceptionBox}>
+        {!showFailure ? <Pressable style={styles.secondary} onPress={() => setShowFailure(true)}><Text>Report failed delivery attempt</Text></Pressable> : <>
+          <Text style={styles.title}>Why could you not complete delivery?</Text>
+          {["RECIPIENT_UNAVAILABLE","WRONG_ADDRESS","RECIPIENT_REFUSED","ACCESS_BLOCKED","SAFETY_ISSUE","VEHICLE_ISSUE","WEATHER","OTHER"].map(reason => <Pressable key={reason} style={[styles.choice, failureReason === reason && styles.choiceActive]} onPress={() => setFailureReason(reason)}><Text>{reason.replaceAll("_"," ")}</Text></Pressable>)}
+          <TextInput style={styles.input} placeholder="Optional notes" value={failureNotes} onChangeText={setFailureNotes} maxLength={1000} />
+          <Pressable style={styles.primary} onPress={() => void reportFailedDelivery()}><Text style={styles.primaryText}>Record failed attempt</Text></Pressable>
+          <Pressable style={styles.secondary} onPress={() => setShowFailure(false)}><Text>Cancel</Text></Pressable>
+        </>}
+      </View>}
+
     </View>}
   </ScrollView></SafeAreaView>;
 }
@@ -655,5 +684,6 @@ const styles = StyleSheet.create({
   secondary:{borderWidth:1,borderColor:"#BFD0C5",backgroundColor:"#FFFFFF",padding:13,borderRadius:14,alignItems:"center"}, link:{fontWeight:"700"},
   muted:{color:"#68736C"}, job:{borderTopWidth:1,borderTopColor:"#E7ECE8",paddingTop:12,gap:8}, done:{fontSize:18,fontWeight:"800"},
   preview:{width:"100%",height:220,borderRadius:12}, cameraCard:{gap:12}, camera:{height:420,borderRadius:16,overflow:"hidden"},
+  exceptionBox:{borderTopWidth:1,borderTopColor:"#E7ECE8",paddingTop:12,gap:8},
   notification:{borderTopWidth:1,borderTopColor:"#eee",paddingTop:10,gap:4}, row:{flexDirection:"row",gap:8}, choice:{flex:1,borderWidth:1,borderColor:"#D9E0DB",borderRadius:12,padding:13,alignItems:"center"},choiceActive:{borderColor:"#178A52",backgroundColor:"#EAF5EF"},multiline:{minHeight:110,textAlignVertical:"top"},reviewRow:{flexDirection:"row",gap:8},reviewButton:{flex:1,borderRadius:14,paddingVertical:15,alignItems:"center"},reviewButtonText:{color:"#fff",fontWeight:"900"},reviewBad:{backgroundColor:"#C53B3B"},reviewFair:{backgroundColor:"#D4A62A"},reviewExcellent:{backgroundColor:"#178A52"}, notificationTitle:{fontWeight:"800"}, fileCard:{borderWidth:1,borderColor:"#ddd",borderRadius:10,padding:12,gap:4}, earnings:{fontSize:16,fontWeight:"800",color:"#123D2A"}
 });
