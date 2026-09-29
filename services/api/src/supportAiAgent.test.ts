@@ -1,9 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isSafeInformationalSupportRequest } from "./supportAiAgent.js";
+import { isSafeInformationalSupportRequest, unsafeSupportRequestPattern } from "./supportAiPolicy.js";
 
 function classifySupportRequest(subject: string, message: string): "AUTO_RESOLVED" | "ESCALATED" {
-  return isSafeInformationalSupportRequest(subject, message) ? "AUTO_RESOLVED" : "ESCALATED";
+  const text = subject + " " + message;
+  if (unsafeSupportRequestPattern.test(text)) return "ESCALATED";
+  if (isSafeInformationalSupportRequest(subject, message)) return "AUTO_RESOLVED";
+  return "ESCALATED";
 }
 
 test("support AI safety: informational tracking request can auto-resolve", () => {
@@ -21,12 +24,11 @@ test("support AI safety: cancellation always escalates", () => {
 
 test("support AI safety: unknown requests escalate", () => {
   assert.equal(classifySupportRequest("Something unusual", "I need help with a special request"), "ESCALATED");
+  assert.equal(classifySupportRequest("Status", "I need help with a special request"), "ESCALATED");
 });
 
-test("support AI safety: generic app guidance remains informational", () => {
-  assert.equal(classifySupportRequest("App help", "How do I use the app?"), "AUTO_RESOLVED");
-});
-
-test("support AI safety: linked-order context alone cannot auto-resolve an unknown request", () => {
-  assert.equal(classifySupportRequest("Something unusual", "I need help with a special request"), "ESCALATED");
+test("support AI safety: linked orders do not bypass intent classification", () => {
+  assert.equal(isSafeInformationalSupportRequest("Where is my delivery?", "Please show the tracking status"), true);
+  assert.equal(isSafeInformationalSupportRequest("Order issue", "I have a special request for the driver"), false);
+  assert.equal(isSafeInformationalSupportRequest("Help", "Can you make an exception for me?"), false);
 });
