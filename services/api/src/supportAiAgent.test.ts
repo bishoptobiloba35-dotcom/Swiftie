@@ -19,3 +19,8 @@ test("support AI safety: cancellation always escalates", () => {
 test("support AI safety: unknown requests escalate", () => {
   assert.equal(classifySupportRequest("Something unusual", "I need help with a special request"), "ESCALATED");
 });
+
+
+test("support AI safety: account or bank requests escalate", () => {
+  assert.equal(classifySupportRequest("Bank details", "I need to change my payout bank"), "ESCALATED");
+});
