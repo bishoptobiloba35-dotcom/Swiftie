@@ -325,6 +325,109 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
   return res.status(400).json({ error: "Unsupported AI action", code: "UNKNOWN_AI_ACTION" });
 });
 
+router.get("/business/dispatch-plans", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const businessId = String(req.query.businessId ?? "");
+  const m = await businessMember(identity(req), businessId);
+  if (!m && (req as any).user?.role !== "ADMIN") return res.status(403).json({ error: "Business membership required" });
+  const result = await pool.query(
+    "SELECT * FROM business_dispatch_plans WHERE business_id=$1 ORDER BY created_at DESC LIMIT 200",
+    [businessId]
+  );
+  return res.json({ dispatchPlans: result.rows });
+});
+
+router.post("/business/dispatch-plans/:id/approve", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const id = String(req.params.id);
+  const current = (await pool.query("SELECT * FROM business_dispatch_plans WHERE id=$1", [id])).rows[0];
+  if (!current) return res.status(404).json({ error: "Dispatch plan not found" });
+  const member = await businessMember(identity(req), current.business_id);
+  if ((req as any).user?.role !== "ADMIN" && (!member || !["OWNER","ADMIN"].includes(member.memberRole))) {
+    return res.status(403).json({ error: "Business approval authority required" });
+  }
+  if (current.status !== "PREPARED") return res.status(409).json({ error: "Only prepared dispatch plans can be approved" });
+  const result = await pool.query(
+    "UPDATE business_dispatch_plans SET status='APPROVED',approved_by_user_id=$2,approved_at=now(),updated_at=now() WHERE id=$1 AND status='PREPARED' RETURNING *",
+    [id, identity(req)]
+  );
+  if (!result.rows[0]) return res.status(409).json({ error: "Dispatch plan changed concurrently" });
+  await audit({ userId: identity(req), plan: await currentPlan(identity(req)), capability: "ACTION", action: "APPROVE_DISPATCH_PLAN", allowed: true, metadata: { dispatchPlanId: id } });
+  return res.json({ dispatchPlan: result.rows[0] });
+});
+
+router.post("/business/dispatch-plans/:id/execute", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const id = String(req.params.id);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const plan = (await client.query("SELECT * FROM business_dispatch_plans WHERE id=$1 FOR UPDATE", [id])).rows[0];
+    if (!plan) { await client.query("ROLLBACK"); return res.status(404).json({ error: "Dispatch plan not found" }); }
+    const member = await businessMember(identity(req), plan.business_id);
+    if ((req as any).user?.role !== "ADMIN" && (!member || !canDispatchBusiness(member.memberRole as any))) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "Business dispatch authorization required" });
+    }
+    if (plan.status === "EXECUTED") { await client.query("COMMIT"); return res.json({ dispatchPlan: plan, idempotent: true }); }
+    if (plan.status === "CANCELLED") { await client.query("ROLLBACK"); return res.status(409).json({ error: "Cancelled dispatch plan cannot be executed" }); }
+    if (plan.approval_required && plan.status !== "APPROVED") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Dispatch plan approval is required before execution", code: "APPROVAL_REQUIRED" });
+    }
+    if (!plan.approval_required && plan.status !== "PREPARED") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Only prepared dispatch plans can be executed" });
+    }
+
+    const dispatch = plan.plan ?? {};
+    const deliveryIds = Array.isArray(dispatch.deliveryIds) ? dispatch.deliveryIds.filter((v: unknown) => typeof v === "string") : [];
+    if (deliveryIds.length) {
+      const invalid = await client.query(
+        "SELECT id,status,driver_id FROM deliveries WHERE id=ANY($1::uuid[]) AND status NOT IN ('PAYMENT_AUTHORIZED','DRIVER_ASSIGNED')",
+        [deliveryIds]
+      );
+      if (invalid.rows.length) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "One or more deliveries are no longer dispatchable", deliveries: invalid.rows });
+      }
+    }
+
+    const updated = await client.query(
+      "UPDATE business_dispatch_plans SET status='EXECUTED',executed_at=now(),updated_at=now() WHERE id=$1 AND status IN ('PREPARED','APPROVED') RETURNING *",
+      [id]
+    );
+    if (!updated.rows[0]) { await client.query("ROLLBACK"); return res.status(409).json({ error: "Dispatch plan changed concurrently" }); }
+    await client.query(
+      "INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,(SELECT ai_plan FROM users WHERE id=$1),'ACTION','EXECUTE_DISPATCH_PLAN',true,'Dispatch plan released to operational workflow',$2::jsonb)",
+      [identity(req), JSON.stringify({ dispatchPlanId: id, deliveryIds })]
+    );
+    await client.query("COMMIT");
+    return res.json({ dispatchPlan: updated.rows[0], releasedDeliveryIds: deliveryIds });
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch {}
+    throw error;
+  } finally { client.release(); }
+});
+
+router.post("/business/dispatch-plans/:id/cancel", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const id = String(req.params.id);
+  const current = (await pool.query("SELECT * FROM business_dispatch_plans WHERE id=$1", [id])).rows[0];
+  if (!current) return res.status(404).json({ error: "Dispatch plan not found" });
+  const member = await businessMember(identity(req), current.business_id);
+  if ((req as any).user?.role !== "ADMIN" && (!member || !canDispatchBusiness(member.memberRole as any))) {
+    return res.status(403).json({ error: "Business dispatch authorization required" });
+  }
+  if (["EXECUTED","CANCELLED"].includes(current.status)) return res.status(409).json({ error: "This dispatch plan can no longer be cancelled" });
+  const result = await pool.query(
+    "UPDATE business_dispatch_plans SET status='CANCELLED',updated_at=now() WHERE id=$1 AND status IN ('PREPARED','APPROVED') RETURNING *",
+    [id]
+  );
+  if (!result.rows[0]) return res.status(409).json({ error: "Dispatch plan changed concurrently" });
+  return res.json({ dispatchPlan: result.rows[0] });
+});
+
 router.post("/buy-orders/:id/payment/initialize", requireAuth("CUSTOMER"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Buy & Deliver payments require the production database" });
   const id = String(req.params.id ?? "").trim();
