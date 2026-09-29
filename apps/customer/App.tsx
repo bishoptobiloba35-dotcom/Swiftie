@@ -88,7 +88,7 @@ export default function App() {
         setSignedIn(true);
         void registerPushNotifications();
         void loadNotifications();
-        void loadSwiftAiEntitlement();
+        void loadSwiftAi();
         void loadSwiftAi();
       }
     });
@@ -132,33 +132,6 @@ export default function App() {
     try { setNotifications(await api.notifications()); } catch {}
   }
 
-  async function loadSwiftAiEntitlement() {
-    try {
-      const entitlement = await api.aiEntitlement();
-      setSwiftAiPlan(entitlement.plan);
-    } catch {
-      setSwiftAiPlan(null);
-    }
-  }
-
-  async function askSwiftAi() {
-    const question = swiftAiQuestion.trim();
-    if (!question) {
-      Alert.alert("Ask Swift AI", "Enter a question first.");
-      return;
-    }
-    setSwiftAiBusy(true);
-    try {
-      const result = await api.aiQuery(question);
-      setSwiftAiPlan(result.plan);
-      setSwiftAiAnswer(result.answer);
-    } catch (error) {
-      Alert.alert("Swift AI", error instanceof Error ? error.message : "Swift AI is unavailable right now.");
-    } finally {
-      setSwiftAiBusy(false);
-    }
-  }
-
   async function loadSupportTickets() {
     try { setSupportTickets(await api.supportTickets()); } catch {}
   }
@@ -179,6 +152,7 @@ export default function App() {
     setSwiftAiBusy(true);
     try {
       const result = await api.aiQuery(question);
+      setSwiftAiPlan(result.plan);
       setSwiftAiAnswer(result.answer);
     } catch (error) {
       Alert.alert("Swift AI", error instanceof Error ? error.message : "Swift AI is unavailable.");
