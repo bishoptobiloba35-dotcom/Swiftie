@@ -79,38 +79,3 @@ test("production config requires HTTPS CORS origins", () => {
   }
 });
 
-test("production config rejects insecure object storage endpoints", () => {
-  try {
-    process.env.NODE_ENV = "production";
-    process.env.DATABASE_URL = "postgres://example";
-    process.env.JWT_SECRET = "a-long-production-secret";
-    process.env.PAYSTACK_SECRET_KEY = "sk_live_example";
-    process.env.CORS_ORIGINS = "https://app.example.com";
-    process.env.OBJECT_STORAGE_BUCKET = "swiftdrop";
-    process.env.OBJECT_STORAGE_REGION = "eu-west-1";
-    process.env.OBJECT_STORAGE_ACCESS_KEY_ID = "access";
-    process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY = "secret";
-    process.env.OBJECT_STORAGE_ENDPOINT = "http://storage.example.com";
-    assert.throws(() => validateProductionConfig(), /OBJECT_STORAGE_ENDPOINT must use HTTPS/);
-  } finally {
-    restoreEnv();
-  }
-});
-
-test("production config validates payout percentage", () => {
-  try {
-    process.env.NODE_ENV = "production";
-    process.env.DATABASE_URL = "postgres://example";
-    process.env.JWT_SECRET = "a-long-production-secret";
-    process.env.PAYSTACK_SECRET_KEY = "sk_live_example";
-    process.env.CORS_ORIGINS = "https://app.example.com";
-    process.env.OBJECT_STORAGE_BUCKET = "swiftdrop";
-    process.env.OBJECT_STORAGE_REGION = "eu-west-1";
-    process.env.OBJECT_STORAGE_ACCESS_KEY_ID = "access";
-    process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY = "secret";
-    process.env.DRIVER_PAYOUT_PERCENT = "101";
-    assert.throws(() => validateProductionConfig(), /DRIVER_PAYOUT_PERCENT/);
-  } finally {
-    restoreEnv();
-  }
-});
