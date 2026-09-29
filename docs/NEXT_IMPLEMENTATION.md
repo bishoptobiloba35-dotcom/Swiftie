@@ -32,7 +32,7 @@
 
 
 ## Latest production hardening
-- CI workflow is green across API tests and all workspace builds.
+- CI workflow is configured for API tests and all workspace builds; the current GitHub connector has not returned a fresh run/status for the latest verification commit, so CI is not marked as verified here.
 - Production API now requires private object storage configuration and validates private object keys on read/write.
 - Notification delivery uses a durable outbox, retry backoff, Expo push tickets and receipt reconciliation.
 - API request IDs and structured request/error logs are enabled for operational tracing.
