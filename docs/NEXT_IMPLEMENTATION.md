@@ -44,3 +44,8 @@
 - Payout transfer references are reserved before the provider request, allowing webhook reconciliation even when the initiating HTTP request times out.
 - Admin dispute release now atomically releases held escrow and creates/maintains courier payout eligibility.
 - Direct arbitrary KYC document URL submission has been disabled; drivers must use the private upload flow.
+
+
+## Added after the checkpoint
+- Recurring business dispatch rules, cancellation, and a due-rule worker are implemented.
+- Private SwiftDrop parcel/KYC/receipt storage now uses a Supabase Storage private bucket in production.
