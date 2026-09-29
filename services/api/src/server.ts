@@ -21,6 +21,7 @@ import businessAiRoutes from "./businessAiRoutes.js";
 import agentRoutes from "./agentRoutes.js";
 import { processSupportAiBatch } from "./supportAiAgent.js";
 import recurringDispatchRoutes from "./recurringDispatchRoutes.js";
+import deliveryExceptionRoutes from "./deliveryExceptionRoutes.js";
 import { processRecurringDispatches } from "./recurringDispatchWorker.js";
 
 const app = express();
@@ -69,6 +70,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api", businessAiRoutes);
 app.use("/api", agentRoutes);
 app.use("/api", recurringDispatchRoutes);
+app.use("/api", deliveryExceptionRoutes);
 
 type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED";
 type DeliveryLocation = { latitude: number; longitude: number; recordedAt?: string };
