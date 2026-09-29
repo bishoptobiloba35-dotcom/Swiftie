@@ -59,6 +59,7 @@ export default function App() {
   const [supportCategory, setSupportCategory] = React.useState<"ORDER" | "APP">("ORDER");
   const [supportSubject, setSupportSubject] = React.useState("");
   const [supportMessage, setSupportMessage] = React.useState("");
+  const [rescheduleAt, setRescheduleAt] = React.useState("");
   const [supportTickets, setSupportTickets] = React.useState<any[]>([]);
   const [disputeReason, setDisputeReason] = React.useState("");
   const [disputeDescription, setDisputeDescription] = React.useState("");
@@ -126,6 +127,42 @@ export default function App() {
 
   async function loadSupportTickets() {
     try { setSupportTickets(await api.supportTickets()); } catch {}
+  }
+
+  async function rescheduleDelivery() {
+    if (!delivery || !rescheduleAt.trim()) {
+      Alert.alert("Reschedule", "Enter a future date and time in ISO format, for example 2026-10-01T14:00:00Z.");
+      return;
+    }
+    try {
+      const response = await fetch(API_URL + "/api/deliveries/" + encodeURIComponent(delivery.id) + "/reschedule", {
+        method: "POST",
+        headers: { authorization: "Bearer " + (await AsyncStorage.getItem("swiftdrop.accessToken") ?? ""), "content-type": "application/json" },
+        body: JSON.stringify({ nextDeliveryAt: rescheduleAt.trim() })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Unable to reschedule delivery");
+      setDelivery({ ...delivery, exceptionStatus: data.exceptionStatus, nextDeliveryAt: data.nextDeliveryAt });
+      Alert.alert("Delivery rescheduled", new Date(data.nextDeliveryAt).toLocaleString());
+    } catch (error) {
+      Alert.alert("Reschedule failed", error instanceof Error ? error.message : "Unable to reschedule delivery");
+    }
+  }
+
+  async function requestReturnToSender() {
+    if (!delivery) return;
+    try {
+      const response = await fetch(API_URL + "/api/deliveries/" + encodeURIComponent(delivery.id) + "/return-to-sender", {
+        method: "POST",
+        headers: { authorization: "Bearer " + (await AsyncStorage.getItem("swiftdrop.accessToken") ?? ""), "content-type": "application/json" }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Unable to request return");
+      setDelivery({ ...delivery, exceptionStatus: data.exceptionStatus });
+      Alert.alert("Return requested", "SwiftDrop operations will move the parcel into the return workflow.");
+    } catch (error) {
+      Alert.alert("Return request failed", error instanceof Error ? error.message : "Unable to request return");
+    }
   }
 
   async function submitSupportTicket() {
@@ -462,7 +499,14 @@ export default function App() {
         <Text style={styles.eta}>Approx. ETA: {etaMinutes(haversineDistanceMeters(location, delivery.dropoff.location))} min</Text>
         <Text style={styles.muted}>Updated: {new Date(location.recordedAt).toLocaleTimeString()}</Text>
       </View> : <Text style={styles.muted}>Waiting for the driver to start the trip…</Text>}
-      {delivery.status === "ARRIVED" && <View style={styles.ratingBox}>
+            {(delivery.exceptionStatus === "FAILED_ATTEMPT" || delivery.exceptionStatus === "RESCHEDULED") && <View style={styles.card}>
+        <Text style={styles.photoTitle}>Delivery exception</Text>
+        <Text style={styles.muted}>A delivery attempt was not completed. You can reschedule or request the parcel be returned.</Text>
+        <TextInput style={styles.input} placeholder="Future date/time, e.g. 2026-10-01T14:00:00Z" value={rescheduleAt} onChangeText={setRescheduleAt} autoCapitalize="none" />
+        <Pressable style={styles.primary} onPress={() => void rescheduleDelivery()}><Text style={styles.primaryText}>Reschedule delivery</Text></Pressable>
+        <Pressable style={styles.secondary} onPress={() => void requestReturnToSender()}><Text style={styles.secondaryText}>Request return to sender</Text></Pressable>
+      </View>}
+{delivery.status === "ARRIVED" && <View style={styles.ratingBox}>
         <Text style={styles.photoTitle}>Receiver confirmation</Text>
         <Text style={styles.muted}>Only confirm after you have physically received the parcel. This releases the held courier payment.</Text>
         <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} />
