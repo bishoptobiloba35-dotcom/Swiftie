@@ -7,13 +7,14 @@ import {
   resolveSupportTicket
 } from "./database/deliveryRepository.js";
 
+import { classifySupportRequest } from "./supportAiPolicy.js";
+
 type AiDecision = {
   action: "AUTO_RESOLVED" | "ESCALATED";
   reason: string;
   response: string;
 };
 
-const unsafePatterns = /(refund|refunds|payment|paystack|cancel|cancellation|payout|transfer|chargeback|dispute|money|wallet|bank)/i;
 
 async function generateAiReply(subject: string, message: string, context: string): Promise<string | null> {
   const key = process.env.OPENAI_API_KEY;
@@ -43,7 +44,7 @@ async function generateAiReply(subject: string, message: string, context: string
 }
 
 async function decideTicket(ticket: any): Promise<AiDecision> {
-  if (unsafePatterns.test(ticket.subject + " " + ticket.message)) {
+  if (classifySupportRequest(ticket.subject, ticket.message) === "ESCALATED") {
     return {
       action: "ESCALATED",
       reason: "Financial, cancellation, dispute, or other sensitive action requires human review.",
