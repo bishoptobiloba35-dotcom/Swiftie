@@ -137,7 +137,7 @@ export default function App() {
     try {
       const response = await fetch(API_URL + "/api/deliveries/" + encodeURIComponent(delivery.id) + "/reschedule", {
         method: "POST",
-        headers: { authorization: "Bearer " + (await AsyncStorage.getItem("swiftdrop.accessToken") ?? ""), "content-type": "application/json" },
+        headers: { authorization: "Bearer " + (await AsyncStorage.getItem("swiftdrop.customerAccessToken") ?? ""), "content-type": "application/json" },
         body: JSON.stringify({ nextDeliveryAt: rescheduleAt.trim() })
       });
       const data = await response.json();
@@ -154,7 +154,7 @@ export default function App() {
     try {
       const response = await fetch(API_URL + "/api/deliveries/" + encodeURIComponent(delivery.id) + "/return-to-sender", {
         method: "POST",
-        headers: { authorization: "Bearer " + (await AsyncStorage.getItem("swiftdrop.accessToken") ?? ""), "content-type": "application/json" }
+        headers: { authorization: "Bearer " + (await AsyncStorage.getItem("swiftdrop.customerAccessToken") ?? ""), "content-type": "application/json" }
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? "Unable to request return");
