@@ -1,4 +1,5 @@
 import { pool } from "./database/db.js";
+import { hashPin } from "./security.js";
 
 function nextFutureRun(nextRunAt: Date, cadenceMinutes: number): Date {
   const cadenceMs = cadenceMinutes * 60_000;
@@ -33,6 +34,28 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
       const buyOrderIds = Array.isArray(template.buyOrderIds)
         ? template.buyOrderIds.filter((v: unknown) => typeof v === "string")
         : [];
+      const buyOrderTemplates = Array.isArray(template.buyOrderTemplates)
+        ? template.buyOrderTemplates.slice(0, 25)
+        : [];
+
+      const creator = await client.query(
+        `SELECT bm.member_role, bm.active, ba.status, ba.monthly_spend_limit_minor, ba.per_order_limit_minor
+           FROM business_members bm
+           JOIN business_accounts ba ON ba.id=bm.business_id
+          WHERE bm.business_id=$1 AND bm.user_id=$2`,
+        [rule.business_id, rule.created_by_user_id]
+      );
+      const creatorRow = creator.rows[0];
+      if (!creatorRow || !creatorRow.active || creatorRow.status !== "ACTIVE" ||
+          !["OWNER", "ADMIN", "DISPATCHER"].includes(creatorRow.member_role)) {
+        throw new Error(`Recurring dispatch creator is no longer authorized for business ${rule.business_id}`);
+      }
+
+      const existingSpend = await client.query(
+        "SELECT COALESCE(SUM(amount_minor),0) AS current_spend FROM business_spend_ledger WHERE business_id=$1 AND created_at >= date_trunc('month', now())",
+        [rule.business_id]
+      );
+      let projectedSpend = Number(existingSpend.rows[0]?.current_spend ?? 0);
 
       const deliveries = deliveryIds.length
         ? await client.query(
@@ -57,8 +80,48 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
           )
         : { rows: [] as any[] };
 
+      const createdBuyOrderIds: string[] = [];
+      for (const item of buyOrderTemplates) {
+        const budget = Number(item?.purchaseBudgetMinor);
+        if (!Number.isSafeInteger(budget) || budget <= 0) continue;
+        if (Number(creatorRow.per_order_limit_minor) > 0 && budget > Number(creatorRow.per_order_limit_minor)) continue;
+        if (projectedSpend + budget > Number(creatorRow.monthly_spend_limit_minor) && Number(creatorRow.monthly_spend_limit_minor) > 0) continue;
+
+        const created = await client.query(
+          `INSERT INTO buy_orders
+            (customer_user_id, business_id, item_description, merchant_name, merchant_address, purchase_budget_minor, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)
+           RETURNING id, purchase_budget_minor, status`,
+          [
+            rule.created_by_user_id,
+            rule.business_id,
+            String(item.itemDescription ?? "").trim(),
+            item.merchantName ? String(item.merchantName).trim() : null,
+            item.merchantAddress ? String(item.merchantAddress).trim() : null,
+            budget,
+            item.notes ? String(item.notes).trim() : null
+          ]
+        );
+        if (created.rows[0]) {
+          createdBuyOrderIds.push(created.rows[0].id);
+          projectedSpend += budget;
+          await client.query(
+            `INSERT INTO business_spend_ledger
+              (business_id, user_id, reference_type, reference_id, amount_minor, currency)
+             VALUES ($1,$2,'BUY_ORDER_RESERVATION',$3,$4,'NGN')`,
+            [rule.business_id, rule.created_by_user_id, created.rows[0].id, budget]
+          );
+          await client.query(
+            `INSERT INTO buy_order_events
+              (buy_order_id, actor_user_id, event_type, metadata)
+             VALUES ($1,$2,'CREATED_BY_RECURRING_DISPATCH',$3::jsonb)`,
+            [created.rows[0].id, rule.created_by_user_id, JSON.stringify({ recurringDispatchId: rule.id, source: "RECURRING_DISPATCH" })]
+          );
+        }
+      }
+
       const resolvedDeliveryIds = deliveries.rows.map((row: any) => row.id);
-      const resolvedBuyOrderIds = buyOrders.rows.map((row: any) => row.id);
+      const resolvedBuyOrderIds = [...buyOrders.rows.map((row: any) => row.id), ...createdBuyOrderIds];
       const estimatedTotalMinor =
         deliveries.rows.reduce((sum: number, row: any) => sum + Number(row.quote_total_minor ?? 0), 0) +
         buyOrders.rows.reduce((sum: number, row: any) => sum + Number(row.purchase_budget_minor ?? 0), 0);
@@ -79,6 +142,8 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
             name: rule.name,
             deliveryIds: resolvedDeliveryIds,
             buyOrderIds: resolvedBuyOrderIds,
+            createdBuyOrderIds,
+            requiresPaymentAuthorization: createdBuyOrderIds.length > 0,
             skippedDeliveryIds: deliveryIds.filter((id: string) => !resolvedDeliveryIds.includes(id)),
             skippedBuyOrderIds: buyOrderIds.filter((id: string) => !resolvedBuyOrderIds.includes(id)),
             generatedAt: new Date().toISOString()
