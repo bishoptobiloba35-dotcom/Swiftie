@@ -31,6 +31,24 @@ const migrations = [
   { id: "028_delivery_exceptions", file: "028_delivery_exceptions.sql" }
 ];
 
+async function applyTrackedSql(id: string, relativePath: string): Promise<void> {
+  if (!pool) return;
+  const exists = await pool.query("SELECT 1 FROM schema_migrations WHERE id=$1", [id]);
+  if (exists.rowCount) return;
+
+  const url = new URL(relativePath, import.meta.url);
+  const sql = await readFile(url, "utf8");
+  await pool.query("BEGIN");
+  try {
+    await pool.query(sql);
+    await pool.query("INSERT INTO schema_migrations (id) VALUES ($1)", [id]);
+    await pool.query("COMMIT");
+  } catch (error) {
+    await pool.query("ROLLBACK");
+    throw error;
+  }
+}
+
 export async function runMigrations(): Promise<void> {
   if (!pool) return;
   await pool.query(`
