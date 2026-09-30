@@ -58,6 +58,7 @@ router.post("/deliveries/:id/failure", requireAuth("DRIVER"), async (req, res) =
   if (!driver || driver.status !== "APPROVED") return res.status(403).json({ error: "Approved driver status is required" });
 
   const id = String(req.params.id);
+  let evidenceKey: string | null = null;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -81,7 +82,6 @@ router.post("/deliveries/:id/failure", requireAuth("DRIVER"), async (req, res) =
       [id]
     )).rows[0].count);
     const attemptNumber = count + 1;
-    let evidenceKey: string | null = null;
     if (parsed.data.evidencePhoto) {
       const match = parsed.data.evidencePhoto.match(/^data:image\/(jpeg|jpg|png);base64,(.+)$/i);
       if (!match) { await client.query("ROLLBACK"); return res.status(400).json({ error: "evidencePhoto must be a JPEG or PNG data URL" }); }
