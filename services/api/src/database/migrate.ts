@@ -28,7 +28,8 @@ const migrations = [
   { id: "025_support_ai_agent", file: "025_support_ai_agent.sql" },
   { id: "026_support_ticket_messages", file: "026_support_ticket_messages.sql" },
   { id: "027_recurring_business_dispatch", file: "027_recurring_business_dispatch.sql" },
-  { id: "028_delivery_exceptions", file: "028_delivery_exceptions.sql" }
+  { id: "028_delivery_exceptions", file: "028_delivery_exceptions.sql" },
+  { id: "029_returned_delivery_status", file: "029_returned_delivery_status.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
