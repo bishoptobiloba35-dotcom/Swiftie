@@ -214,13 +214,17 @@ router.post("/deliveries/:id/return/complete", requireAuth("DRIVER"), async (req
   if (!driver || driver.status !== "APPROVED") return res.status(403).json({ error: "Approved driver status is required" });
   const id = String(req.params.id);
   const updated = await pool.query(
-    "UPDATE deliveries SET exception_status='RETURNED',returned_at=now(),updated_at=now() WHERE id=$1 AND driver_id=$2 AND exception_status='RETURN_IN_TRANSIT' RETURNING id,exception_status,returned_at",
+    "UPDATE deliveries SET exception_status='RETURNED',status='RETURNED',next_delivery_at=NULL,returned_at=now(),updated_at=now() WHERE id=$1 AND driver_id=$2 AND exception_status='RETURN_IN_TRANSIT' AND status='IN_TRANSIT' RETURNING id,exception_status,status,returned_at",
     [id, driver.id]
   );
   if (!updated.rows[0]) return res.status(409).json({ error: "Delivery is not in return transit or is assigned to another driver" });
   await pool.query(
     "INSERT INTO delivery_exception_events(delivery_id,actor_user_id,event_type,metadata) VALUES($1,$2,'RETURN_COMPLETED',$3::jsonb)",
-    [id, identity(req), JSON.stringify({ driverId: driver.id })]
+    [id, identity(req), JSON.stringify({ driverId: driver.id, status: 'RETURNED' })]
+  );
+  await pool.query(
+    "INSERT INTO delivery_events(delivery_id,event_type,actor_user_id,metadata) VALUES($1,'RETURNED',$2,$3::jsonb)",
+    [id, identity(req), JSON.stringify({ driverId: driver.id, returnReason: 'CUSTOMER_REQUEST' })]
   );
   return res.json({ delivery: updated.rows[0] });
 });
