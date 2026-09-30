@@ -39,6 +39,7 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
             `SELECT id, quote_total_minor, status
                FROM deliveries
               WHERE id=ANY($1::uuid[])
+                AND status IN ('PAYMENT_AUTHORIZED','DRIVER_ASSIGNED')
                 AND sender_id IN (
                   SELECT user_id FROM business_members
                    WHERE business_id=$2 AND active=true
