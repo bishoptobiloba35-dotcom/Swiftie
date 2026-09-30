@@ -8,7 +8,8 @@ export type DeliveryStatus =
   | "ARRIVED"
   | "DELIVERED"
   | "CANCELLED"
-  | "DISPUTED";
+  | "DISPUTED"
+  | "RETURNED";
 
 const transitions: Record<DeliveryStatus, DeliveryStatus[]> = {
   CREATED: ["PAYMENT_AUTHORIZED", "CANCELLED"],
@@ -16,11 +17,12 @@ const transitions: Record<DeliveryStatus, DeliveryStatus[]> = {
   DRIVER_ASSIGNED: ["DRIVER_AT_PICKUP", "CANCELLED"],
   DRIVER_AT_PICKUP: ["PICKED_UP", "CANCELLED"],
   PICKED_UP: ["IN_TRANSIT", "DISPUTED"],
-  IN_TRANSIT: ["ARRIVED", "DISPUTED"],
+  IN_TRANSIT: ["ARRIVED", "DISPUTED", "RETURNED"],
   ARRIVED: ["DELIVERED", "DISPUTED"],
   DELIVERED: [],
   CANCELLED: [],
-  DISPUTED: []
+  DISPUTED: [],
+  RETURNED: []
 };
 
 export function canTransition(from: DeliveryStatus, to: DeliveryStatus): boolean {
