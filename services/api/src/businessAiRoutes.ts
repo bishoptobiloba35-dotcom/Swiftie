@@ -240,6 +240,106 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
     }
   }
 
+
+  if (action === "RESCHEDULE_DELIVERY") {
+    const input = z.object({
+      deliveryId: z.string().uuid(),
+      nextDeliveryAt: z.string().datetime()
+    }).safeParse(req.body?.input);
+    if (!input.success) return res.status(400).json({ error: input.error.flatten() });
+
+    const next = new Date(input.data.nextDeliveryAt);
+    if (next.getTime() <= Date.now()) {
+      await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "RESCHEDULE_TIME_NOT_FUTURE", metadata: { deliveryId: input.data.deliveryId } });
+      return res.status(400).json({ error: "nextDeliveryAt must be in the future" });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const delivery = (await client.query(
+        "SELECT id,sender_id,status,exception_status FROM deliveries WHERE id=$1 FOR UPDATE",
+        [input.data.deliveryId]
+      )).rows[0];
+      if (!delivery) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Delivery not found" });
+      }
+      if ((req as any).user?.role !== "ADMIN" && delivery.sender_id !== userId) {
+        await client.query("ROLLBACK");
+        await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "DELIVERY_NOT_OWNED", metadata: { deliveryId: input.data.deliveryId } });
+        return res.status(403).json({ error: "Not authorized to reschedule this delivery" });
+      }
+      if (!["FAILED_ATTEMPT", "RESCHEDULED"].includes(delivery.exception_status)) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Only a failed delivery attempt can be rescheduled" });
+      }
+
+      await client.query(
+        "UPDATE deliveries SET exception_status='RESCHEDULED',next_delivery_at=$2,updated_at=now() WHERE id=$1",
+        [input.data.deliveryId, next]
+      );
+      await client.query(
+        "INSERT INTO delivery_exception_events(delivery_id,actor_user_id,event_type,metadata) VALUES($1,$2,'DELIVERY_RESCHEDULED',$3::jsonb)",
+        [input.data.deliveryId, userId, JSON.stringify({ nextDeliveryAt: next.toISOString(), source: "SWIFT_AI" })]
+      );
+      await client.query("COMMIT");
+      await audit({ userId, plan, capability: "ACTION", action, allowed: true, metadata: { deliveryId: input.data.deliveryId, nextDeliveryAt: next.toISOString() } });
+      return res.json({ deliveryId: input.data.deliveryId, exceptionStatus: "RESCHEDULED", nextDeliveryAt: next.toISOString() });
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  if (action === "REQUEST_RETURN_TO_SENDER") {
+    const input = z.object({
+      deliveryId: z.string().uuid()
+    }).safeParse(req.body?.input);
+    if (!input.success) return res.status(400).json({ error: input.error.flatten() });
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const delivery = (await client.query(
+        "SELECT id,sender_id,status,driver_id,exception_status FROM deliveries WHERE id=$1 FOR UPDATE",
+        [input.data.deliveryId]
+      )).rows[0];
+      if (!delivery) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Delivery not found" });
+      }
+      if ((req as any).user?.role !== "ADMIN" && delivery.sender_id !== userId) {
+        await client.query("ROLLBACK");
+        await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "DELIVERY_NOT_OWNED", metadata: { deliveryId: input.data.deliveryId } });
+        return res.status(403).json({ error: "Not authorized to request a return for this delivery" });
+      }
+      if (!["FAILED_ATTEMPT", "RESCHEDULED"].includes(delivery.exception_status)) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Return-to-sender is only available after a failed delivery attempt" });
+      }
+
+      await client.query(
+        "UPDATE deliveries SET exception_status='RETURN_REQUESTED',return_reason='CUSTOMER_REQUEST',updated_at=now() WHERE id=$1",
+        [input.data.deliveryId]
+      );
+      await client.query(
+        "INSERT INTO delivery_exception_events(delivery_id,actor_user_id,event_type,metadata) VALUES($1,$2,'RETURN_REQUESTED',$3::jsonb)",
+        [input.data.deliveryId, userId, JSON.stringify({ reason: "CUSTOMER_REQUEST", source: "SWIFT_AI" })]
+      );
+      await client.query("COMMIT");
+      await audit({ userId, plan, capability: "ACTION", action, allowed: true, metadata: { deliveryId: input.data.deliveryId } });
+      return res.json({ deliveryId: input.data.deliveryId, exceptionStatus: "RETURN_REQUESTED" });
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   if (action === "CREATE_BUSINESS") {
     if (!canManageBusiness((req as any).user?.role)) {
       await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "ROLE_NOT_AUTHORIZED" });
