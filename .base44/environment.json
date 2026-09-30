@@ -1,0 +1,48 @@
+{
+  "previewPort": 3000,
+  "healthPath": "/",
+  "startCommand": "docker compose -f docker-compose.base44.yml up -d",
+  "secrets": [
+    {
+      "name": "JWT_SECRET",
+      "description": "HMAC secret used to sign admin/driver/customer access tokens. A development placeholder is generated automatically; replace it with a strong random value for any shared environment.",
+      "requiredAtBoot": false,
+      "generatedForDevelopment": true
+    },
+    {
+      "name": "PAYSTACK_SECRET_KEY",
+      "description": "Paystack secret key for payment authorization and payouts. Optional in development (the held/release ledger runs without it); required for real payments.",
+      "requiredAtBoot": false
+    },
+    {
+      "name": "PAYMENT_WEBHOOK_SECRET",
+      "description": "Secret used to verify Paystack webhook signatures. Optional in development.",
+      "requiredAtBoot": false
+    },
+    {
+      "name": "MAPS_API_KEY",
+      "description": "Google Maps API key for server-side distance/duration quotes. Optional in development; quotes fail gracefully without it.",
+      "requiredAtBoot": false
+    },
+    {
+      "name": "OPENAI_API_KEY",
+      "description": "OpenAI key for the support AI agent. Optional; the deterministic safety policy stays active without it.",
+      "requiredAtBoot": false
+    },
+    {
+      "name": "SUPABASE_URL",
+      "description": "Supabase project URL for private object storage (pickup evidence, KYC). Production-only; development uses local filesystem storage.",
+      "requiredAtBoot": false
+    },
+    {
+      "name": "SUPABASE_SERVICE_ROLE_KEY",
+      "description": "Supabase service role key for private object storage. Production-only.",
+      "requiredAtBoot": false
+    },
+    {
+      "name": "SUPABASE_STORAGE_BUCKET",
+      "description": "Supabase private storage bucket name. Production-only.",
+      "requiredAtBoot": false
+    }
+  ]
+}
