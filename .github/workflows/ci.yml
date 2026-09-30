@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: 22
           package-manager-cache: false
-      - run: npm install --ignore-scripts
+      - run: npm install --ignore-scripts --no-audit --no-fund
       - run: npm run build --workspace=@swiftdrop/${{ matrix.project }}
 
   api-tests:
