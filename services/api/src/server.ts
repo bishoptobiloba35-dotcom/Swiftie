@@ -72,7 +72,7 @@ app.use("/api", agentRoutes);
 app.use("/api", recurringDispatchRoutes);
 app.use("/api", deliveryExceptionRoutes);
 
-type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED";
+type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED" | "RETURNED";
 type DeliveryLocation = { latitude: number; longitude: number; recordedAt?: string };
 type DeliveryQuote = {
   currency: "NGN";
