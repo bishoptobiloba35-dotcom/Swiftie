@@ -5,7 +5,7 @@ import { pool } from "./database/db.js";
 import { requireAuth } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
 import { driverForUser } from "./database/deliveryRepository.js";
-import { putPrivateObject } from "./storage.js";
+import { deletePrivateObject, putPrivateObject } from "./storage.js";
 
 const router = Router();
 
@@ -111,6 +111,11 @@ router.post("/deliveries/:id/failure", requireAuth("DRIVER"), async (req, res) =
     return res.status(201).json({ ok: true, attemptNumber, exceptionStatus: "FAILED_ATTEMPT" });
   } catch (error) {
     try { await client.query("ROLLBACK"); } catch {}
+    if (evidenceKey) {
+      try { await deletePrivateObject(evidenceKey); } catch (cleanupError) {
+        console.error(JSON.stringify({ event: "delivery_exception_evidence_cleanup_failed", deliveryId: id, evidenceKey, error: cleanupError instanceof Error ? cleanupError.message : "unknown" }));
+      }
+    }
     throw error;
   } finally {
     client.release();
