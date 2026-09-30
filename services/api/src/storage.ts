@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const supabaseUrl = process.env.SUPABASE_URL?.trim().replace(/\/$/, "");
@@ -46,6 +46,24 @@ export async function putPrivateObject(key: string, body: Buffer, contentType: s
     body
   });
   if (!response.ok) throw new Error("Supabase Storage upload failed: " + response.status);
+}
+
+export async function deletePrivateObject(key: string): Promise<void> {
+  const safeKey = safeStorageKey(key);
+  if (!objectStorageEnabled) {
+    if (process.env.NODE_ENV === "production") throw new Error("Supabase private storage is not configured");
+    try { await unlink(path.join(localRoot, safeKey)); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    return;
+  }
+
+  const storage = requireSupabase();
+  const response = await fetch(storage.url + "/storage/v1/object/" + encodeURIComponent(bucket) + "/" + safeKey.split("/").map(encodeURIComponent).join("/"), {
+    method: "DELETE",
+    headers: { authorization: "Bearer " + storage.key, apikey: storage.key }
+  });
+  if (!response.ok && response.status !== 404) throw new Error("Supabase Storage delete failed: " + response.status);
 }
 
 export async function getPrivateObject(key: string): Promise<{ body: Buffer; contentType?: string }> {
