@@ -54,10 +54,9 @@ test("production config rejects insecure JWT fallback", () => {
     process.env.JWT_SECRET = "development-only-change-me";
     process.env.PAYSTACK_SECRET_KEY = "sk_live_example";
     process.env.CORS_ORIGINS = "https://app.example.com";
-    process.env.OBJECT_STORAGE_BUCKET = "swiftdrop";
-    process.env.OBJECT_STORAGE_REGION = "eu-west-1";
-    process.env.OBJECT_STORAGE_ACCESS_KEY_ID = "access";
-    process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY = "secret";
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role";
+    process.env.SUPABASE_STORAGE_BUCKET = "swiftdrop-private";
     assert.throws(() => validateProductionConfig(), /JWT_SECRET must not use the development fallback/);
   } finally {
     restoreEnv();
@@ -71,10 +70,9 @@ test("production config requires HTTPS CORS origins", () => {
     process.env.JWT_SECRET = "a-long-production-secret";
     process.env.PAYSTACK_SECRET_KEY = "sk_live_example";
     process.env.CORS_ORIGINS = "http://app.example.com";
-    process.env.OBJECT_STORAGE_BUCKET = "swiftdrop";
-    process.env.OBJECT_STORAGE_REGION = "eu-west-1";
-    process.env.OBJECT_STORAGE_ACCESS_KEY_ID = "access";
-    process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY = "secret";
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role";
+    process.env.SUPABASE_STORAGE_BUCKET = "swiftdrop-private";
     assert.throws(() => validateProductionConfig(), /CORS_ORIGINS must contain one or more HTTPS origins/);
   } finally {
     restoreEnv();
