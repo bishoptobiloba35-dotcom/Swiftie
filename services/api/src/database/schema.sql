@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS deliveries (
   dropoff_address TEXT NOT NULL,
   dropoff_lat NUMERIC(9,6),
   dropoff_lng NUMERIC(9,6),
-  status TEXT NOT NULL DEFAULT 'CREATED',
+  status TEXT NOT NULL DEFAULT 'CREATED'
+    CHECK (status IN ('CREATED','PAYMENT_AUTHORIZED','DRIVER_ASSIGNED','DRIVER_AT_PICKUP','PICKED_UP','IN_TRANSIT','ARRIVED','DELIVERED','CANCELLED','DISPUTED','RETURNED')),
   receiver_pin_hash TEXT NOT NULL,
   pickup_photo_url TEXT,
   quote_distance_meters INTEGER,
