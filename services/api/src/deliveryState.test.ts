@@ -14,11 +14,14 @@ describe("delivery state machine", () => {
       ["ARRIVED", "DELIVERED"]
     ] as const;
     for (const [from, to] of lifecycle) assert.equal(canTransition(from, to), true);
+    assert.equal(canTransition("IN_TRANSIT", "RETURNED"), true);
   });
 
   it("rejects skipped and backwards transitions", () => {
     assert.equal(canTransition("PAYMENT_AUTHORIZED", "PICKED_UP"), false);
     assert.equal(canTransition("DELIVERED", "IN_TRANSIT"), false);
     assert.throws(() => assertTransition("CANCELLED", "DRIVER_ASSIGNED"));
+    assert.equal(canTransition("RETURNED", "DELIVERED"), false);
+    assert.equal(canTransition("RETURNED", "IN_TRANSIT"), false);
   });
 });
