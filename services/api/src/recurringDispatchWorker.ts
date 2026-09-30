@@ -38,7 +38,7 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
         : [];
 
       const creator = await client.query(
-        `SELECT bm.member_role, bm.active, ba.status, ba.monthly_spend_limit_minor, ba.per_order_limit_minor
+        `SELECT bm.member_role, bm.active, bm.spend_limit_minor, ba.status, ba.monthly_spend_limit_minor, ba.per_order_limit_minor
            FROM business_members bm
            JOIN business_accounts ba ON ba.id=bm.business_id
           WHERE bm.business_id=$1 AND bm.user_id=$2`,
@@ -80,10 +80,12 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
         : { rows: [] as any[] };
 
       const createdBuyOrderIds: string[] = [];
+      let createdBuyOrderBudgetMinor = 0;
       for (const item of buyOrderTemplates) {
         const budget = Number(item?.purchaseBudgetMinor);
         if (!Number.isSafeInteger(budget) || budget <= 0) continue;
         if (Number(creatorRow.per_order_limit_minor) > 0 && budget > Number(creatorRow.per_order_limit_minor)) continue;
+        if (Number(creatorRow.spend_limit_minor) > 0 && budget > Number(creatorRow.spend_limit_minor)) continue;
         if (projectedSpend + budget > Number(creatorRow.monthly_spend_limit_minor) && Number(creatorRow.monthly_spend_limit_minor) > 0) continue;
 
         const created = await client.query(
@@ -103,6 +105,7 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
         );
         if (created.rows[0]) {
           createdBuyOrderIds.push(created.rows[0].id);
+          createdBuyOrderBudgetMinor += budget;
           projectedSpend += budget;
           await client.query(
             `INSERT INTO business_spend_ledger
@@ -123,7 +126,8 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
       const resolvedBuyOrderIds = [...buyOrders.rows.map((row: any) => row.id), ...createdBuyOrderIds];
       const estimatedTotalMinor =
         deliveries.rows.reduce((sum: number, row: any) => sum + Number(row.quote_total_minor ?? 0), 0) +
-        buyOrders.rows.reduce((sum: number, row: any) => sum + Number(row.purchase_budget_minor ?? 0), 0);
+        buyOrders.rows.reduce((sum: number, row: any) => sum + Number(row.purchase_budget_minor ?? 0), 0) +
+        createdBuyOrderBudgetMinor;
 
       const nextRunAt = nextFutureRun(new Date(rule.next_run_at), Number(rule.cadence_minutes));
       const plan = await client.query(
