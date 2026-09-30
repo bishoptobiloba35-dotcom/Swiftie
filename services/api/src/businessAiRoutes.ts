@@ -482,6 +482,10 @@ router.post("/business/dispatch-plans/:id/execute", requireAuth("CUSTOMER", "ADM
 
     const dispatch = plan.plan ?? {};
     const deliveryIds = Array.isArray(dispatch.deliveryIds) ? dispatch.deliveryIds.filter((v: unknown) => typeof v === "string") : [];
+    const buyOrderIds = Array.isArray(dispatch.buyOrderIds) ? dispatch.buyOrderIds.filter((v: unknown) => typeof v === "string") : [];
+    const createdBuyOrderIds = Array.isArray(dispatch.createdBuyOrderIds) ? dispatch.createdBuyOrderIds.filter((v: unknown) => typeof v === "string") : [];
+    const requiresPaymentAuthorization = dispatch.requiresPaymentAuthorization === true || createdBuyOrderIds.length > 0;
+
     if (deliveryIds.length) {
       const invalid = await client.query(
         "SELECT id,status,driver_id FROM deliveries WHERE id=ANY($1::uuid[]) AND status NOT IN ('PAYMENT_AUTHORIZED','DRIVER_ASSIGNED')",
@@ -490,6 +494,28 @@ router.post("/business/dispatch-plans/:id/execute", requireAuth("CUSTOMER", "ADM
       if (invalid.rows.length) {
         await client.query("ROLLBACK");
         return res.status(409).json({ error: "One or more deliveries are no longer dispatchable", deliveries: invalid.rows });
+      }
+    }
+
+    if (buyOrderIds.length) {
+      const buyOrders = await client.query(
+        "SELECT id,status,payment_status,purchase_budget_minor FROM buy_orders WHERE id=ANY($1::uuid[]) AND business_id=$2 FOR UPDATE",
+        [buyOrderIds, plan.business_id]
+      );
+      if (buyOrders.rows.length !== buyOrderIds.length) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "One or more Buy & Deliver orders are missing from this business dispatch plan" });
+      }
+      if (requiresPaymentAuthorization) {
+        const unpaid = buyOrders.rows.filter((row: any) => !["HELD", "AUTHORIZED"].includes(String(row.payment_status)));
+        if (unpaid.length) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({
+            error: "Buy & Deliver payment authorization is required before this recurring dispatch can execute",
+            code: "PAYMENT_AUTHORIZATION_REQUIRED",
+            buyOrders: unpaid.map((row: any) => ({ id: row.id, paymentStatus: row.payment_status, status: row.status }))
+          });
+        }
       }
     }
 

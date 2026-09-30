@@ -25,7 +25,7 @@ const ruleSchema = z.object({
     deliveryIds: z.array(z.string().uuid()).max(100).default([]),
     buyOrderIds: z.array(z.string().uuid()).max(100).default([]),
     buyOrderTemplates: z.array(recurringBuyOrderTemplateSchema).max(25).default([])
-  }).default({})
+  }).default({ deliveryIds: [], buyOrderIds: [], buyOrderTemplates: [] })
 });
 
 async function member(userId: string, businessId: string) {
