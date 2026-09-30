@@ -7,13 +7,25 @@ import { canDispatchBusiness } from "./aiPolicy.js";
 
 const router = Router();
 
+const recurringBuyOrderTemplateSchema = z.object({
+  itemDescription: z.string().trim().min(1).max(500),
+  merchantName: z.string().trim().max(200).optional(),
+  merchantAddress: z.string().trim().max(500).optional(),
+  purchaseBudgetMinor: z.number().int().positive().max(2_000_000_000),
+  notes: z.string().trim().max(2000).optional()
+});
+
 const ruleSchema = z.object({
   businessId: z.string().uuid(),
   name: z.string().trim().min(2).max(120),
   cadenceMinutes: z.number().int().min(15).max(43200),
   nextRunAt: z.string().datetime(),
   approvalRequired: z.boolean().default(true),
-  template: z.record(z.string(), z.unknown()).default({})
+  template: z.object({
+    deliveryIds: z.array(z.string().uuid()).max(100).default([]),
+    buyOrderIds: z.array(z.string().uuid()).max(100).default([]),
+    buyOrderTemplates: z.array(recurringBuyOrderTemplateSchema).max(25).default([])
+  }).default({})
 });
 
 async function member(userId: string, businessId: string) {
