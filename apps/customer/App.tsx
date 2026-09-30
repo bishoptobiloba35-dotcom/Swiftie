@@ -64,6 +64,9 @@ export default function App() {
   const [disputeReason, setDisputeReason] = React.useState("");
   const [disputeDescription, setDisputeDescription] = React.useState("");
   const [disputeSubmitted, setDisputeSubmitted] = React.useState(false);
+  const [swiftAiQuestion, setSwiftAiQuestion] = React.useState("");
+  const [swiftAiAnswer, setSwiftAiAnswer] = React.useState("");
+  const [swiftAiBusy, setSwiftAiBusy] = React.useState(false);
   const socketRef = React.useRef<WebSocket | null>(null);
 
   async function registerPushNotifications() {
@@ -162,6 +165,60 @@ export default function App() {
       Alert.alert("Return requested", "SwiftDrop operations will move the parcel into the return workflow.");
     } catch (error) {
       Alert.alert("Return request failed", error instanceof Error ? error.message : "Unable to request return");
+    }
+  }
+
+  async function askSwiftAi() {
+    const question = swiftAiQuestion.trim();
+    if (!question) return;
+    setSwiftAiBusy(true);
+    try {
+      const token = await AsyncStorage.getItem("swiftdrop.customerAccessToken");
+      const response = await fetch(API_URL + "/api/ai/query", {
+        method: "POST",
+        headers: { authorization: "Bearer " + (token ?? ""), "content-type": "application/json" },
+        body: JSON.stringify({ question })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Swift AI is unavailable");
+      setSwiftAiAnswer(String(data.answer ?? "No answer was returned."));
+    } catch (error) {
+      Alert.alert("Swift AI", error instanceof Error ? error.message : "Unable to reach Swift AI");
+    } finally {
+      setSwiftAiBusy(false);
+    }
+  }
+
+  async function runSwiftAiAction(action: "RESCHEDULE_DELIVERY" | "REQUEST_RETURN_TO_SENDER") {
+    if (!delivery) return;
+    setSwiftAiBusy(true);
+    try {
+      const token = await AsyncStorage.getItem("swiftdrop.customerAccessToken");
+      const input = action === "RESCHEDULE_DELIVERY"
+        ? { deliveryId: delivery.id, nextDeliveryAt: rescheduleAt.trim() }
+        : { deliveryId: delivery.id };
+      const response = await fetch(API_URL + "/api/ai/action", {
+        method: "POST",
+        headers: { authorization: "Bearer " + (token ?? ""), "content-type": "application/json" },
+        body: JSON.stringify({ action, input })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Swift AI action was not completed");
+      setDelivery(prev => prev ? {
+        ...prev,
+        exceptionStatus: data.exceptionStatus,
+        nextDeliveryAt: data.nextDeliveryAt ?? prev.nextDeliveryAt
+      } : prev);
+      Alert.alert(
+        "Swift AI completed the action",
+        action === "RESCHEDULE_DELIVERY"
+          ? new Date(data.nextDeliveryAt).toLocaleString()
+          : "The parcel is now in the return-request workflow."
+      );
+    } catch (error) {
+      Alert.alert("Swift AI action", error instanceof Error ? error.message : "Unable to complete the AI action");
+    } finally {
+      setSwiftAiBusy(false);
     }
   }
 
@@ -403,6 +460,14 @@ export default function App() {
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.container}>
     <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.subtitle}>Send it. Track it. Receive it.</Text></View><View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => { setShowSupport(v => !v); void loadSupportTickets(); }}><Text style={styles.link}>Support</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View></View>
     {showNotifications && <View style={styles.card}><View style={styles.header}><Text style={styles.heading}>Notifications</Text><Pressable onPress={() => void loadNotifications()}><Text>Refresh</Text></Pressable></View>{notifications.length === 0 ? <Text style={styles.muted}>No notifications.</Text> : notifications.map(item => <Pressable key={item.id} style={styles.notification} onPress={() => void markNotificationRead(item.id)}><Text style={styles.notificationTitle}>{item.title}</Text><Text>{item.body}</Text><Text style={styles.muted}>{new Date(item.created_at).toLocaleString()} · {item.read_at ? "Read" : "Tap to mark read"}</Text></Pressable>)}</View>}
+    <View style={styles.card}>
+      <Text style={styles.eyebrow}>SWIFT AI</Text>
+      <Text style={styles.heading}>Ask Swift AI</Text>
+      <Text style={styles.muted}>Basic AI answers delivery and app questions. Premium AI can also take authorized actions for you.</Text>
+      <TextInput style={styles.input} placeholder="Where is my parcel? What does my delivery status mean?" value={swiftAiQuestion} onChangeText={setSwiftAiQuestion} maxLength={2000} />
+      <Pressable style={styles.secondary} disabled={swiftAiBusy} onPress={() => void askSwiftAi()}><Text style={styles.secondaryText}>{swiftAiBusy ? "Swift AI is working…" : "Ask Swift AI"}</Text></Pressable>
+      {!!swiftAiAnswer && <View style={styles.notification}><Text style={styles.notificationTitle}>Swift AI</Text><Text>{swiftAiAnswer}</Text></View>}
+    </View>
     {showSupport && <View style={styles.card}>
       <View style={styles.header}><View><Text style={styles.eyebrow}>HELP CENTRE</Text><Text style={styles.heroTitle}>How can we help?</Text></View><Pressable onPress={() => setShowSupport(false)}><Text style={styles.link}>Close</Text></Pressable></View>
       <Text style={styles.muted}>Get help with an order, payment, delivery, or the SwiftDrop app itself.</Text>
@@ -505,6 +570,9 @@ export default function App() {
         <TextInput style={styles.input} placeholder="Future date/time, e.g. 2026-10-01T14:00:00Z" value={rescheduleAt} onChangeText={setRescheduleAt} autoCapitalize="none" />
         <Pressable style={styles.primary} onPress={() => void rescheduleDelivery()}><Text style={styles.primaryText}>Reschedule delivery</Text></Pressable>
         <Pressable style={styles.secondary} onPress={() => void requestReturnToSender()}><Text style={styles.secondaryText}>Request return to sender</Text></Pressable>
+        <Text style={styles.hint}>Premium AI can perform these same authorized actions after you provide the required details.</Text>
+        <Pressable style={styles.secondary} disabled={swiftAiBusy} onPress={() => void runSwiftAiAction("RESCHEDULE_DELIVERY")}><Text style={styles.secondaryText}>Let Swift AI reschedule</Text></Pressable>
+        <Pressable style={styles.secondary} disabled={swiftAiBusy} onPress={() => void runSwiftAiAction("REQUEST_RETURN_TO_SENDER")}><Text style={styles.secondaryText}>Let Swift AI request return</Text></Pressable>
       </View>}
 {delivery.status === "ARRIVED" && <View style={styles.ratingBox}>
         <Text style={styles.photoTitle}>Receiver confirmation</Text>
