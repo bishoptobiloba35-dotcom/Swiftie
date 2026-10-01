@@ -1937,6 +1937,7 @@ async function startServer() {
     void processNotificationOutbox().catch(() => {});
     void processNotificationPushReceipts().catch(() => {});
     void reconcileProcessingPaystackPayouts().catch(() => {});
+    void reconcileProcessingBuyOrderSettlements().catch(() => {});
     void processSupportAiBatch().catch(() => {});
     void processRecurringDispatches().catch(() => {});
     const supportAiWorker = setInterval(() => {
@@ -1951,6 +1952,9 @@ async function startServer() {
     const notificationReceiptWorker = setInterval(() => {
       void processNotificationPushReceipts().catch(() => {});
     }, 60_000);
+    const buyOrderSettlementReconciliationWorker = setInterval(() => {
+      void reconcileProcessingBuyOrderSettlements().catch(() => {});
+    }, 60_000);
     const payoutReconciliationWorker = setInterval(() => {
       void reconcileProcessingPaystackPayouts().catch(() => {});
     }, 60_000);
@@ -1958,6 +1962,7 @@ async function startServer() {
     notificationWorker.unref();
     notificationReceiptWorker.unref();
     payoutReconciliationWorker.unref();
+    buyOrderSettlementReconciliationWorker.unref();
     recurringDispatchWorker.unref();
   }
   httpServer.listen(port, () => console.log(`SwiftDrop API listening on port ${port}`));
