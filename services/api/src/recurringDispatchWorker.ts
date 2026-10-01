@@ -80,13 +80,26 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
         : { rows: [] as any[] };
 
       const createdBuyOrderIds: string[] = [];
+      const skippedBuyOrderTemplates: Array<{ index: number; reason: string }> = [];
       let createdBuyOrderBudgetMinor = 0;
-      for (const item of buyOrderTemplates) {
+      for (const [index, item] of buyOrderTemplates.entries()) {
         const budget = Number(item?.purchaseBudgetMinor);
-        if (!Number.isSafeInteger(budget) || budget <= 0) continue;
-        if (Number(creatorRow.per_order_limit_minor) > 0 && budget > Number(creatorRow.per_order_limit_minor)) continue;
-        if (Number(creatorRow.spend_limit_minor) > 0 && budget > Number(creatorRow.spend_limit_minor)) continue;
-        if (projectedSpend + budget > Number(creatorRow.monthly_spend_limit_minor) && Number(creatorRow.monthly_spend_limit_minor) > 0) continue;
+        if (!Number.isSafeInteger(budget) || budget <= 0) {
+          skippedBuyOrderTemplates.push({ index, reason: "INVALID_PURCHASE_BUDGET" });
+          continue;
+        }
+        if (Number(creatorRow.per_order_limit_minor) > 0 && budget > Number(creatorRow.per_order_limit_minor)) {
+          skippedBuyOrderTemplates.push({ index, reason: "PER_ORDER_LIMIT_EXCEEDED" });
+          continue;
+        }
+        if (Number(creatorRow.spend_limit_minor) > 0 && budget > Number(creatorRow.spend_limit_minor)) {
+          skippedBuyOrderTemplates.push({ index, reason: "MEMBER_SPEND_LIMIT_EXCEEDED" });
+          continue;
+        }
+        if (projectedSpend + budget > Number(creatorRow.monthly_spend_limit_minor) && Number(creatorRow.monthly_spend_limit_minor) > 0) {
+          skippedBuyOrderTemplates.push({ index, reason: "MONTHLY_BUSINESS_LIMIT_EXCEEDED" });
+          continue;
+        }
 
         const created = await client.query(
           `INSERT INTO buy_orders
@@ -124,6 +137,8 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
 
       const resolvedDeliveryIds = deliveries.rows.map((row: any) => row.id);
       const resolvedBuyOrderIds = [...buyOrders.rows.map((row: any) => row.id), ...createdBuyOrderIds];
+      const skippedDeliveryIds = deliveryIds.filter((id: string) => !resolvedDeliveryIds.includes(id));
+      const skippedBuyOrderIds = buyOrderIds.filter((id: string) => !resolvedBuyOrderIds.includes(id));
       const estimatedTotalMinor =
         deliveries.rows.reduce((sum: number, row: any) => sum + Number(row.quote_total_minor ?? 0), 0) +
         buyOrders.rows.reduce((sum: number, row: any) => sum + Number(row.purchase_budget_minor ?? 0), 0) +
@@ -147,8 +162,10 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
             buyOrderIds: resolvedBuyOrderIds,
             createdBuyOrderIds,
             requiresPaymentAuthorization: createdBuyOrderIds.length > 0,
-            skippedDeliveryIds: deliveryIds.filter((id: string) => !resolvedDeliveryIds.includes(id)),
-            skippedBuyOrderIds: buyOrderIds.filter((id: string) => !resolvedBuyOrderIds.includes(id)),
+            skippedDeliveryIds,
+            skippedBuyOrderIds,
+            skippedBuyOrderTemplates,
+
             generatedAt: new Date().toISOString()
           })
         ]
