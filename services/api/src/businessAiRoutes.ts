@@ -381,44 +381,83 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
       return res.status(403).json({ error: "Business dispatch authorization required" });
     }
 
-    const buyOrders = parsed.data.buyOrderIds.length
-      ? await pool!.query("SELECT id, purchase_budget_minor, status FROM buy_orders WHERE id = ANY($1::uuid[]) AND business_id=$2", [parsed.data.buyOrderIds, parsed.data.businessId])
-      : { rows: [] as any[] };
-    const deliveries = parsed.data.deliveryIds.length
-      ? await pool!.query("SELECT id, quote_total_minor, status FROM deliveries WHERE id = ANY($1::uuid[]) AND sender_id IN (SELECT user_id FROM business_members WHERE business_id=$2)", [parsed.data.deliveryIds, parsed.data.businessId])
-      : { rows: [] as any[] };
-    const estimatedTotalMinor = buyOrders.rows.reduce((s: number, r: any) => s + Number(r.purchase_budget_minor), 0)
-      + deliveries.rows.reduce((s: number, r: any) => s + Number(r.quote_total_minor ?? 0), 0);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [parsed.data.businessId]);
 
-    if (member.business.per_order_limit_minor > 0 && estimatedTotalMinor > Number(member.business.per_order_limit_minor)) {
-      await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "DISPATCH_LIMIT_EXCEEDED" });
-      return res.status(403).json({ error: "Dispatch plan exceeds the business per-order approval limit" });
-    }
-    const monthlySpend = await pool!.query("SELECT COALESCE(SUM(amount_minor),0) AS total FROM business_spend_ledger WHERE business_id=$1 AND created_at >= date_trunc('month', now())", [parsed.data.businessId]);
-    const monthlyLimit = Number(member.business.monthly_spend_limit_minor);
-    if (monthlyLimit > 0 && Number(monthlySpend.rows[0]?.total ?? 0) + estimatedTotalMinor > monthlyLimit) {
-      await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "MONTHLY_SPEND_LIMIT_EXCEEDED", metadata: { businessId: parsed.data.businessId } });
-      return res.status(403).json({ error: "Dispatch plan would exceed the monthly business spending limit" });
-    }
+      const buyOrders = parsed.data.buyOrderIds.length
+        ? await client.query("SELECT id, purchase_budget_minor, status FROM buy_orders WHERE id = ANY($1::uuid[]) AND business_id=$2 FOR UPDATE", [parsed.data.buyOrderIds, parsed.data.businessId])
+        : { rows: [] as any[] };
+      const deliveries = parsed.data.deliveryIds.length
+        ? await client.query("SELECT id, quote_total_minor, status FROM deliveries WHERE id = ANY($1::uuid[]) AND sender_id IN (SELECT user_id FROM business_members WHERE business_id=$2) FOR UPDATE", [parsed.data.deliveryIds, parsed.data.businessId])
+        : { rows: [] as any[] };
 
-    const approvalRequired = Boolean(member.business.requires_approval || member.memberRole === "DISPATCHER");
-    const planResult = await pool!.query(
-      `INSERT INTO business_dispatch_plans
-        (business_id, created_by_user_id, status, delivery_window_start, delivery_window_end, estimated_total_minor, approval_required, plan)
-       VALUES ($1,$2,'PREPARED',$3,$4,$5,$6,$7::jsonb)
-       RETURNING *`,
-      [
-        parsed.data.businessId,
-        userId,
-        parsed.data.deliveryWindowStart ?? null,
-        parsed.data.deliveryWindowEnd ?? null,
-        estimatedTotalMinor,
-        approvalRequired,
-        JSON.stringify({ buyOrderIds: parsed.data.buyOrderIds, deliveryIds: parsed.data.deliveryIds })
-      ]
-    );
-    await audit({ userId, plan, capability: "ACTION", action, allowed: true, metadata: { dispatchPlanId: planResult.rows[0].id } });
-    return res.status(201).json({ dispatchPlan: planResult.rows[0] });
+      const resolvedBuyOrderIds = buyOrders.rows.map((row: any) => row.id);
+      const resolvedDeliveryIds = deliveries.rows.map((row: any) => row.id);
+      const skippedBuyOrderIds = parsed.data.buyOrderIds.filter(id => !resolvedBuyOrderIds.includes(id));
+      const skippedDeliveryIds = parsed.data.deliveryIds.filter(id => !resolvedDeliveryIds.includes(id));
+
+      const estimatedTotalMinor = buyOrders.rows.reduce((s: number, r: any) => s + Number(r.purchase_budget_minor), 0)
+        + deliveries.rows.reduce((s: number, r: any) => s + Number(r.quote_total_minor ?? 0), 0);
+
+      if (member.business.per_order_limit_minor > 0 && estimatedTotalMinor > Number(member.business.per_order_limit_minor)) {
+        await client.query("ROLLBACK");
+        await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "DISPATCH_LIMIT_EXCEEDED" });
+        return res.status(403).json({ error: "Dispatch plan exceeds the business per-order approval limit" });
+      }
+
+      const monthlySpend = await client.query(
+        "SELECT COALESCE(SUM(amount_minor),0) AS total FROM business_spend_ledger WHERE business_id=$1 AND created_at >= date_trunc('month', now()) FOR UPDATE",
+        [parsed.data.businessId]
+      );
+      const monthlyLimit = Number(member.business.monthly_spend_limit_minor);
+      const currentMonthlySpend = Number(monthlySpend.rows[0]?.total ?? 0);
+      if (monthlyLimit > 0 && currentMonthlySpend + estimatedTotalMinor > monthlyLimit) {
+        await client.query("ROLLBACK");
+        await audit({
+          userId, plan, capability: "ACTION", action, allowed: false,
+          reason: "MONTHLY_SPEND_LIMIT_EXCEEDED",
+          metadata: { businessId: parsed.data.businessId, currentMonthlySpend, estimatedTotalMinor, monthlyLimit }
+        });
+        return res.status(403).json({ error: "Dispatch plan would exceed the monthly business spending limit" });
+      }
+
+      const approvalRequired = Boolean(member.business.requires_approval || member.memberRole === "DISPATCHER");
+      const planResult = await client.query(
+        `INSERT INTO business_dispatch_plans
+          (business_id, created_by_user_id, status, delivery_window_start, delivery_window_end, estimated_total_minor, approval_required, plan)
+         VALUES ($1,$2,'PREPARED',$3,$4,$5,$6,$7::jsonb)
+         RETURNING *`,
+        [
+          parsed.data.businessId,
+          userId,
+          parsed.data.deliveryWindowStart ?? null,
+          parsed.data.deliveryWindowEnd ?? null,
+          estimatedTotalMinor,
+          approvalRequired,
+          JSON.stringify({
+            buyOrderIds: resolvedBuyOrderIds,
+            deliveryIds: resolvedDeliveryIds,
+            requestedBuyOrderIds: parsed.data.buyOrderIds,
+            requestedDeliveryIds: parsed.data.deliveryIds,
+            skippedBuyOrderIds,
+            skippedDeliveryIds
+          })
+        ]
+      );
+      await client.query("COMMIT");
+      await audit({
+        userId, plan, capability: "ACTION", action, allowed: true,
+        metadata: { dispatchPlanId: planResult.rows[0].id, skippedBuyOrderIds, skippedDeliveryIds }
+      });
+      return res.status(201).json({ dispatchPlan: planResult.rows[0], skippedBuyOrderIds, skippedDeliveryIds });
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch {}
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "UNKNOWN_ACTION" });
