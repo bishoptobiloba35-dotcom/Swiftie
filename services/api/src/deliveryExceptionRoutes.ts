@@ -82,6 +82,11 @@ router.post("/deliveries/:id/failure", requireAuth("DRIVER"), async (req, res) =
       [id]
     )).rows[0].count);
     const attemptNumber = count + 1;
+    const maxAttempts = 3;
+    if (attemptNumber > maxAttempts) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Maximum delivery attempts reached. The delivery must be rescheduled or returned to sender." });
+    }
     if (parsed.data.evidencePhoto) {
       const match = parsed.data.evidencePhoto.match(/^data:image\/(jpeg|jpg|png);base64,(.+)$/i);
       if (!match) { await client.query("ROLLBACK"); return res.status(400).json({ error: "evidencePhoto must be a JPEG or PNG data URL" }); }
