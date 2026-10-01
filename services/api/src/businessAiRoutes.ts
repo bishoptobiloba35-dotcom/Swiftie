@@ -563,6 +563,18 @@ router.post("/business/dispatch-plans/:id/execute", requireAuth("CUSTOMER", "ADM
       [id]
     );
     if (!updated.rows[0]) { await client.query("ROLLBACK"); return res.status(409).json({ error: "Dispatch plan changed concurrently" }); }
+
+    // Execution releases the selected deliveries into the existing driver-matching
+    // workflow. Record one durable delivery event per release so customers,
+    // operators, and audit tooling can see why the delivery became dispatchable.
+    if (deliveryIds.length) {
+      await client.query(
+        `INSERT INTO delivery_events (delivery_id, event_type, actor_user_id, metadata)
+         SELECT unnest($1::uuid[]), 'BUSINESS_DISPATCH_RELEASED', $2, $3::jsonb`,
+        [deliveryIds, identity(req), JSON.stringify({ dispatchPlanId: id, businessId: plan.business_id })]
+      );
+    }
+
     await client.query(
       "INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,(SELECT ai_plan FROM users WHERE id=$1),'ACTION','EXECUTE_DISPATCH_PLAN',true,'Dispatch plan released to operational workflow',$2::jsonb)",
       [identity(req), JSON.stringify({ dispatchPlanId: id, deliveryIds })]
