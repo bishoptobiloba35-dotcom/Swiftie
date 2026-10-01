@@ -408,7 +408,7 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
       }
 
       const monthlySpend = await client.query(
-        "SELECT COALESCE(SUM(amount_minor),0) AS total FROM business_spend_ledger WHERE business_id=$1 AND created_at >= date_trunc('month', now()) FOR UPDATE",
+        "SELECT COALESCE(SUM(amount_minor),0) AS total FROM business_spend_ledger WHERE business_id=$1 AND created_at >= date_trunc('month', now())",
         [parsed.data.businessId]
       );
       const monthlyLimit = Number(member.business.monthly_spend_limit_minor);
