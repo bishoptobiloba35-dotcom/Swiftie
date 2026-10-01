@@ -5,7 +5,7 @@ export async function reconcileProcessingDropOffCommissions(): Promise<void> {
   const secret = process.env.PAYSTACK_SECRET_KEY;
   if (!secret) return;
 
-  const result = await pool.query(`SELECT id,amount_minor,currency,provider_reference
+  const result = await pool.query(`SELECT id,parcel_id,amount_minor,currency,provider_reference
     FROM drop_off_commission_ledger
     WHERE status='PROCESSING' AND provider_reference IS NOT NULL
     ORDER BY updated_at ASC
@@ -32,17 +32,29 @@ export async function reconcileProcessingDropOffCommissions(): Promise<void> {
             "UPDATE drop_off_commission_ledger SET status='AVAILABLE',provider_status='amount_mismatch',updated_at=now() WHERE id=$1 AND status='PROCESSING'",
             [commission.id]
           );
+          await pool.query(
+            "INSERT INTO drop_off_events(parcel_id,actor_user_id,event_type,metadata) VALUES($1,NULL,'COMMISSION_RECONCILIATION_MISMATCH',$2::jsonb)",
+            [commission.parcel_id, JSON.stringify({commissionId:commission.id,provider:"paystack",reference:providerReference,providerAmount,providerCurrency})]
+          );
           continue;
         }
         await pool.query(
           "UPDATE drop_off_commission_ledger SET status='PAID',provider_reference=$2,provider_status='success',paid_at=COALESCE(paid_at,now()),updated_at=now() WHERE id=$1 AND status='PROCESSING'",
           [commission.id, providerReference]
         );
+        await pool.query(
+          "INSERT INTO drop_off_events(parcel_id,actor_user_id,event_type,metadata) VALUES($1,NULL,'COMMISSION_RECONCILED_PAID',$2::jsonb)",
+          [commission.parcel_id, JSON.stringify({commissionId:commission.id,provider:"paystack",reference:providerReference,source:"reconciliation"})]
+        );
       } else if (providerStatus === "failed" || providerStatus === "reversed") {
         const reason = data.data.failures?.message ?? data.data.failures?.reason ?? data.message ?? "Paystack transfer failed";
         await pool.query(
           "UPDATE drop_off_commission_ledger SET status='AVAILABLE',provider_reference=$2,provider_status=$3,updated_at=now() WHERE id=$1 AND status='PROCESSING'",
           [commission.id, providerReference, providerStatus + ":" + String(reason).slice(0, 400)]
+        );
+        await pool.query(
+          "INSERT INTO drop_off_events(parcel_id,actor_user_id,event_type,metadata) VALUES($1,NULL,'COMMISSION_RECONCILED_FAILED',$2::jsonb)",
+          [commission.parcel_id, JSON.stringify({commissionId:commission.id,provider:"paystack",reference:providerReference,providerStatus,reason:String(reason).slice(0,400),source:"reconciliation"})]
         );
       }
     } catch (error) {
