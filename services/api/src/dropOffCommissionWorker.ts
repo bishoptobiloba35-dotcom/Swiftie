@@ -5,7 +5,7 @@ export async function reconcileProcessingDropOffCommissions(): Promise<void> {
   const secret = process.env.PAYSTACK_SECRET_KEY;
   if (!secret) return;
 
-  const result = await pool.query(`SELECT id,amount_minor,currency,provider_reference
+  const result = await pool.query(`SELECT id,parcel_id,amount_minor,currency,provider_reference
     FROM drop_off_commission_ledger
     WHERE status='PROCESSING' AND provider_reference IS NOT NULL
     ORDER BY updated_at ASC
@@ -26,24 +26,66 @@ export async function reconcileProcessingDropOffCommissions(): Promise<void> {
       const providerAmount = data.data.amount == null ? undefined : Number(data.data.amount);
       const providerCurrency = String(data.data.currency ?? "");
 
-      if (providerStatus === "success") {
-        if (providerAmount !== Number(commission.amount_minor) || providerCurrency !== String(commission.currency)) {
-          await pool.query(
-            "UPDATE drop_off_commission_ledger SET status='AVAILABLE',provider_status='amount_mismatch',updated_at=now() WHERE id=$1 AND status='PROCESSING'",
-            [commission.id]
-          );
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const current = (await client.query(
+          "SELECT id,parcel_id,amount_minor,currency,status FROM drop_off_commission_ledger WHERE id=$1 FOR UPDATE",
+          [commission.id]
+        )).rows[0];
+        if (!current || current.status !== "PROCESSING") {
+          await client.query("ROLLBACK");
           continue;
         }
-        await pool.query(
-          "UPDATE drop_off_commission_ledger SET status='PAID',provider_reference=$2,provider_status='success',paid_at=COALESCE(paid_at,now()),updated_at=now() WHERE id=$1 AND status='PROCESSING'",
-          [commission.id, providerReference]
-        );
-      } else if (providerStatus === "failed" || providerStatus === "reversed") {
-        const reason = data.data.failures?.message ?? data.data.failures?.reason ?? data.message ?? "Paystack transfer failed";
-        await pool.query(
-          "UPDATE drop_off_commission_ledger SET status='AVAILABLE',provider_reference=$2,provider_status=$3,updated_at=now() WHERE id=$1 AND status='PROCESSING'",
-          [commission.id, providerReference, providerStatus + ":" + String(reason).slice(0, 400)]
-        );
+
+        if (providerStatus === "success") {
+          if (providerAmount !== Number(current.amount_minor) || providerCurrency !== String(current.currency)) {
+            const updated = await client.query(
+              "UPDATE drop_off_commission_ledger SET status='AVAILABLE',provider_reference=$2,provider_status='amount_mismatch',updated_at=now() WHERE id=$1 AND status='PROCESSING' RETURNING id",
+              [current.id, providerReference]
+            );
+            if (updated.rows[0] && current.parcel_id) {
+              await client.query(
+                "INSERT INTO drop_off_events(parcel_id,event_type,metadata) VALUES($1,'COMMISSION_PAYOUT_RECONCILIATION_MISMATCH',$2::jsonb)",
+                [current.parcel_id, JSON.stringify({ commissionId: current.id, providerReference, providerAmount, expectedAmount: Number(current.amount_minor), providerCurrency, expectedCurrency: String(current.currency) })]
+              );
+            }
+            await client.query("COMMIT");
+            continue;
+          }
+          const updated = await client.query(
+            "UPDATE drop_off_commission_ledger SET status='PAID',provider_reference=$2,provider_status='success',paid_at=COALESCE(paid_at,now()),updated_at=now() WHERE id=$1 AND status='PROCESSING' RETURNING id",
+            [current.id, providerReference]
+          );
+          if (updated.rows[0] && current.parcel_id) {
+            await client.query(
+              "INSERT INTO drop_off_events(parcel_id,event_type,metadata) VALUES($1,'COMMISSION_PAYOUT_RECONCILED_PAID',$2::jsonb)",
+              [current.parcel_id, JSON.stringify({ commissionId: current.id, providerReference, amountMinor: Number(current.amount_minor), currency: String(current.currency) })]
+            );
+          }
+          await client.query("COMMIT");
+        } else if (providerStatus === "failed" || providerStatus === "reversed") {
+          const reason = data.data.failures?.message ?? data.data.failures?.reason ?? data.message ?? "Paystack transfer failed";
+          const failure = providerStatus + ":" + String(reason).slice(0, 400);
+          const updated = await client.query(
+            "UPDATE drop_off_commission_ledger SET status='AVAILABLE',provider_reference=$2,provider_status=$3,updated_at=now() WHERE id=$1 AND status='PROCESSING' RETURNING id",
+            [current.id, providerReference, failure]
+          );
+          if (updated.rows[0] && current.parcel_id) {
+            await client.query(
+              "INSERT INTO drop_off_events(parcel_id,event_type,metadata) VALUES($1,'COMMISSION_PAYOUT_RECONCILED_FAILED',$2::jsonb)",
+              [current.parcel_id, JSON.stringify({ commissionId: current.id, providerReference, providerStatus, reason: String(reason).slice(0, 400) })]
+            );
+          }
+          await client.query("COMMIT");
+        } else {
+          await client.query("ROLLBACK");
+        }
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch {}
+        throw error;
+      } finally {
+        client.release();
       }
     } catch (error) {
       console.error(JSON.stringify({
