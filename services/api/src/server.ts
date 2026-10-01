@@ -23,6 +23,7 @@ import { processSupportAiBatch } from "./supportAiAgent.js";
 import recurringDispatchRoutes from "./recurringDispatchRoutes.js";
 import deliveryExceptionRoutes from "./deliveryExceptionRoutes.js";
 import { processRecurringDispatches } from "./recurringDispatchWorker.js";
+import { reconcileProcessingBuyOrderSettlements } from "./buyOrderSettlementWorker.js";
 
 const app = express();
 
