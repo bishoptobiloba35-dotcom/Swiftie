@@ -866,7 +866,7 @@ router.post("/admin/drop-off/commission/:id/pay", requireAuth("ADMIN"), async(re
     const reference="sd_drop_"+randomUUID().replaceAll("-","");
     await client.query("UPDATE drop_off_commission_ledger SET status='PROCESSING',provider_reference=$2,provider_status='pending',updated_at=now() WHERE id=$1 AND status='AVAILABLE'",[id,reference]);
     await client.query("COMMIT");
-    const response=await fetch("https://api.paystack.co/transfer",{method:"POST",headers:{authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify({source:"balance",amount:Number(row.amount_minor),recipient:row.recipient_code,reference,reason:"SwiftDrop drop-off partner commission",currency:row.currency})});
+    const response=await fetch("https://api.paystack.co/transfer",{method:"POST",headers:{authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify({source:"balance",amount:Number(row.amount_minor),recipient:row.recipient_code,reference,reason:"SwiftDrop drop-off partner commission",currency:row.currency}),signal:AbortSignal.timeout(15_000)});
     const payload=await response.json() as any;
     if(!response.ok||!payload.status||!payload.data?.reference){
       await pool.query("UPDATE drop_off_commission_ledger SET status='AVAILABLE',provider_status='failed',provider_reference=NULL,updated_at=now() WHERE id=$1 AND status='PROCESSING'",[id]);
