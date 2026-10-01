@@ -374,24 +374,42 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
     await markPayoutFailed(routeParam(req.params.id, "id"));
     return res.status(409).json({ error: "Payout could not be reserved for transfer" });
   }
-  const response = await fetch("https://api.paystack.co/transfer", {
-    method: "POST",
-    headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
-    body: JSON.stringify({ source: "balance", amount: processing.amountMinor, recipient: account.recipientCode, reference, reason: "SwiftDrop courier payout", currency: processing.currency })
-  });
-  const data = await response.json() as { status?: boolean; message?: string; data?: { reference?: string; status?: string } };
-  if (!response.ok || !data.status || !data.data?.reference) {
-    await markPayoutFailed(routeParam(req.params.id, "id"));
-    return res.status(502).json({ error: data.message ?? "Paystack transfer could not be initiated" });
+  try {
+    const response = await fetch("https://api.paystack.co/transfer", {
+      method: "POST",
+      headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
+      body: JSON.stringify({ source: "balance", amount: processing.amountMinor, recipient: account.recipientCode, reference, reason: "SwiftDrop courier payout", currency: processing.currency }),
+      signal: AbortSignal.timeout(15_000)
+    });
+    const data = await response.json() as { status?: boolean; message?: string; data?: { reference?: string; status?: string } };
+    if (!response.ok || !data.status || !data.data?.reference) {
+      await markPayoutFailed(routeParam(req.params.id, "id"));
+      return res.status(502).json({ error: data.message ?? "Paystack transfer could not be initiated" });
+    }
+    if (data.data.reference && data.data.reference !== reference) {
+      await setPayoutProviderReference(routeParam(req.params.id, "id"), data.data.reference);
+    }
+    return res.status(202).json({
+      payout: await findPayout(routeParam(req.params.id, "id")),
+      providerStatus: data.data.status ?? "pending",
+      message: "Transfer initiated. Final payout status will be updated from Paystack's transfer webhook or reconciliation worker."
+    });
+  } catch (error) {
+    // A timeout/network error is inconclusive: Paystack may have accepted the transfer.
+    // Keep PROCESSING and let the reconciliation worker verify the unique reference.
+    console.error(JSON.stringify({
+      event: "paystack_payout_initiation_inconclusive",
+      deliveryId: routeParam(req.params.id, "id"),
+      payoutId: processing.id,
+      providerReference: reference,
+      error: error instanceof Error ? error.message : "unknown"
+    }));
+    return res.status(202).json({
+      payout: await findPayout(routeParam(req.params.id, "id")),
+      providerStatus: "pending",
+      message: "Transfer status is being reconciled with Paystack."
+    });
   }
-  if (data.data.reference && data.data.reference !== reference) {
-    await setPayoutProviderReference(routeParam(req.params.id, "id"), data.data.reference);
-  }
-  return res.status(202).json({
-    payout: await findPayout(routeParam(req.params.id, "id")),
-    providerStatus: data.data.status ?? "pending",
-    message: "Transfer initiated. Final payout status will be updated from Paystack's transfer webhook."
-  });
 });
 
 app.get("/api/drivers/:driverId/ratings", requireAuth(), async (req, res) => {
@@ -1842,12 +1860,82 @@ app.use((error: unknown, req: express.Request, res: express.Response, _next: exp
 attachRealtime(httpServer);
 const port = Number(process.env.API_PORT || 4000);
 
+
+async function reconcileProcessingPaystackPayouts(): Promise<void> {
+  if (!databaseEnabled()) return;
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  if (!secret) return;
+
+  const result = await pool!.query(
+    `SELECT id, provider_reference, amount_minor, currency
+       FROM payouts
+      WHERE status='PROCESSING'
+        AND provider='paystack'
+        AND provider_reference IS NOT NULL
+      ORDER BY updated_at ASC
+      LIMIT 25`
+  );
+
+  for (const payout of result.rows) {
+    const reference = String(payout.provider_reference);
+    try {
+      const response = await fetch(
+        "https://api.paystack.co/transfer/verify/" + encodeURIComponent(reference),
+        { headers: { authorization: "Bearer " + secret }, signal: AbortSignal.timeout(10_000) }
+      );
+      const data = await response.json() as {
+        status?: boolean;
+        message?: string;
+        data?: {
+          reference?: string;
+          status?: string;
+          amount?: number;
+          currency?: string;
+          failures?: { message?: string; reason?: string } | null;
+        };
+      };
+
+      if (!response.ok || !data.status || !data.data) continue;
+
+      const providerStatus = String(data.data.status ?? "").toLowerCase();
+      const providerReference = String(data.data.reference ?? reference);
+      const providerAmount = data.data.amount == null ? undefined : Number(data.data.amount);
+      const providerCurrency = data.data.currency ? String(data.data.currency) : undefined;
+
+      if (providerStatus === "success") {
+        await updatePayoutProviderStatus(providerReference, "RELEASED", null, providerAmount, providerCurrency);
+        await recordDeliveryEvent({
+          deliveryId: payout.id,
+          eventType: "PAYOUT_RECONCILED_RELEASED",
+          metadata: { provider: "paystack", reference: providerReference, source: "reconciliation" }
+        }).catch(() => {});
+      } else if (providerStatus === "failed" || providerStatus === "reversed") {
+        const reason = data.data.failures?.message ?? data.data.failures?.reason ?? data.message ?? "Paystack transfer failed";
+        await updatePayoutProviderStatus(providerReference, providerStatus === "reversed" ? "CANCELLED" : "FAILED", reason, providerAmount, providerCurrency);
+        await recordDeliveryEvent({
+          deliveryId: payout.id,
+          eventType: "PAYOUT_RECONCILED_FAILED",
+          metadata: { provider: "paystack", reference: providerReference, providerStatus, reason, source: "reconciliation" }
+        }).catch(() => {});
+      }
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "paystack_payout_reconciliation_error",
+        payoutId: payout.id,
+        providerReference: reference,
+        error: error instanceof Error ? error.message : "unknown"
+      }));
+    }
+  }
+}
+
 async function startServer() {
   validateProductionConfig();
   if (databaseEnabled()) {
     await runMigrations();
     void processNotificationOutbox().catch(() => {});
     void processNotificationPushReceipts().catch(() => {});
+    void reconcileProcessingPaystackPayouts().catch(() => {});
     void processSupportAiBatch().catch(() => {});
     void processRecurringDispatches().catch(() => {});
     const supportAiWorker = setInterval(() => {
@@ -1862,9 +1950,13 @@ async function startServer() {
     const notificationReceiptWorker = setInterval(() => {
       void processNotificationPushReceipts().catch(() => {});
     }, 60_000);
+    const payoutReconciliationWorker = setInterval(() => {
+      void reconcileProcessingPaystackPayouts().catch(() => {});
+    }, 60_000);
     supportAiWorker.unref();
     notificationWorker.unref();
     notificationReceiptWorker.unref();
+    payoutReconciliationWorker.unref();
     recurringDispatchWorker.unref();
   }
   httpServer.listen(port, () => console.log(`SwiftDrop API listening on port ${port}`));
