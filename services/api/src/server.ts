@@ -24,6 +24,7 @@ import recurringDispatchRoutes from "./recurringDispatchRoutes.js";
 import deliveryExceptionRoutes from "./deliveryExceptionRoutes.js";
 import { processRecurringDispatches } from "./recurringDispatchWorker.js";
 import { reconcileProcessingBuyOrderSettlements } from "./buyOrderSettlementWorker.js";
+import { reconcileProcessingDropOffCommissions } from "./dropOffCommissionWorker.js";
 
 const app = express();
 
@@ -1938,6 +1939,7 @@ async function startServer() {
     void processNotificationPushReceipts().catch(() => {});
     void reconcileProcessingPaystackPayouts().catch(() => {});
     void reconcileProcessingBuyOrderSettlements().catch(() => {});
+    void reconcileProcessingDropOffCommissions().catch(() => {});
     void processSupportAiBatch().catch(() => {});
     void processRecurringDispatches().catch(() => {});
     const supportAiWorker = setInterval(() => {
@@ -1955,6 +1957,9 @@ async function startServer() {
     const buyOrderSettlementReconciliationWorker = setInterval(() => {
       void reconcileProcessingBuyOrderSettlements().catch(() => {});
     }, 60_000);
+    const dropOffCommissionReconciliationWorker = setInterval(() => {
+      void reconcileProcessingDropOffCommissions().catch(() => {});
+    }, 60_000);
     const payoutReconciliationWorker = setInterval(() => {
       void reconcileProcessingPaystackPayouts().catch(() => {});
     }, 60_000);
@@ -1962,6 +1967,7 @@ async function startServer() {
     notificationWorker.unref();
     notificationReceiptWorker.unref();
     payoutReconciliationWorker.unref();
+    dropOffCommissionReconciliationWorker.unref();
     buyOrderSettlementReconciliationWorker.unref();
     recurringDispatchWorker.unref();
   }
