@@ -1867,7 +1867,7 @@ async function reconcileProcessingPaystackPayouts(): Promise<void> {
   if (!secret) return;
 
   const result = await pool!.query(
-    `SELECT id, provider_reference, amount_minor, currency
+    `SELECT id, delivery_id, provider_reference, amount_minor, currency
        FROM payouts
       WHERE status='PROCESSING'
         AND provider='paystack'
@@ -1905,7 +1905,7 @@ async function reconcileProcessingPaystackPayouts(): Promise<void> {
       if (providerStatus === "success") {
         await updatePayoutProviderStatus(providerReference, "RELEASED", null, providerAmount, providerCurrency);
         await recordDeliveryEvent({
-          deliveryId: payout.id,
+          deliveryId: payout.delivery_id,
           eventType: "PAYOUT_RECONCILED_RELEASED",
           metadata: { provider: "paystack", reference: providerReference, source: "reconciliation" }
         }).catch(() => {});
@@ -1913,7 +1913,7 @@ async function reconcileProcessingPaystackPayouts(): Promise<void> {
         const reason = data.data.failures?.message ?? data.data.failures?.reason ?? data.message ?? "Paystack transfer failed";
         await updatePayoutProviderStatus(providerReference, providerStatus === "reversed" ? "CANCELLED" : "FAILED", reason, providerAmount, providerCurrency);
         await recordDeliveryEvent({
-          deliveryId: payout.id,
+          deliveryId: payout.delivery_id,
           eventType: "PAYOUT_RECONCILED_FAILED",
           metadata: { provider: "paystack", reference: providerReference, providerStatus, reason, source: "reconciliation" }
         }).catch(() => {});
