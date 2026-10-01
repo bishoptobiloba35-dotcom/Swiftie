@@ -837,7 +837,13 @@ router.post("/admin/buy-order-settlements/:id/pay", requireAuth("ADMIN"), async(
     const reference="sd_buyset_"+randomUUID().replaceAll("-","");
     await client.query("UPDATE buy_order_settlements SET status='PROCESSING',transfer_reference=$2,provider_status='pending',failure_reason=NULL,updated_at=now() WHERE id=$1",[id,reference]);
     await client.query("COMMIT");
-    const response=await fetch("https://api.paystack.co/transfer",{method:"POST",headers:{authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify({source:"balance",amount:Number(row.amount_minor),recipient:row.recipient_code,reference,reason:"SwiftDrop Buy & Deliver agent settlement",currency:row.currency})});
+    let response: Response;
+    try {
+      response=await fetch("https://api.paystack.co/transfer",{method:"POST",headers:{authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify({source:"balance",amount:Number(row.amount_minor),recipient:row.recipient_code,reference,reason:"SwiftDrop Buy & Deliver agent settlement",currency:row.currency}),signal:AbortSignal.timeout(15_000)});
+    } catch(error) {
+      await pool.query("UPDATE buy_order_settlements SET provider_status='unknown',failure_reason=$2,updated_at=now() WHERE id=$1 AND status='PROCESSING'",[id,error instanceof Error?error.message:"Paystack transfer result is inconclusive"]);
+      return res.status(202).json({error:"Settlement transfer result is pending provider reconciliation",code:"PAYOUT_RECONCILIATION_REQUIRED"});
+    }
     const payload=await response.json() as any;
     if(!response.ok||!payload.status||!payload.data?.reference){
       await pool.query("UPDATE buy_order_settlements SET status='FAILED',provider_status='failed',failure_reason=$2,updated_at=now() WHERE id=$1 AND status='PROCESSING'",[id,payload.message??"Paystack transfer failed"]);
