@@ -8,13 +8,15 @@ const config: ExpoConfig = {
   orientation: "portrait",
   ios: {
     supportsTablet: true,
+    config: { googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY ?? "ci-validation-placeholder" },
     bundleIdentifier: process.env.IOS_BUNDLE_IDENTIFIER ?? "com.swiftdrop.customer",
     infoPlist: {
       NSLocationWhenInUseUsageDescription: "SwiftDrop uses your location to set the pickup point when you choose your current location."
     }
   },
   android: {
-    package: process.env.ANDROID_PACKAGE ?? "com.swiftdrop.customer"
+    package: process.env.ANDROID_PACKAGE ?? "com.swiftdrop.customer",
+    config: { googleMaps: { apiKey: process.env.GOOGLE_MAPS_API_KEY ?? "ci-validation-placeholder" } }
   },
   plugins: [
     [
@@ -25,13 +27,6 @@ const config: ExpoConfig = {
       }
     ],
     "expo-notifications",
-    [
-      "react-native-maps",
-      {
-        androidGoogleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY,
-        iosGoogleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY
-      }
-    ]
   ]
 };
 
