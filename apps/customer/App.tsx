@@ -35,6 +35,7 @@ export default function App() {
   const [phone, setPhone] = React.useState("");
   const [receiverPin, setReceiverPin] = React.useState("");
   const [weightKg, setWeightKg] = React.useState("");
+  const [declaredValue, setDeclaredValue] = React.useState("");
   const [lengthCm, setLengthCm] = React.useState("");
   const [widthCm, setWidthCm] = React.useState("");
   const [heightCm, setHeightCm] = React.useState("");
@@ -314,12 +315,14 @@ export default function App() {
       if (!pickup.trim() || !dropoff.trim() || !receiver.trim() || !phone.trim() || !email.trim() || !/^\d{6}$/.test(receiverPin)) throw new Error("Complete the delivery details and enter a 6-digit receiver PIN.");
       const coords = coordinates();
       if (![weightKg, lengthCm, widthCm, heightCm].every(value => Number(value) > 0)) throw new Error("Enter parcel weight and all three dimensions.");
+      if (!(Number(declaredValue) > 0)) throw new Error("Enter the actual value of the goods before placing the order.");
       const serverQuote = await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable });
       setQuote(serverQuote);
       const created = await api.createDelivery({
         receiverName: receiver.trim(),
         receiverPhone: phone.trim(),
         receiverPin,
+        declaredValueMinor: Math.round(Number(declaredValue) * 100),
         weightKg: Number(weightKg),
         dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) },
         isPerishable,
@@ -501,6 +504,8 @@ export default function App() {
     <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
     <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={receiverPin} onChangeText={setReceiverPin} />
     <Text style={styles.hint}>Give this PIN to the receiver. The receiver must use it to confirm receipt before courier payout is released.</Text>
+    <TextInput style={styles.input} placeholder="Actual goods value (₦)" keyboardType="decimal-pad" value={declaredValue} onChangeText={setDeclaredValue} />
+    <Text style={styles.hint}>Required for pricing, vehicle/risk planning and claims. Declare the genuine value of the goods. A damage claim is limited to the verified actual loss and cannot be increased by an inflated declaration.</Text>
     <TextInput style={styles.input} placeholder="Parcel weight (kg)" keyboardType="decimal-pad" value={weightKg} onChangeText={setWeightKg} />
     <View style={styles.row}><TextInput style={[styles.input, styles.third]} placeholder="Length cm" keyboardType="decimal-pad" value={lengthCm} onChangeText={setLengthCm} /><TextInput style={[styles.input, styles.third]} placeholder="Width cm" keyboardType="decimal-pad" value={widthCm} onChangeText={setWidthCm} /><TextInput style={[styles.input, styles.third]} placeholder="Height cm" keyboardType="decimal-pad" value={heightCm} onChangeText={setHeightCm} /></View>
     <Pressable style={styles.secondary} onPress={() => setIsPerishable(v => !v)}><Text>{isPerishable ? "✓ Perishable item (surcharge applied)" : "Mark as perishable / food item"}</Text></Pressable>
