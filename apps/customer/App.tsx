@@ -304,7 +304,7 @@ export default function App() {
     try {
       if (![weightKg, lengthCm, widthCm, heightCm].every(value => Number(value) > 0)) throw new Error("Enter parcel weight and all three dimensions first.");
       const coords = coordinates();
-      setQuote(await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable }));
+      setQuote(await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable, declaredValueMinor: Math.round(Number(declaredValue) * 100) }));
     } catch (error) {
       Alert.alert("Quote unavailable", error instanceof Error ? error.message : "Enter valid locations.");
     }
@@ -316,7 +316,7 @@ export default function App() {
       const coords = coordinates();
       if (![weightKg, lengthCm, widthCm, heightCm].every(value => Number(value) > 0)) throw new Error("Enter parcel weight and all three dimensions.");
       if (!(Number(declaredValue) > 0)) throw new Error("Enter the actual value of the goods before placing the order.");
-      const serverQuote = await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable });
+      const serverQuote = await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable, declaredValueMinor: Math.round(Number(declaredValue) * 100) });
       setQuote(serverQuote);
       const created = await api.createDelivery({
         receiverName: receiver.trim(),
@@ -519,7 +519,7 @@ export default function App() {
       <Text>Weight: ₦{(quote.weightFareMinor / 100).toLocaleString()}</Text>
       <Text>Size/handling: ₦{(quote.sizeFareMinor / 100).toLocaleString()}</Text>
       {quote.perishableSurchargeMinor > 0 && <Text>Perishable/food surcharge: ₦{(quote.perishableSurchargeMinor / 100).toLocaleString()}</Text>}
-      <Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
+      <Text>Fuel reference: ₦{(quote.fuelReferenceMinor / 100).toLocaleString()} (2 litres)</Text><Text>Refundable protection reserve: ₦{(quote.protectionReserveMinor / 100).toLocaleString()}</Text><Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
       <Text style={styles.code}>Total: ₦{(quote.totalMinor / 100).toLocaleString()}</Text>
     </View>}
     <Text style={styles.hint}>Escrow protection: your payment is held after successful payment and is only released for courier payout after the receiver confirms receipt.</Text>

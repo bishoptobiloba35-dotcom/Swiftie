@@ -23,6 +23,7 @@ import { processSupportAiBatch } from "./supportAiAgent.js";
 import recurringDispatchRoutes from "./recurringDispatchRoutes.js";
 import deliveryExceptionRoutes from "./deliveryExceptionRoutes.js";
 import { processRecurringDispatches } from "./recurringDispatchWorker.js";
+import { getActivePricingConfig } from "./pricing.js";
 import { reconcileProcessingBuyOrderSettlements } from "./buyOrderSettlementWorker.js";
 import { reconcileProcessingDropOffCommissions } from "./dropOffCommissionWorker.js";
 
@@ -85,6 +86,9 @@ type DeliveryQuote = {
   weightFareMinor: number;
   sizeFareMinor: number;
   perishableSurchargeMinor: number;
+  fuelReferenceMinor: number;
+  protectionReserveMinor: number;
+  pricingVersion: number;
   serviceFeeMinor: number;
   totalMinor: number;
 };
@@ -160,14 +164,16 @@ const quoteSchema = z.object({
   dropoff: z.object({ latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   weightKg: z.number().positive().max(1000),
   dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
-  isPerishable: z.boolean()
+  isPerishable: z.boolean(),
+  declaredValueMinor: z.number().int().positive().max(10000000000)
 });
 
-function calculateQuote(
+async function calculateQuote(
   pickup: { latitude: number; longitude: number },
   dropoff: { latitude: number; longitude: number },
-  parcel: { weightKg: number; dimensionsCm: { length: number; width: number; height: number }; isPerishable: boolean }
-): DeliveryQuote {
+  parcel: { weightKg: number; dimensionsCm: { length: number; width: number; height: number }; isPerishable: boolean; declaredValueMinor: number }
+): Promise<DeliveryQuote> {
+  const config = await getActivePricingConfig();
   const earthRadius = 6371000;
   const lat1 = pickup.latitude * Math.PI / 180;
   const lat2 = dropoff.latitude * Math.PI / 180;
@@ -179,13 +185,15 @@ function calculateQuote(
   const volumeCm3 = parcel.dimensionsCm.length * parcel.dimensionsCm.width * parcel.dimensionsCm.height;
   const volumetricWeightKg = volumeCm3 / 5000;
   const billableWeightKg = Math.max(parcel.weightKg, volumetricWeightKg);
-  const baseFareMinor = 50000;
+  const fuelReferenceMinor = config.fuelPriceMinorPerLitre * 2;
+  const baseFareMinor = fuelReferenceMinor;
   const distanceFareMinor = Math.ceil(distanceKm * 18000);
   const weightFareMinor = Math.ceil(Math.max(0, billableWeightKg - 1) * 10000);
   const sizeFareMinor = Math.ceil(Math.max(0, volumeCm3 - 10000) / 1000 * 250);
   const handlingMinor = baseFareMinor + distanceFareMinor + weightFareMinor + sizeFareMinor;
-  const perishableSurchargeMinor = parcel.isPerishable ? Math.ceil(handlingMinor * 0.15) : 0;
-  const serviceFeeMinor = Math.ceil((handlingMinor + perishableSurchargeMinor) * 0.05);
+  const perishableSurchargeMinor = parcel.isPerishable ? Math.ceil(handlingMinor * config.perishableSurchargeBps / 10000) : 0;
+  const serviceFeeMinor = Math.ceil((handlingMinor + perishableSurchargeMinor) * config.serviceChargeBps / 10000);
+  const protectionReserveMinor = Math.ceil(parcel.declaredValueMinor * config.protectionReserveBps / 10000);
   return {
     currency: "NGN",
     distanceMeters: Math.round(distanceMeters),
@@ -195,11 +203,13 @@ function calculateQuote(
     weightFareMinor,
     sizeFareMinor,
     perishableSurchargeMinor,
+    fuelReferenceMinor,
+    protectionReserveMinor,
+    pricingVersion: config.version,
     serviceFeeMinor,
-    totalMinor: handlingMinor + perishableSurchargeMinor + serviceFeeMinor
+    totalMinor: handlingMinor + perishableSurchargeMinor + serviceFeeMinor + protectionReserveMinor
   };
 }
-
 const trackingCode = () => "SD-" + Math.random().toString(36).slice(2, 8).toUpperCase();
 const safeDelivery = (d: any) => ({ ...d, receiverPin: undefined, receiverPinHash: undefined });
 
@@ -519,17 +529,17 @@ app.get("/api/locations/search", requireAuth("CUSTOMER"), async (req, res) => {
 app.post("/api/quotes", requireAuth("CUSTOMER"), async (req, res) => {
   const parsed = quoteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  res.json(calculateQuote(parsed.data.pickup, parsed.data.dropoff, { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable }));
+  try { res.json(await calculateQuote(parsed.data.pickup, parsed.data.dropoff, { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable, declaredValueMinor: parsed.data.declaredValueMinor })); } catch (error) { res.status(503).json({ error: error instanceof Error ? error.message : "Pricing configuration is unavailable" }); }
 });
 
 app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   const parsed = createDeliverySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const input = { ...parsed.data, senderId: identity(req) };
-  const quote = calculateQuote(
+  const quote = await calculateQuote(
     { latitude: parsed.data.pickup.latitude, longitude: parsed.data.pickup.longitude },
     { latitude: parsed.data.dropoff.latitude, longitude: parsed.data.dropoff.longitude },
-    { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable }
+    { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable, declaredValueMinor: parsed.data.declaredValueMinor }
   );
   if (quote.currency !== "NGN" || !Number.isSafeInteger(quote.totalMinor) || quote.totalMinor <= 0) {
     return res.status(500).json({ error: "Unable to calculate delivery quote" });
@@ -576,7 +586,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
       receiverPhone: input.receiverPhone,
       pickup: { label: input.pickup.label, formattedAddress: input.pickup.formattedAddress, location: { latitude: input.pickup.latitude, longitude: input.pickup.longitude } },
       dropoff: { label: input.dropoff.label, formattedAddress: input.dropoff.formattedAddress, location: { latitude: input.dropoff.latitude, longitude: input.dropoff.longitude } },
-      quote: input.quote,
+      quote,
       status: "CREATED",
       receiverPin: pin,
       createdAt: now,
