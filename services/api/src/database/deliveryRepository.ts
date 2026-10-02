@@ -1141,7 +1141,7 @@ export async function confirmReceiverAndReleaseEscrow(id: string, receiverPhone:
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const result = await client.query(`SELECT d.*, p.amount_minor, p.currency AS payment_currency, p.status AS payment_status FROM deliveries d JOIN payments p ON p.delivery_id=d.id WHERE d.id=$1 FOR UPDATE`, [id]);
+    const result = await client.query(`SELECT d.*, p.amount_minor, p.currency AS payment_currency, p.status AS payment_status, p.refund_status FROM deliveries d JOIN payments p ON p.delivery_id=d.id WHERE d.id=$1 FOR UPDATE`, [id]);
     const row = result.rows[0];
     if (!row || row.receiver_phone !== receiverPhone || row.status !== 'ARRIVED' || row.payment_status !== 'HELD' || ['pending','processing','needs-attention'].includes(String(row.refund_status ?? '')) || !verifyPin(pin, row.receiver_pin_hash) || !row.driver_id) {
       await client.query('ROLLBACK');
