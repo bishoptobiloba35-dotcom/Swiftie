@@ -1330,11 +1330,13 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
     if (!paymentBefore) return res.status(409).json({ error: "No payment was found for this delivery" });
     const requestedAmount = Number(req.body?.refundAmountMinor);
     const refundAmountMinor = Number.isInteger(requestedAmount) && requestedAmount > 0 ? requestedAmount : paymentBefore.amountMinor;
+    const verifiedLossRaw = req.body?.verifiedLossMinor;
+    const verifiedLossMinor = Number.isInteger(verifiedLossRaw) && verifiedLossRaw >= 0 ? verifiedLossRaw : undefined;
     if (refundAmountMinor < 1 || refundAmountMinor > paymentBefore.amountMinor) return res.status(400).json({ error: "Refund amount must be a positive whole amount not greater than the original payment" });
     const secret = process.env.PAYSTACK_SECRET_KEY;
     if (!secret) return res.status(503).json({ error: "Paystack refund configuration is not ready" });
 
-    const prepared = await prepareRefund(routeParam(req.params.id, "id"), refundAmountMinor);
+    const prepared = await prepareRefund(routeParam(req.params.id, "id"), refundAmountMinor, verifiedLossMinor);
     if (!prepared) return res.status(409).json({ error: "This case is no longer refundable. Check the payment, existing refund and courier payout status." });
 
     const response = await fetch("https://api.paystack.co/refund", {
