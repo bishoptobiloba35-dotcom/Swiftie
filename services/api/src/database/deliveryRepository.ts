@@ -1155,7 +1155,9 @@ export async function confirmReceiverAndReleaseEscrow(id: string, receiverPhone:
       return null;
     }
     const deliveryResult = await client.query(`UPDATE deliveries SET status='DELIVERED', receiver_confirmed_at=now(), updated_at=now() WHERE id=$1 RETURNING *`, [id]);
-    const payoutAmountMinor = Math.max(0, Math.floor(Number(row.amount_minor) * Math.min(100, Math.max(0, payoutPercent)) / 100));
+    const protectionReserveMinor = Math.max(0, Number(row.quote_protection_reserve_minor ?? 0));
+    const payoutBaseMinor = Math.max(0, Number(row.amount_minor) - protectionReserveMinor);
+    const payoutAmountMinor = Math.max(0, Math.floor(payoutBaseMinor * Math.min(100, Math.max(0, payoutPercent)) / 100));
     await client.query(`UPDATE payments SET status='RELEASED', escrow_status='RELEASED', updated_at=now() WHERE delivery_id=$1 AND status='HELD'`, [id]);
     if (payoutAmountMinor > 0) {
       await client.query(`INSERT INTO payouts (delivery_id, driver_id, amount_minor, currency, status) VALUES ($1,$2,$3,$4,'ELIGIBLE') ON CONFLICT (delivery_id) DO UPDATE SET amount_minor=EXCLUDED.amount_minor, currency=EXCLUDED.currency, status=CASE WHEN payouts.status IN ('PENDING','ELIGIBLE') THEN 'ELIGIBLE' ELSE payouts.status END, updated_at=now()`, [id, row.driver_id, payoutAmountMinor, row.payment_currency ?? 'NGN']);
