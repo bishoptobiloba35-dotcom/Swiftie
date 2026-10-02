@@ -180,9 +180,9 @@ export type StoredDelivery = {
     weightFareMinor: number;
     sizeFareMinor: number;
     perishableSurchargeMinor: number;
-    fuelReferenceMinor: number;
-    protectionReserveMinor: number;
-    pricingVersion: number;
+    fuelReferenceMinor?: number;
+    protectionReserveMinor?: number;
+    pricingVersion?: number;
     serviceFeeMinor: number;
     totalMinor: number;
   };
