@@ -231,10 +231,11 @@ export class SwiftDropApi {
     weightKg: number;
     dimensionsCm: { length: number; width: number; height: number };
     isPerishable: boolean;
+    declaredValueMinor: number;
   }): Promise<{
     currency: string; distanceMeters: number; durationSeconds: number;
     baseFareMinor: number; distanceFareMinor: number; weightFareMinor: number; sizeFareMinor: number;
-    perishableSurchargeMinor: number; serviceFeeMinor: number; totalMinor: number;
+    perishableSurchargeMinor: number; fuelReferenceMinor: number; protectionReserveMinor: number; pricingVersion: number; serviceFeeMinor: number; totalMinor: number;
   }> {
     const response = await fetch(this.baseUrl + "/api/quotes", {
       method: "POST",
