@@ -239,10 +239,30 @@ router.post("/deliveries/:id/return/complete", requireAuth("DRIVER"), async (req
       "INSERT INTO delivery_exception_events(delivery_id,actor_user_id,event_type,metadata) VALUES($1,$2,'RETURN_COMPLETED',$3::jsonb)",
       [id, identity(req), JSON.stringify(metadata)]
     );
+
+    // Returning a parcel must not silently release or refund its payment.
+    // Preserve the financial state and create an operations review signal when funds remain held/authorized.
+    const payment = (await client.query(
+      "SELECT id,status,escrow_status,amount_minor,currency FROM payments WHERE delivery_id=$1 FOR UPDATE",
+      [id]
+    )).rows[0] ?? null;
+    const financialReviewRequired = Boolean(payment && ["HELD","AUTHORIZED"].includes(payment.status));
     await client.query(
       "INSERT INTO delivery_events(delivery_id,event_type,actor_user_id,metadata) VALUES($1,'RETURNED',$2,$3::jsonb)",
-      [id, identity(req), JSON.stringify({ driverId: driver.id, returnReason: 'CUSTOMER_REQUEST' })]
+      [id, identity(req), JSON.stringify({
+        driverId: driver.id,
+        returnReason: "CUSTOMER_REQUEST",
+        paymentStatus: payment?.status ?? null,
+        escrowStatus: payment?.escrow_status ?? null,
+        financialReviewRequired
+      })]
     );
+    if (financialReviewRequired) {
+      await client.query(
+        "INSERT INTO notifications(user_id,delivery_id,title,body,type,created_at) SELECT id,$1,'Returned delivery requires financial review',$2,'PAYMENT_REVIEW',now() FROM users WHERE role='ADMIN'",
+        [id, `Delivery ${id} was returned with payment ${payment.status}; review refund/dispute handling before releasing funds.`]
+      );
+    }
     await client.query("COMMIT");
     return res.json({ delivery: updated.rows[0] });
   } catch (error) {
