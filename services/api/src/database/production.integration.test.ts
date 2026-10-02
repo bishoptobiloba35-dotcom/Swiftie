@@ -155,6 +155,55 @@ if (!db) {
     const preparedRefund = await prepareRefund(refundDelivery.id, 50000, 60000);
     assert.ok(preparedRefund);
     assert.equal(preparedRefund.payout?.status, "CANCELLED");
+
+    const raceDelivery = await createPersistentDelivery({
+      senderId: customer.id,
+      receiverName: "Race Receiver",
+      receiverPhone: "+2349020000002",
+      declaredValueMinor: 150000,
+      pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.0765, longitude: 7.3986 } },
+      dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.4 } },
+      receiverPin: "111222",
+      weightKg: 1,
+      dimensionsCm: { length: 15, width: 15, height: 15 },
+      isPerishable: false,
+      quote: {
+        currency: "NGN",
+        distanceMeters: 1000,
+        durationSeconds: 450,
+        baseFareMinor: 100000,
+        distanceFareMinor: 20000,
+        weightFareMinor: 5000,
+        sizeFareMinor: 0,
+        perishableSurchargeMinor: 0,
+        serviceFeeMinor: 6250,
+        totalMinor: 131250
+      }
+    });
+    await createPayment({ deliveryId: raceDelivery.id, provider: "paystack", amountMinor: 131250 });
+    assert.ok(await updatePaymentStatus(raceDelivery.id, "AUTHORIZED", "race-test-payment"));
+    assert.ok(await transitionDelivery(raceDelivery.id, "CREATED", "PAYMENT_AUTHORIZED"));
+    assert.ok(await transitionDelivery(raceDelivery.id, "PAYMENT_AUTHORIZED", "DRIVER_ASSIGNED", driver.id));
+    assert.ok(await transitionDelivery(raceDelivery.id, "DRIVER_ASSIGNED", "DRIVER_AT_PICKUP", driver.id));
+    assert.ok(await savePickupPhoto(raceDelivery.id, driver.id, "supabase://race/pickup"));
+    assert.ok(await transitionDelivery(raceDelivery.id, "PICKED_UP", "IN_TRANSIT", driver.id));
+    assert.ok(await transitionDelivery(raceDelivery.id, "IN_TRANSIT", "ARRIVED", driver.id));
+    assert.ok(await updatePaymentStatus(raceDelivery.id, "HELD"));
+    await db.query(
+      `UPDATE payments
+          SET refund_status='pending', refund_amount_minor=50000, refund_reference='pending-race-test', refund_updated_at=now()
+        WHERE delivery_id=$1`,
+      [raceDelivery.id]
+    );
+    assert.equal(await confirmReceiverAndReleaseEscrow(raceDelivery.id, "+2349020000002", "111222", 90), null);
+    const raceState = (await db.query(
+      `SELECT d.status, p.status AS payment_status
+         FROM deliveries d JOIN payments p ON p.delivery_id=d.id
+        WHERE d.id=$1`,
+      [raceDelivery.id]
+    )).rows[0];
+    assert.equal(raceState.status, "ARRIVED");
+    assert.equal(raceState.payment_status, "HELD");
   });
 }
 
