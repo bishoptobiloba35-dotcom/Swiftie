@@ -5,8 +5,11 @@ import { pool } from "./db.js";
 import { runMigrations } from "./migrate.js";
 import {
   confirmReceiverAndReleaseEscrow,
+  createDispute,
+  createEligiblePayout,
   createPayment,
   createPersistentDelivery,
+  prepareRefund,
   savePickupPhoto,
   transitionDelivery,
   updatePaymentStatus
@@ -114,6 +117,44 @@ if (!db) {
     assert.equal(financial.escrow_status, "RELEASED");
     assert.equal(financial.payout_status, "ELIGIBLE");
     assert.equal(Number(financial.amount_minor), 73710);
+
+    const refundDelivery = await createPersistentDelivery({
+      senderId: customer.id,
+      receiverName: "Refund Receiver",
+      receiverPhone: "+2349020000001",
+      declaredValueMinor: 100000,
+      pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.0765, longitude: 7.3986 } },
+      dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.4 } },
+      receiverPin: "654321",
+      weightKg: 1,
+      dimensionsCm: { length: 15, width: 15, height: 15 },
+      isPerishable: false,
+      quote: {
+        currency: "NGN",
+        distanceMeters: 1000,
+        durationSeconds: 450,
+        baseFareMinor: 100000,
+        distanceFareMinor: 20000,
+        weightFareMinor: 5000,
+        sizeFareMinor: 0,
+        perishableSurchargeMinor: 0,
+        serviceFeeMinor: 6250,
+        totalMinor: 131250
+      }
+    });
+
+    await createPayment({ deliveryId: refundDelivery.id, provider: "paystack", amountMinor: 131250 });
+    assert.ok(await updatePaymentStatus(refundDelivery.id, "AUTHORIZED", "refund-test-payment"));
+    assert.ok(await updatePaymentStatus(refundDelivery.id, "HELD"));
+    assert.ok(await createDispute(refundDelivery.id, customer.id, "DAMAGE", "Integration refund ceiling test"));
+    assert.ok(await createEligiblePayout(refundDelivery.id, driver.id, 118125));
+
+    assert.equal(await prepareRefund(refundDelivery.id, 100001), null);
+    assert.equal(await prepareRefund(refundDelivery.id, 50001, 50000), null);
+
+    const preparedRefund = await prepareRefund(refundDelivery.id, 50000, 60000);
+    assert.ok(preparedRefund);
+    assert.equal(preparedRefund.payout?.status, "CANCELLED");
   });
 }
 
