@@ -401,10 +401,29 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
       const estimatedTotalMinor = buyOrders.rows.reduce((s: number, r: any) => s + Number(r.purchase_budget_minor), 0)
         + deliveries.rows.reduce((s: number, r: any) => s + Number(r.quote_total_minor ?? 0), 0);
 
-      if (member.business.per_order_limit_minor > 0 && estimatedTotalMinor > Number(member.business.per_order_limit_minor)) {
+      const perOrderLimitMinor = Number(member.business.per_order_limit_minor);
+      const oversizedBuyOrder = buyOrders.rows.find((row: any) => perOrderLimitMinor > 0 && Number(row.purchase_budget_minor) > perOrderLimitMinor);
+      const oversizedDelivery = deliveries.rows.find((row: any) => perOrderLimitMinor > 0 && Number(row.quote_total_minor ?? 0) > perOrderLimitMinor);
+      if (oversizedBuyOrder || oversizedDelivery) {
         await client.query("ROLLBACK");
-        await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "DISPATCH_LIMIT_EXCEEDED" });
-        return res.status(403).json({ error: "Dispatch plan exceeds the business per-order approval limit" });
+        await audit({
+          userId,
+          plan,
+          capability: "ACTION",
+          action,
+          allowed: false,
+          reason: "PER_ORDER_LIMIT_EXCEEDED",
+          metadata: {
+            businessId: parsed.data.businessId,
+            buyOrderId: oversizedBuyOrder?.id ?? null,
+            deliveryId: oversizedDelivery?.id ?? null,
+            perOrderLimitMinor
+          }
+        });
+        return res.status(403).json({
+          error: "One or more items in the dispatch plan exceed the business per-order limit",
+          code: "PER_ORDER_LIMIT_EXCEEDED"
+        });
       }
 
       const monthlySpend = await client.query(
