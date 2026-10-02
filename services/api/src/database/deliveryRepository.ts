@@ -813,6 +813,27 @@ export async function markPayoutReleased(deliveryId: string, providerReference: 
   return result.rows[0] ? rowToPayout(result.rows[0]) : null;
 }
 
+export async function flagPayoutReconciliationMismatch(
+  providerReference: string,
+  failureReason: string,
+  providerAmountMinor?: number,
+  providerCurrency?: string
+): Promise<PayoutRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `UPDATE payouts
+        SET provider='paystack',
+            provider_status='amount_mismatch',
+            failure_reason=$2,
+            updated_at=now()
+      WHERE provider_reference=$1
+        AND status='PROCESSING'
+      RETURNING *`,
+    [providerReference, failureReason]
+  );
+  return result.rows[0] ? rowToPayout(result.rows[0]) : null;
+}
+
 export async function updatePayoutProviderStatus(
   providerReference: string,
   status: "RELEASED" | "FAILED" | "CANCELLED",
