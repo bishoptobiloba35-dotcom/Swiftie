@@ -4,7 +4,7 @@ import { z } from "zod";
 import { pool } from "./database/db.js";
 import { requireAuth } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
-import { getPrivateObject, putPrivateObject } from "./storage.js";
+import { deletePrivateObject, getPrivateObject, putPrivateObject } from "./storage.js";
 
 const router = Router();
 
@@ -219,16 +219,33 @@ router.post("/buy-orders/:id/purchase", requireAuth("AGENT"), async (req, res) =
     return res.status(409).json({ error: "Customer payment record is unavailable for reconciliation", code: "PAYMENT_RECONCILIATION_REQUIRED" });
   }
   const unusedAuthorizationMinor = Math.max(0, Number(payment.amount_minor) - parsed.data.actualPurchaseMinor);
-  const result = await pool.query(
-    `UPDATE buy_orders
-        SET actual_purchase_minor=$2, purchase_receipt_key=COALESCE($3,purchase_receipt_key),
-            unused_authorization_minor=$5,
-            purchased_at=now(), status='PURCHASED', updated_at=now()
-      WHERE id=$1 AND agent_id=$4 AND status='PURCHASING' AND payment_status='HELD'
-      RETURNING *`,
-    [id, parsed.data.actualPurchaseMinor, receiptKey, agent.id, unusedAuthorizationMinor]
-  );
-  if (!result.rows[0]) return res.status(409).json({ error: "Order changed before purchase could be recorded" });
+  let result;
+  try {
+    result = await pool.query(
+      `UPDATE buy_orders
+          SET actual_purchase_minor=$2, purchase_receipt_key=COALESCE($3,purchase_receipt_key),
+              unused_authorization_minor=$5,
+              purchased_at=now(), status='PURCHASED', updated_at=now()
+        WHERE id=$1 AND agent_id=$4 AND status='PURCHASING' AND payment_status='HELD'
+        RETURNING *`,
+      [id, parsed.data.actualPurchaseMinor, receiptKey, agent.id, unusedAuthorizationMinor]
+    );
+  } catch (error) {
+    if (receiptKey) {
+      try { await deletePrivateObject(receiptKey); } catch (cleanupError) {
+        console.error(JSON.stringify({ event: "buy_order_receipt_cleanup_failed", buyOrderId: id, receiptKey, error: cleanupError instanceof Error ? cleanupError.message : "unknown" }));
+      }
+    }
+    throw error;
+  }
+  if (!result.rows[0]) {
+    if (receiptKey) {
+      try { await deletePrivateObject(receiptKey); } catch (cleanupError) {
+        console.error(JSON.stringify({ event: "buy_order_receipt_cleanup_failed", buyOrderId: id, receiptKey, error: cleanupError instanceof Error ? cleanupError.message : "unknown" }));
+      }
+    }
+    return res.status(409).json({ error: "Order changed before purchase could be recorded" });
+  }
 
   await pool.query(
     "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'PURCHASE_RECORDED',$3::jsonb)",
