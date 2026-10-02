@@ -7,7 +7,7 @@ import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
-import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout } from "./database/deliveryRepository.js";
+import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout, flagPayoutReconciliationMismatch } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
 import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, listSupportTicketMessages, recordAdminSupportReply, prepareRefund, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
@@ -1905,6 +1905,22 @@ async function reconcileProcessingPaystackPayouts(): Promise<void> {
       const providerCurrency = data.data.currency ? String(data.data.currency) : undefined;
 
       if (providerStatus === "success") {
+        const expectedAmount = Number(payout.amount_minor);
+        const expectedCurrency = String(payout.currency);
+        if (providerAmount !== expectedAmount || providerCurrency !== expectedCurrency) {
+          await flagPayoutReconciliationMismatch(
+            providerReference,
+            `Paystack transfer amount/currency mismatch: expected ${expectedAmount} ${expectedCurrency}, received ${providerAmount ?? "unknown"} ${providerCurrency ?? "unknown"}`,
+            providerAmount,
+            providerCurrency
+          );
+          await recordDeliveryEvent({
+            deliveryId: payout.delivery_id,
+            eventType: "PAYOUT_RECONCILIATION_MISMATCH",
+            metadata: { provider: "paystack", reference: providerReference, expectedAmount, expectedCurrency, providerAmount, providerCurrency, source: "reconciliation" }
+          }).catch(() => {});
+          continue;
+        }
         await updatePayoutProviderStatus(providerReference, "RELEASED", null, providerAmount, providerCurrency);
         await recordDeliveryEvent({
           deliveryId: payout.delivery_id,
