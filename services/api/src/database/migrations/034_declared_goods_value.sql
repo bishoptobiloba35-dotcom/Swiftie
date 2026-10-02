@@ -1,7 +1,7 @@
 ALTER TABLE deliveries
   ADD COLUMN IF NOT EXISTS declared_value_minor BIGINT;
 
-DO $
+DO $swiftdrop$
 BEGIN
   IF NOT EXISTS (
     SELECT 1
@@ -13,7 +13,7 @@ BEGIN
       ADD CONSTRAINT deliveries_declared_value_positive
       CHECK (declared_value_minor IS NOT NULL AND declared_value_minor > 0);
   END IF;
-END $;
+END $swiftdrop$;
 
 CREATE INDEX IF NOT EXISTS idx_deliveries_declared_value
   ON deliveries(declared_value_minor);
