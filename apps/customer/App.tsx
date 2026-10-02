@@ -543,6 +543,17 @@ export default function App() {
     </ScrollView></SafeAreaView>;
   }
 
+  if (homeSection === "TRACK") {
+    return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}>
+      <View style={styles.header}><View><Text style={styles.logo}>Track Your Order</Text><Text style={styles.subtitle}>Follow pickup evidence, GPS movement, arrival and receiver confirmation.</Text></View><Pressable onPress={() => setHomeSection("HOME")}><Text style={styles.link}>Home</Text></Pressable></View>
+      <TextInput style={styles.input} placeholder="Tracking code" value={trackingCode} onChangeText={setTrackingCode} autoCapitalize="characters" />
+      <TextInput style={styles.input} placeholder="Receiver phone number" value={trackingPhone} onChangeText={setTrackingPhone} keyboardType="phone-pad" />
+      <Pressable style={styles.primary} onPress={() => void track()}><Text style={styles.primaryText}>Track order</Text></Pressable>
+      {delivery && <View style={styles.card}><Text style={styles.eyebrow}>LIVE TRACKING</Text><Text style={styles.heroTitle}>{delivery.status.replaceAll("_"," ")}</Text><Text>Pickup: {delivery.pickup.formattedAddress}</Text><Text>Destination: {delivery.dropoff.formattedAddress}</Text>{delivery.pickupPhotoUrl && <Text style={styles.done}>✓ Pickup evidence recorded</Text>}{location && <Text style={styles.done}>✓ GPS movement available</Text>}{delivery.status === "ARRIVED" && <Text style={styles.muted}>Arrival recorded. Receiver PIN confirmation is required for completion.</Text>}{delivery.status === "DELIVERED" && <Text style={styles.done}>✓ Delivered and receiver PIN verified</Text>}</View>}
+      <Pressable style={styles.secondary} onPress={() => setHomeSection("HOME")}><Text style={styles.secondaryText}>Back to home</Text></Pressable>
+    </ScrollView></SafeAreaView>;
+  }
+
   if (homeSection === "SHOP") {
     return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}>
       <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop Shop</Text><Text style={styles.subtitle}>Marketplace with seller-anchored product pages.</Text></View><Pressable onPress={() => setHomeSection("HOME")}><Text style={styles.link}>Home</Text></Pressable></View>
@@ -570,7 +581,7 @@ export default function App() {
   }
 
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.container}>
-    <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.subtitle}>Send it. Track it. Receive it.</Text></View><View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => { setShowSupport(v => !v); void loadSupportTickets(); }}><Text style={styles.link}>Support</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View></View>
+    <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.subtitle}>Place your order. Track every movement.</Text></View><Pressable onPress={() => setHomeSection("HOME")}><Text style={styles.link}>Home</Text></Pressable></View><View style={styles.header}><View></View><View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => { setShowSupport(v => !v); void loadSupportTickets(); }}><Text style={styles.link}>Support</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View></View>
     {showNotifications && <View style={styles.card}><View style={styles.header}><Text style={styles.heading}>Notifications</Text><Pressable onPress={() => void loadNotifications()}><Text>Refresh</Text></Pressable></View>{notifications.length === 0 ? <Text style={styles.muted}>No notifications.</Text> : notifications.map(item => <Pressable key={item.id} style={styles.notification} onPress={() => void markNotificationRead(item.id)}><Text style={styles.notificationTitle}>{item.title}</Text><Text>{item.body}</Text><Text style={styles.muted}>{new Date(item.created_at).toLocaleString()} · {item.read_at ? "Read" : "Tap to mark read"}</Text></Pressable>)}</View>}
     <View style={styles.card}>
       <Text style={styles.eyebrow}>SWIFT AI</Text>
