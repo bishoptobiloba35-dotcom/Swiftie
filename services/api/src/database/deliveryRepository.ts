@@ -1026,9 +1026,25 @@ export async function prepareRefund(deliveryId: string, refundAmountMinor: numbe
       );
       payoutRow = payoutResult.rows[0] ?? existingPayout;
     }
+    const reservationReference = "pending-" + randomUUID().replaceAll("-", "");
+    const reservedPayment = await client.query(
+      `UPDATE payments
+          SET refund_reference=$2,
+              refund_status='pending',
+              refund_amount_minor=$3,
+              refund_updated_at=now(),
+              updated_at=now()
+        WHERE id=$1
+        RETURNING *`,
+      [paymentRow.id, reservationReference, refundAmountMinor]
+    );
+    if (!reservedPayment.rows[0]) {
+      await client.query('ROLLBACK');
+      return null;
+    }
     await client.query('COMMIT');
     return {
-      payment: paymentFromRow(paymentRow),
+      payment: paymentFromRow(reservedPayment.rows[0]),
       payout: payoutRow ? rowToPayout(payoutRow) : null,
       dispute: rowToDispute(disputeRow)
     };
@@ -1127,7 +1143,7 @@ export async function confirmReceiverAndReleaseEscrow(id: string, receiverPhone:
     await client.query('BEGIN');
     const result = await client.query(`SELECT d.*, p.amount_minor, p.currency AS payment_currency, p.status AS payment_status FROM deliveries d JOIN payments p ON p.delivery_id=d.id WHERE d.id=$1 FOR UPDATE`, [id]);
     const row = result.rows[0];
-    if (!row || row.receiver_phone !== receiverPhone || row.status !== 'ARRIVED' || row.payment_status !== 'HELD' || !verifyPin(pin, row.receiver_pin_hash) || !row.driver_id) {
+    if (!row || row.receiver_phone !== receiverPhone || row.status !== 'ARRIVED' || row.payment_status !== 'HELD' || ['pending','processing','needs-attention'].includes(String(row.refund_status ?? '')) || !verifyPin(pin, row.receiver_pin_hash) || !row.driver_id) {
       await client.query('ROLLBACK');
       return null;
     }
