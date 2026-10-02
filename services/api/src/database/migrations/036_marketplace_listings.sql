@@ -1,4 +1,5 @@
 -- SwiftDrop seller-anchored marketplace listings.
+-- Seller controls the delivery mode and the consumer-facing final price includes delivery.
 CREATE TABLE IF NOT EXISTS marketplace_seller_profiles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
