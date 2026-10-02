@@ -7,6 +7,7 @@ export type ApiDelivery = {
   weightKg: number;
   dimensionsCm: { length: number; width: number; height: number };
   isPerishable: boolean;
+  declaredValueMinor: number;
   pickup: { label: string; formattedAddress: string; location?: { latitude: number; longitude: number; recordedAt?: string } };
   dropoff: { label: string; formattedAddress: string; location?: { latitude: number; longitude: number; recordedAt?: string } };
   quote?: {
@@ -53,6 +54,7 @@ export type CreateDeliveryInput = {
   weightKg: number;
   dimensionsCm: { length: number; width: number; height: number };
   isPerishable: boolean;
+  declaredValueMinor: number;
   pickup: { label: string; formattedAddress: string; latitude: number; longitude: number };
   dropoff: { label: string; formattedAddress: string; latitude: number; longitude: number };
   pickupDropOffLocationId?: string;
