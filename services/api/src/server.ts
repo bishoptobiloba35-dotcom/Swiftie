@@ -137,6 +137,7 @@ const createDeliverySchema = z.object({
   weightKg: z.number().positive().max(1000),
   dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
   isPerishable: z.boolean(),
+  declaredValueMinor: z.number().int().positive().max(10000000000),
   pickup: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   dropoff: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   pickupDropOffLocationId: z.string().uuid().optional(),
@@ -559,6 +560,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
         weightKg: input.weightKg,
         dimensionsCm: input.dimensionsCm,
         isPerishable: input.isPerishable,
+        declaredValueMinor: input.declaredValueMinor,
         quote: input.quote
       });
       if (input.pickupDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'PICKUP',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.pickupDropOffLocationId]);
