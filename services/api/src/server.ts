@@ -1352,6 +1352,7 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
     });
     const payload = await response.json() as any;
     if (!response.ok || !payload.status) {
+      await markPaymentRefund(routeParam(req.params.id, "id"), prepared.payment.refundReference ?? "", "failed", refundAmountMinor);
       await recordAdminCaseAudit({ deliveryId: routeParam(req.params.id, "id"), disputeId: prepared.dispute.id, adminUserId: identity(req), action: "REFUND_INITIATION_FAILED", note, metadata: { provider: "paystack", amountMinor: refundAmountMinor, error: payload.message ?? "Paystack refund failed" } });
       return res.status(502).json({ error: payload.message ?? "Paystack could not initiate the refund" });
     }
