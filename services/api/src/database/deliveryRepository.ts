@@ -959,12 +959,16 @@ export async function prepareRefund(deliveryId: string, refundAmountMinor: numbe
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const deliveryLock = await client.query(
+      `SELECT id FROM deliveries WHERE id=$1 FOR UPDATE`,
+      [deliveryId]
+    );
+    if (!deliveryLock.rowCount) {
+      await client.query('ROLLBACK');
+      return null;
+    }
     const paymentResult = await client.query(
-      `SELECT p.*, d.id AS delivery_id
-         FROM payments p
-         JOIN deliveries d ON d.id=p.delivery_id
-        WHERE p.delivery_id=$1
-        FOR UPDATE`,
+      `SELECT * FROM payments WHERE delivery_id=$1 FOR UPDATE`,
       [deliveryId]
     );
     const paymentRow = paymentResult.rows[0];
