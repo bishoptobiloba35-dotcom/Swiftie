@@ -954,7 +954,7 @@ export async function markDisputeUnderReview(deliveryId: string): Promise<Disput
   return result.rows[0] ? rowToDispute(result.rows[0]) : null;
 }
 
-export async function prepareRefund(deliveryId: string, refundAmountMinor: number): Promise<{ payment: PaymentRecord; payout: PayoutRecord | null; dispute: DisputeRecord } | null> {
+export async function prepareRefund(deliveryId: string, refundAmountMinor: number, verifiedLossMinor?: number): Promise<{ payment: PaymentRecord; payout: PayoutRecord | null; dispute: DisputeRecord } | null> {
   if (!pool) return null;
   const client = await pool.connect();
   try {
@@ -977,6 +977,12 @@ export async function prepareRefund(deliveryId: string, refundAmountMinor: numbe
       await client.query('ROLLBACK');
       return null;
     }
+    const deliveryValueResult = await client.query(`SELECT declared_value_minor FROM deliveries WHERE id=$1 FOR UPDATE`, [deliveryId]);
+    const declaredValueMinor = Number(deliveryValueResult.rows[0]?.declared_value_minor ?? 0);
+    if (!Number.isInteger(declaredValueMinor) || declaredValueMinor < 1) { await client.query('ROLLBACK'); return null; }
+    if (verifiedLossMinor != null && (!Number.isInteger(verifiedLossMinor) || verifiedLossMinor < 0 || verifiedLossMinor > declaredValueMinor)) { await client.query('ROLLBACK'); return null; }
+    const claimCeilingMinor = verifiedLossMinor == null ? declaredValueMinor : verifiedLossMinor;
+    if (refundAmountMinor > claimCeilingMinor) { await client.query('ROLLBACK'); return null; }
     const totalRefundedMinor = Number(paymentRow.total_refunded_minor ?? 0);
     if (paymentRow.status === 'REFUNDED' || ['processed','processing','pending'].includes(String(paymentRow.refund_status ?? ''))) {
       await client.query('ROLLBACK');
