@@ -17,11 +17,24 @@ CREATE INDEX IF NOT EXISTS idx_delivery_attempts_delivery_time
   ON delivery_attempts(delivery_id, created_at DESC);
 
 ALTER TABLE deliveries
-  ADD COLUMN IF NOT EXISTS exception_status TEXT NOT NULL DEFAULT 'NONE'
-    CHECK (exception_status IN ('NONE','FAILED_ATTEMPT','RESCHEDULED','RETURN_REQUESTED','RETURN_IN_TRANSIT','RETURNED')),
+  ADD COLUMN IF NOT EXISTS exception_status TEXT NOT NULL DEFAULT 'NONE',
   ADD COLUMN IF NOT EXISTS next_delivery_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS return_reason TEXT,
   ADD COLUMN IF NOT EXISTS returned_at TIMESTAMPTZ;
+
+DO $
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_constraint
+     WHERE conname = 'deliveries_exception_status_check'
+       AND conrelid = 'deliveries'::regclass
+  ) THEN
+    ALTER TABLE deliveries
+      ADD CONSTRAINT deliveries_exception_status_check
+      CHECK (exception_status IN ('NONE','FAILED_ATTEMPT','RESCHEDULED','RETURN_REQUESTED','RETURN_IN_TRANSIT','RETURNED'));
+  END IF;
+END $;
 
 CREATE INDEX IF NOT EXISTS idx_deliveries_exception_status
   ON deliveries(exception_status, next_delivery_at);
