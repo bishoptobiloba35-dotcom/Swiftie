@@ -1,9 +1,19 @@
 ALTER TABLE deliveries
   ADD COLUMN IF NOT EXISTS declared_value_minor BIGINT;
 
-ALTER TABLE deliveries
-  ADD CONSTRAINT deliveries_declared_value_positive
-  CHECK (declared_value_minor IS NOT NULL AND declared_value_minor > 0);
+DO $swiftdrop$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_constraint
+     WHERE conname = 'deliveries_declared_value_positive'
+       AND conrelid = 'deliveries'::regclass
+  ) THEN
+    ALTER TABLE deliveries
+      ADD CONSTRAINT deliveries_declared_value_positive
+      CHECK (declared_value_minor IS NOT NULL AND declared_value_minor > 0);
+  END IF;
+END $swiftdrop$;
 
 CREATE INDEX IF NOT EXISTS idx_deliveries_declared_value
   ON deliveries(declared_value_minor);

@@ -954,17 +954,21 @@ export async function markDisputeUnderReview(deliveryId: string): Promise<Disput
   return result.rows[0] ? rowToDispute(result.rows[0]) : null;
 }
 
-export async function prepareRefund(deliveryId: string, refundAmountMinor: number): Promise<{ payment: PaymentRecord; payout: PayoutRecord | null; dispute: DisputeRecord } | null> {
+export async function prepareRefund(deliveryId: string, refundAmountMinor: number, verifiedLossMinor?: number): Promise<{ payment: PaymentRecord; payout: PayoutRecord | null; dispute: DisputeRecord } | null> {
   if (!pool) return null;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const deliveryLock = await client.query(
+      `SELECT id FROM deliveries WHERE id=$1 FOR UPDATE`,
+      [deliveryId]
+    );
+    if (!deliveryLock.rowCount) {
+      await client.query('ROLLBACK');
+      return null;
+    }
     const paymentResult = await client.query(
-      `SELECT p.*, d.id AS delivery_id
-         FROM payments p
-         JOIN deliveries d ON d.id=p.delivery_id
-        WHERE p.delivery_id=$1
-        FOR UPDATE`,
+      `SELECT * FROM payments WHERE delivery_id=$1 FOR UPDATE`,
       [deliveryId]
     );
     const paymentRow = paymentResult.rows[0];
@@ -977,6 +981,12 @@ export async function prepareRefund(deliveryId: string, refundAmountMinor: numbe
       await client.query('ROLLBACK');
       return null;
     }
+    const deliveryValueResult = await client.query(`SELECT declared_value_minor FROM deliveries WHERE id=$1 FOR UPDATE`, [deliveryId]);
+    const declaredValueMinor = Number(deliveryValueResult.rows[0]?.declared_value_minor ?? 0);
+    if (!Number.isInteger(declaredValueMinor) || declaredValueMinor < 1) { await client.query('ROLLBACK'); return null; }
+    if (verifiedLossMinor != null && (!Number.isInteger(verifiedLossMinor) || verifiedLossMinor < 0 || verifiedLossMinor > declaredValueMinor)) { await client.query('ROLLBACK'); return null; }
+    const claimCeilingMinor = verifiedLossMinor == null ? declaredValueMinor : verifiedLossMinor;
+    if (refundAmountMinor > claimCeilingMinor) { await client.query('ROLLBACK'); return null; }
     const totalRefundedMinor = Number(paymentRow.total_refunded_minor ?? 0);
     if (paymentRow.status === 'REFUNDED' || ['processed','processing','pending'].includes(String(paymentRow.refund_status ?? ''))) {
       await client.query('ROLLBACK');
@@ -1084,9 +1094,9 @@ export async function transitionDelivery(id: string, from: string, to: string, d
      WHERE id=$1
        AND status=$4
        AND (
-         ($4='PAYMENT_AUTHORIZED' AND driver_id IS NULL AND $3 IS NOT NULL)
-         OR ($4<>'PAYMENT_AUTHORIZED' AND $3 IS NOT NULL AND driver_id=$3)
-         OR ($3 IS NULL)
+         ($4='PAYMENT_AUTHORIZED' AND driver_id IS NULL AND $3::uuid IS NOT NULL)
+         OR ($4<>'PAYMENT_AUTHORIZED' AND $3::uuid IS NOT NULL AND driver_id=$3::uuid)
+         OR ($3::uuid IS NULL)
        )
      RETURNING *`,
     [id, to, driverId ?? null, from]
@@ -1115,7 +1125,7 @@ export async function confirmReceiverAndReleaseEscrow(id: string, receiverPhone:
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const result = await client.query(`SELECT d.*, p.amount_minor, p.currency AS payment_currency, p.status AS payment_status FROM deliveries d LEFT JOIN payments p ON p.delivery_id=d.id WHERE d.id=$1 FOR UPDATE`, [id]);
+    const result = await client.query(`SELECT d.*, p.amount_minor, p.currency AS payment_currency, p.status AS payment_status FROM deliveries d JOIN payments p ON p.delivery_id=d.id WHERE d.id=$1 FOR UPDATE`, [id]);
     const row = result.rows[0];
     if (!row || row.receiver_phone !== receiverPhone || row.status !== 'ARRIVED' || row.payment_status !== 'HELD' || !verifyPin(pin, row.receiver_pin_hash) || !row.driver_id) {
       await client.query('ROLLBACK');
