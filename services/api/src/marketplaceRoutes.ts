@@ -112,13 +112,30 @@ router.post("/marketplace/listings/:id/checkout", requireAuth("CUSTOMER","AGENT"
     if (!listing || listing.status !== "PUBLISHED") { await client.query("ROLLBACK"); return res.status(404).json({ error: "Listing is not available" }); }
     if (Number(listing.stock_quantity) < quantity) { await client.query("ROLLBACK"); return res.status(409).json({ error: "Not enough stock available" }); }
     const total = Number(listing.final_price_minor) * quantity;
+    const stockUpdate = await client.query(
+      `UPDATE marketplace_listings
+          SET stock_quantity = stock_quantity - $2,
+              status = CASE WHEN stock_quantity - $2 = 0 THEN 'SOLD_OUT' ELSE status END,
+              updated_at = now()
+        WHERE id=$1 AND status='PUBLISHED' AND stock_quantity >= $2
+        RETURNING stock_quantity,status`,
+      [listing.id, quantity]
+    );
+    if (!stockUpdate.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "The requested quantity is no longer available" });
+    }
     const order = await client.query(
       `INSERT INTO marketplace_orders(listing_id,buyer_user_id,seller_user_id,quantity,unit_final_price_minor,total_minor,currency)
        VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
       [listing.id,identity(req),listing.seller_user_id,quantity,listing.final_price_minor,total,listing.currency]
     );
     await client.query("COMMIT");
-    return res.status(201).json({ order: order.rows[0], message: "Checkout created. Payment authorization is the next step." });
+    return res.status(201).json({
+      order: order.rows[0],
+      stockRemaining: Number(stockUpdate.rows[0].stock_quantity),
+      message: "Checkout created. Payment authorization is the next step."
+    });
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally { client.release(); }
 });
