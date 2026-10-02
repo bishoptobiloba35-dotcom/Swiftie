@@ -77,14 +77,14 @@ if (!db) {
         sizeFareMinor: 0,
         perishableSurchargeMinor: 0,
         fuelReferenceMinor: 50000,
-        protectionReserveMinor: 0,
+        protectionReserveMinor: 10000,
         pricingVersion: 1,
         serviceFeeMinor: 3900,
-        totalMinor: 81900
+        totalMinor: 91900
       }
     });
 
-    await createPayment({ deliveryId: delivery.id, provider: "paystack", amountMinor: 81900 });
+    await createPayment({ deliveryId: delivery.id, provider: "paystack", amountMinor: 91900 });
     const authorizedPayment = await updatePaymentStatus(delivery.id, "AUTHORIZED", "integration-payment");
     assert.ok(authorizedPayment);
     assert.equal(authorizedPayment.status, "AUTHORIZED");
