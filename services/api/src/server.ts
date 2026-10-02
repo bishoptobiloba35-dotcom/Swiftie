@@ -19,6 +19,7 @@ import { getPrivateObject, objectStorageEnabled, putPrivateObject } from "./stor
 import { enqueueNotification, processNotificationOutbox, processNotificationPushReceipts } from "./notificationOutbox.js";
 import businessAiRoutes from "./businessAiRoutes.js";
 import agentRoutes from "./agentRoutes.js";
+import marketplaceRoutes from "./marketplaceRoutes.js";
 import { processSupportAiBatch } from "./supportAiAgent.js";
 import recurringDispatchRoutes from "./recurringDispatchRoutes.js";
 import deliveryExceptionRoutes from "./deliveryExceptionRoutes.js";
@@ -72,6 +73,7 @@ app.use((req, res, next) => {
 app.use("/api/auth", authRoutes);
 app.use("/api", businessAiRoutes);
 app.use("/api", agentRoutes);
+app.use("/api", marketplaceRoutes);
 app.use("/api", recurringDispatchRoutes);
 app.use("/api", deliveryExceptionRoutes);
 
