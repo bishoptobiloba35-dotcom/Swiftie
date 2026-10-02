@@ -155,6 +155,9 @@ const createDeliverySchema = z.object({
     weightFareMinor: z.number().int().nonnegative(),
     sizeFareMinor: z.number().int().nonnegative(),
     perishableSurchargeMinor: z.number().int().nonnegative(),
+    fuelReferenceMinor: z.number().int().positive(),
+    protectionReserveMinor: z.number().int().nonnegative(),
+    pricingVersion: z.number().int().positive(),
     serviceFeeMinor: z.number().int().nonnegative(),
     totalMinor: z.number().int().positive()
   })
