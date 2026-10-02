@@ -519,7 +519,7 @@ export default function App() {
       <Text>Weight: ₦{(quote.weightFareMinor / 100).toLocaleString()}</Text>
       <Text>Size/handling: ₦{(quote.sizeFareMinor / 100).toLocaleString()}</Text>
       {quote.perishableSurchargeMinor > 0 && <Text>Perishable/food surcharge: ₦{(quote.perishableSurchargeMinor / 100).toLocaleString()}</Text>}
-      <Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
+      <Text>Fuel reference: ₦{(quote.fuelReferenceMinor / 100).toLocaleString()} (2 litres)</Text><Text>Refundable protection reserve: ₦{(quote.protectionReserveMinor / 100).toLocaleString()}</Text><Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
       <Text style={styles.code}>Total: ₦{(quote.totalMinor / 100).toLocaleString()}</Text>
     </View>}
     <Text style={styles.hint}>Escrow protection: your payment is held after successful payment and is only released for courier payout after the receiver confirms receipt.</Text>
