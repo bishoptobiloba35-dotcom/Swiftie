@@ -14,7 +14,7 @@ const api = new SwiftDropApi(API_URL);
 
 export default function App() {
   const [signedIn, setSignedIn] = React.useState(false);
-  const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "TRACK" | "SHOP">("HOME");
+  const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "TRACK" | "SHOP" | "LOCATIONS">("HOME");
   const [marketplaceListings, setMarketplaceListings] = React.useState<any[]>([]);
   const [selectedListing, setSelectedListing] = React.useState<any | null>(null);
   const [recommendedListings, setRecommendedListings] = React.useState<any[]>([]);
@@ -133,6 +133,18 @@ export default function App() {
 
   async function loadNotifications() {
     try { setNotifications(await api.notifications()); } catch {}
+  }
+
+  async function openNearbyDropOffLocations() {
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") throw new Error("Location permission is required to find nearby SwiftDrop partner locations.");
+      const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setPickupLat(String(current.coords.latitude)); setPickupLng(String(current.coords.longitude));
+      const locations = await api.nearbyDropOffLocations(current.coords.latitude, current.coords.longitude, 25);
+      setPickupDropOffLocations(locations);
+      setHomeSection("LOCATIONS");
+    } catch (error) { Alert.alert("Drop-off locations", error instanceof Error ? error.message : "Unable to load nearby locations"); }
   }
 
   async function loadMarketplace(query = "") {
@@ -516,8 +528,8 @@ export default function App() {
           <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>📦</Text><Text style={styles.tileTitle}>Send within Nigeria</Text></Pressable>
           <Pressable style={styles.actionTile} onPress={() => { setHomeSection("ORDER"); }}><Text style={styles.tileEmoji}>🛵</Text><Text style={styles.tileTitle}>Hire an Errand</Text></Pressable>
           <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>⚡</Text><Text style={styles.tileTitle}>Express drop off</Text></Pressable>
-          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>💳</Text><Text style={styles.tileTitle}>Pay for Order</Text></Pressable>
-          <Pressable style={styles.actionTile} onPress={() => { setHomeSection("ORDER"); void useCurrentPickupLocation(); }}><Text style={styles.tileEmoji}>📍</Text><Text style={styles.tileTitle}>Drop-off locations</Text><Text style={styles.tileSub}>Merchant & partner points</Text></Pressable>
+          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>💳</Text><Text style={styles.tileTitle}>Pay Shipment</Text></Pressable>
+          <Pressable style={styles.actionTile} onPress={() => void openNearbyDropOffLocations()}><Text style={styles.tileEmoji}>📍</Text><Text style={styles.tileTitle}>Drop-off locations</Text><Text style={styles.tileSub}>Merchant & partner points</Text></Pressable>
         </View>
       </View>
 
@@ -540,6 +552,14 @@ export default function App() {
         <Pressable style={styles.navItem} onPress={() => { setHomeSection("SHOP"); void loadMarketplace(); }}><Text>🛍</Text><Text>Shop</Text></Pressable>
         <Pressable style={styles.navItem} onPress={() => setShowSupport(v => !v)}><Text>?</Text><Text>Support</Text></Pressable>
       </View>
+    </ScrollView></SafeAreaView>;
+  }
+
+  if (homeSection === "LOCATIONS") {
+    return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}>
+      <View style={styles.header}><View><Text style={styles.logo}>Nearby locations</Text><Text style={styles.subtitle}>SwiftDrop merchant and partner pickup / drop-off points around you.</Text></View><Pressable onPress={() => setHomeSection("HOME")}><Text style={styles.link}>Home</Text></Pressable></View>
+      {pickupDropOffLocations.length === 0 ? <View style={styles.card}><Text style={styles.homeHeading}>No active partner locations found nearby.</Text><Text style={styles.muted}>Try again later or use your address for a direct pickup.</Text><Pressable style={styles.primary} onPress={() => void openNearbyDropOffLocations()}><Text style={styles.primaryText}>Search again</Text></Pressable></View> : pickupDropOffLocations.map(item => <Pressable key={item.id} style={styles.locationCard} onPress={() => { chooseDropOffLocation(item,"pickup"); setHomeSection("ORDER"); }}><Text style={styles.homeHeading}>{item.name}</Text><Text>{item.address}</Text><Text style={styles.muted}>{item.business_name ?? "SwiftDrop merchant partner"} · {Number(item.distanceKm).toFixed(1)} km away</Text><Text style={styles.done}>Capacity {item.capacity} · Tap to use for pickup</Text></Pressable>)}
+      <Pressable style={styles.secondary} onPress={() => setHomeSection("ORDER")}><Text style={styles.secondaryText}>Use a regular address instead</Text></Pressable>
     </ScrollView></SafeAreaView>;
   }
 
@@ -778,6 +798,7 @@ const styles = StyleSheet.create({
   sellerCard: { borderWidth: 1, borderColor: "#DDE5DF", backgroundColor: "#F8FAF8", borderRadius: 18, padding: 15, gap: 6 },
   recommendCard: { borderWidth: 1, borderColor: "#E0E5E1", borderRadius: 14, padding: 13, backgroundColor: "#FFFFFF" },
   shopGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  locationCard: { borderWidth: 1, borderColor: "#DDE5DF", backgroundColor: "#FFFFFF", borderRadius: 20, padding: 17, gap: 8 },
   listingCard: { width: "48%", borderWidth: 1, borderColor: "#E0E5E1", borderRadius: 18, padding: 14, backgroundColor: "#FFFFFF", minHeight: 205 },
   bottomNav: { flexDirection: "row", justifyContent: "space-around", paddingTop: 14, paddingBottom: 8, borderTopWidth: 1, borderTopColor: "#DDDCD6", backgroundColor: "#FFFDF8", borderRadius: 18 },
   navItem: { alignItems: "center", gap: 3, color: "#737B75" },
