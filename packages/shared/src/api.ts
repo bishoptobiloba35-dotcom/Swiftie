@@ -19,6 +19,9 @@ export type ApiDelivery = {
     weightFareMinor: number;
     sizeFareMinor: number;
     perishableSurchargeMinor: number;
+    fuelReferenceMinor: number;
+    protectionReserveMinor: number;
+    pricingVersion: number;
     serviceFeeMinor: number;
     totalMinor: number;
   };
@@ -68,6 +71,9 @@ export type CreateDeliveryInput = {
     weightFareMinor: number;
     sizeFareMinor: number;
     perishableSurchargeMinor: number;
+    fuelReferenceMinor: number;
+    protectionReserveMinor: number;
+    pricingVersion: number;
     serviceFeeMinor: number;
     totalMinor: number;
   };
@@ -198,6 +204,22 @@ export class SwiftDropApi {
     if (!response.ok) throw new Error(data.error ?? "Unable to mark notification as read");
   }
 
+
+  async marketplaceListings(query = ""): Promise<any[]> {
+    const response = await fetch(this.baseUrl + "/api/marketplace/listings" + (query ? "?q=" + encodeURIComponent(query) : ""));
+    const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Unable to load SwiftDrop marketplace");
+    return data.listings ?? [];
+  }
+  async marketplaceListing(id: string): Promise<{ listing: any; recommended: any[] }> {
+    const response = await fetch(this.baseUrl + "/api/marketplace/listings/" + encodeURIComponent(id));
+    const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Unable to load marketplace listing");
+    return data;
+  }
+  async checkoutMarketplaceListing(id: string, quantity = 1): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/marketplace/listings/" + encodeURIComponent(id) + "/checkout", { method: "POST", headers: this.headers(true), body: JSON.stringify({ quantity }) });
+    const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Unable to create checkout");
+    return data;
+  }
   async health(): Promise<{ ok: boolean }> {
     const response = await fetch(this.baseUrl + "/health");
     if (!response.ok) throw new Error("API health check failed");

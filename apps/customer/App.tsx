@@ -14,6 +14,12 @@ const api = new SwiftDropApi(API_URL);
 
 export default function App() {
   const [signedIn, setSignedIn] = React.useState(false);
+  const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "TRACK" | "SHOP">("HOME");
+  const [marketplaceListings, setMarketplaceListings] = React.useState<any[]>([]);
+  const [selectedListing, setSelectedListing] = React.useState<any | null>(null);
+  const [recommendedListings, setRecommendedListings] = React.useState<any[]>([]);
+  const [marketplaceSearch, setMarketplaceSearch] = React.useState("");
+  const [marketplaceLoading, setMarketplaceLoading] = React.useState(false);
   const [authMode, setAuthMode] = React.useState<"login" | "register">("login");
   const [authName, setAuthName] = React.useState("");
   const [authPhone, setAuthPhone] = React.useState("");
@@ -127,6 +133,29 @@ export default function App() {
 
   async function loadNotifications() {
     try { setNotifications(await api.notifications()); } catch {}
+  }
+
+  async function loadMarketplace(query = "") {
+    setMarketplaceLoading(true);
+    try { setMarketplaceListings(await api.marketplaceListings(query)); }
+    catch (error) { Alert.alert("Shop", error instanceof Error ? error.message : "Unable to load SwiftDrop Shop"); }
+    finally { setMarketplaceLoading(false); }
+  }
+
+  async function openMarketplaceListing(id: string) {
+    try {
+      const data = await api.marketplaceListing(id);
+      setSelectedListing(data.listing);
+      setRecommendedListings(data.recommended ?? []);
+    } catch (error) { Alert.alert("Shop", error instanceof Error ? error.message : "Unable to open this product"); }
+  }
+
+  async function checkoutMarketplaceListing() {
+    if (!selectedListing) return;
+    try {
+      const data = await api.checkoutMarketplaceListing(selectedListing.id, 1);
+      Alert.alert("Checkout created", "Final price including delivery: ₦" + (Number(data.order.total_minor) / 100).toLocaleString() + ". Payment authorization is the next step.");
+    } catch (error) { Alert.alert("Checkout", error instanceof Error ? error.message : "Unable to create checkout"); }
   }
 
   async function loadSupportTickets() {
@@ -460,8 +489,99 @@ export default function App() {
     </View></SafeAreaView>;
   }
 
+  if (homeSection === "HOME") {
+    return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}>
+      <View style={styles.heroHeader}>
+        <View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.brandTag}>LOGISTICS · SHOPPING · SERVICES</Text></View>
+        <View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View>
+      </View>
+
+      <Pressable style={styles.trackSearch} onPress={() => setHomeSection("TRACK")}><Text style={styles.trackIcon}>◉</Text><Text style={styles.trackText}>Track Your Order</Text><Text style={styles.trackArrow}>›</Text></Pressable>
+
+      <View style={styles.homeCard}>
+        <Text style={styles.homeHeading}>Get Quote of Order</Text>
+        <View style={styles.homeTwoCol}>
+          <Pressable style={styles.homeChoice} onPress={() => { setHomeSection("ORDER"); }}>
+            <Text style={styles.homeEmoji}>📦</Text><Text style={styles.homeChoiceTitle}>Same state</Text><Text style={styles.homeChoiceSub}>Within your state</Text>
+          </Pressable>
+          <Pressable style={styles.homeChoice} onPress={() => { setHomeSection("ORDER"); }}>
+            <Text style={styles.homeEmoji}>🗺️</Text><Text style={styles.homeChoiceTitle}>Inter state</Text><Text style={styles.homeChoiceSub}>Across Nigerian states</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <View style={styles.homeCard}>
+        <Text style={styles.homeHeading}>Place your order</Text>
+        <View style={styles.actionGrid}>
+          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>📦</Text><Text style={styles.tileTitle}>Send within Nigeria</Text></Pressable>
+          <Pressable style={styles.actionTile} onPress={() => { setHomeSection("ORDER"); }}><Text style={styles.tileEmoji}>🛵</Text><Text style={styles.tileTitle}>Hire an Errand</Text></Pressable>
+          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>⚡</Text><Text style={styles.tileTitle}>Express drop off</Text></Pressable>
+          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>💳</Text><Text style={styles.tileTitle}>Pay for Order</Text></Pressable>
+          <Pressable style={styles.actionTile} onPress={() => { setHomeSection("ORDER"); void useCurrentPickupLocation(); }}><Text style={styles.tileEmoji}>📍</Text><Text style={styles.tileTitle}>Drop-off locations</Text><Text style={styles.tileSub}>Merchant & partner points</Text></Pressable>
+        </View>
+      </View>
+
+      <View style={styles.homeCard}>
+        <View style={styles.sectionHeader}><View><Text style={styles.homeHeading}>SwiftDrop Shop</Text><Text style={styles.muted}>Every product is anchored to its own seller.</Text></View><Pressable onPress={() => { setHomeSection("SHOP"); void loadMarketplace(); }}><Text style={styles.link}>View all</Text></Pressable></View>
+        <View style={styles.shopPreviewRow}>
+          <Pressable style={styles.shopPreview} onPress={() => { setHomeSection("SHOP"); void loadMarketplace(); }}><Text style={styles.productEmoji}>🛍️</Text><Text style={styles.productName}>Shop products</Text><Text style={styles.muted}>Seller profile + recommendations</Text></Pressable>
+          <Pressable style={styles.shopPreview} onPress={() => { setHomeSection("SHOP"); void loadMarketplace("food"); }}><Text style={styles.productEmoji}>🍱</Text><Text style={styles.productName}>Food & perishables</Text><Text style={styles.muted}>Delivery included in price</Text></Pressable>
+        </View>
+      </View>
+
+      <View style={styles.homeCard}>
+        <Text style={styles.eyebrow}>SWIFT AI</Text><Text style={styles.homeHeading}>Ask Swift AI</Text><Text style={styles.muted}>Basic AI explains your orders and app. Premium can take authorized actions.</Text>
+        <Pressable style={styles.secondary} onPress={() => Alert.alert("Swift AI", "Use the Swift AI section below your order workspace to ask questions. Premium actions remain permission-controlled.")}><Text style={styles.secondaryText}>Open Swift AI</Text></Pressable>
+      </View>
+
+      <View style={styles.bottomNav}>
+        <Pressable style={styles.navActive}><Text>⌂</Text><Text>Home</Text></Pressable>
+        <Pressable style={styles.navItem} onPress={() => setHomeSection("ORDER")}><Text>□</Text><Text>Order</Text></Pressable>
+        <Pressable style={styles.navItem} onPress={() => { setHomeSection("SHOP"); void loadMarketplace(); }}><Text>🛍</Text><Text>Shop</Text></Pressable>
+        <Pressable style={styles.navItem} onPress={() => setShowSupport(v => !v)}><Text>?</Text><Text>Support</Text></Pressable>
+      </View>
+    </ScrollView></SafeAreaView>;
+  }
+
+  if (homeSection === "TRACK") {
+    return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}>
+      <View style={styles.header}><View><Text style={styles.logo}>Track Your Order</Text><Text style={styles.subtitle}>Follow pickup evidence, GPS movement, arrival and receiver confirmation.</Text></View><Pressable onPress={() => setHomeSection("HOME")}><Text style={styles.link}>Home</Text></Pressable></View>
+      <TextInput style={styles.input} placeholder="Tracking code" value={trackingCode} onChangeText={setTrackingCode} autoCapitalize="characters" />
+      <TextInput style={styles.input} placeholder="Receiver phone number" value={trackingPhone} onChangeText={setTrackingPhone} keyboardType="phone-pad" />
+      <Pressable style={styles.primary} onPress={() => void track()}><Text style={styles.primaryText}>Track order</Text></Pressable>
+      {delivery && <View style={styles.card}><Text style={styles.eyebrow}>LIVE TRACKING</Text><Text style={styles.heroTitle}>{delivery.status.replaceAll("_"," ")}</Text><Text>Pickup: {delivery.pickup.formattedAddress}</Text><Text>Destination: {delivery.dropoff.formattedAddress}</Text>{delivery.pickupPhotoUrl && <Text style={styles.done}>✓ Pickup evidence recorded</Text>}{location && <Text style={styles.done}>✓ GPS movement available</Text>}{delivery.status === "ARRIVED" && <Text style={styles.muted}>Arrival recorded. Receiver PIN confirmation is required for completion.</Text>}{delivery.status === "DELIVERED" && <Text style={styles.done}>✓ Delivered and receiver PIN verified</Text>}</View>}
+      <Pressable style={styles.secondary} onPress={() => setHomeSection("HOME")}><Text style={styles.secondaryText}>Back to home</Text></Pressable>
+    </ScrollView></SafeAreaView>;
+  }
+
+  if (homeSection === "SHOP") {
+    return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}>
+      <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop Shop</Text><Text style={styles.subtitle}>Marketplace with seller-anchored product pages.</Text></View><Pressable onPress={() => setHomeSection("HOME")}><Text style={styles.link}>Home</Text></Pressable></View>
+      <TextInput style={styles.input} placeholder="Search products, categories or sellers" value={marketplaceSearch} onChangeText={setMarketplaceSearch} onSubmitEditing={() => void loadMarketplace(marketplaceSearch)} />
+      <Pressable style={styles.primary} onPress={() => void loadMarketplace(marketplaceSearch)}><Text style={styles.primaryText}>{marketplaceLoading ? "Loading…" : "Search SwiftDrop Shop"}</Text></Pressable>
+      {selectedListing ? <View style={styles.productDetail}>
+        <Text style={styles.productHero}>🛍️</Text><Text style={styles.heroTitle}>{selectedListing.title}</Text>
+        <Text style={styles.muted}>{selectedListing.category} · {String(selectedListing.delivery_mode).replaceAll("_"," ")}</Text>
+        <Text style={styles.productPrice}>₦{(Number(selectedListing.final_price_minor)/100).toLocaleString()}</Text>
+        <Text style={styles.priceNote}>Final price includes delivery.</Text>
+        <Text style={styles.productDescription}>{selectedListing.description}</Text>
+        <View style={styles.sellerCard}><Text style={styles.eyebrow}>SELLER</Text><Text style={styles.homeHeading}>{selectedListing.seller_name}</Text><Text>{selectedListing.seller_bio || "Verified SwiftDrop marketplace seller."}</Text><Text style={styles.muted}>{selectedListing.seller_location || "Nigeria"}</Text></View>
+        <Pressable style={styles.primary} onPress={() => void checkoutMarketplaceListing()}><Text style={styles.primaryText}>Proceed to checkout</Text></Pressable>
+        <Text style={styles.homeHeading}>More from this seller</Text>
+        {recommendedListings.map(item => <Pressable key={item.id} style={styles.recommendCard} onPress={() => void openMarketplaceListing(item.id)}><Text style={styles.productName}>{item.title}</Text><Text>₦{(Number(item.final_price_minor)/100).toLocaleString()} · delivery included</Text></Pressable>)}
+        <Pressable style={styles.secondary} onPress={() => setSelectedListing(null)}><Text style={styles.secondaryText}>Back to Shop</Text></Pressable>
+      </View> : <View style={styles.shopGrid}>
+        {marketplaceListings.length === 0 && <Text style={styles.muted}>No published products yet. Approved agents can publish seller-anchored listings from their command centre.</Text>}
+        {marketplaceListings.map(item => <Pressable key={item.id} style={styles.listingCard} onPress={() => void openMarketplaceListing(item.id)}>
+          <Text style={styles.productEmoji}>🛍️</Text><Text style={styles.productName}>{item.title}</Text><Text style={styles.muted}>{item.category}</Text><Text style={styles.productPrice}>₦{(Number(item.final_price_minor)/100).toLocaleString()}</Text><Text style={styles.priceNote}>Delivery included · {String(item.delivery_mode).replaceAll("_"," ")}</Text><Text style={styles.muted}>Seller: {item.seller_name}</Text>
+        </Pressable>)}
+      </View>}
+      <Pressable style={styles.secondary} onPress={() => setHomeSection("HOME")}><Text style={styles.secondaryText}>Back to home</Text></Pressable>
+    </ScrollView></SafeAreaView>;
+  }
+
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.container}>
-    <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.subtitle}>Send it. Track it. Receive it.</Text></View><View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => { setShowSupport(v => !v); void loadSupportTickets(); }}><Text style={styles.link}>Support</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View></View>
+    <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.subtitle}>Place your order. Track every movement.</Text></View><Pressable onPress={() => setHomeSection("HOME")}><Text style={styles.link}>Home</Text></Pressable></View><View style={styles.header}><View></View><View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => { setShowSupport(v => !v); void loadSupportTickets(); }}><Text style={styles.link}>Support</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View></View>
     {showNotifications && <View style={styles.card}><View style={styles.header}><Text style={styles.heading}>Notifications</Text><Pressable onPress={() => void loadNotifications()}><Text>Refresh</Text></Pressable></View>{notifications.length === 0 ? <Text style={styles.muted}>No notifications.</Text> : notifications.map(item => <Pressable key={item.id} style={styles.notification} onPress={() => void markNotificationRead(item.id)}><Text style={styles.notificationTitle}>{item.title}</Text><Text>{item.body}</Text><Text style={styles.muted}>{new Date(item.created_at).toLocaleString()} · {item.read_at ? "Read" : "Tap to mark read"}</Text></Pressable>)}</View>}
     <View style={styles.card}>
       <Text style={styles.eyebrow}>SWIFT AI</Text>
@@ -602,13 +722,15 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#F6F8F5" },
+  safe: { flex: 1, backgroundColor: "#F6F3EC" },
   auth: { flex: 1, padding: 24, justifyContent: "center", gap: 14 },
   container: { padding: 20, paddingBottom: 42, gap: 14 },
+  homeContainer: { padding: 18, paddingBottom: 40, gap: 14 },
   row: { flexDirection: "row", gap: 10 },
   third: { flex: 1 },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   headerActions: { flexDirection: "row", gap: 14, alignItems: "center" },
+  heroHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingTop: 8, paddingBottom: 8 },
   logo: { fontSize: 32, fontWeight: "900", color: "#123D2A", letterSpacing: -1 },
   brandTag: { color: "#6B746E", fontSize: 10, fontWeight: "800", letterSpacing: 1.5, marginTop: 2 },
   eyebrow: { color: "#178A52", fontSize: 11, fontWeight: "900", letterSpacing: 1.4, marginTop: 10 },
@@ -627,6 +749,39 @@ const styles = StyleSheet.create({
   code: { fontWeight: "900", color: "#123D2A", marginTop: 4 },
   divider: { height: 1, backgroundColor: "#E3E9E5", marginVertical: 20 },
   card: { borderWidth: 1, borderColor: "#DDE5DF", backgroundColor: "#FFFFFF", borderRadius: 20, padding: 17, gap: 10, marginTop: 12, shadowColor: "#183B2A", shadowOpacity: 0.05, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 1 },
+  homeCard: { borderWidth: 1, borderColor: "#E0DDD4", backgroundColor: "#FFFDF8", borderRadius: 24, padding: 16, gap: 14, shadowColor: "#473D2E", shadowOpacity: 0.05, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 1 },
+  homeHeading: { fontSize: 22, fontWeight: "900", color: "#16221B", letterSpacing: -0.3 },
+  homeTwoCol: { flexDirection: "row", gap: 12 },
+  homeChoice: { flex: 1, minHeight: 145, borderWidth: 1, borderColor: "#E4E1D9", borderRadius: 22, padding: 18, justifyContent: "center", alignItems: "center", backgroundColor: "#FFFFFF" },
+  homeEmoji: { fontSize: 42, marginBottom: 8 },
+  homeChoiceTitle: { fontSize: 18, fontWeight: "900", color: "#16221B" },
+  homeChoiceSub: { fontSize: 12, color: "#737B75", marginTop: 5, textAlign: "center" },
+  actionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  actionTile: { width: "30%", minWidth: 96, minHeight: 128, borderWidth: 1, borderColor: "#E4E1D9", borderRadius: 18, padding: 10, alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF" },
+  tileEmoji: { fontSize: 30, marginBottom: 8 },
+  tileTitle: { fontSize: 13, fontWeight: "800", color: "#16221B", textAlign: "center" },
+  tileSub: { fontSize: 10, color: "#737B75", textAlign: "center", marginTop: 4 },
+  trackSearch: { backgroundColor: "#FFFFFF", borderRadius: 30, minHeight: 62, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: "#E0E3DF" },
+  trackIcon: { fontSize: 26, color: "#123D2A" },
+  trackText: { flex: 1, fontSize: 18, fontWeight: "700", color: "#222A25" },
+  trackArrow: { fontSize: 30, color: "#178A52" },
+  sectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 10 },
+  shopPreviewRow: { flexDirection: "row", gap: 10 },
+  shopPreview: { flex: 1, borderWidth: 1, borderColor: "#E4E1D9", borderRadius: 18, padding: 14, backgroundColor: "#FFFFFF" },
+  productEmoji: { fontSize: 36, marginBottom: 8 },
+  productName: { fontSize: 16, fontWeight: "900", color: "#16221B" },
+  productPrice: { fontSize: 24, fontWeight: "900", color: "#123D2A", marginTop: 8 },
+  priceNote: { fontSize: 11, color: "#68736C", marginTop: 3 },
+  productDetail: { borderWidth: 1, borderColor: "#DDE5DF", backgroundColor: "#FFFFFF", borderRadius: 22, padding: 18, gap: 12 },
+  productHero: { fontSize: 72, textAlign: "center" },
+  productDescription: { fontSize: 15, lineHeight: 23, color: "#263029" },
+  sellerCard: { borderWidth: 1, borderColor: "#DDE5DF", backgroundColor: "#F8FAF8", borderRadius: 18, padding: 15, gap: 6 },
+  recommendCard: { borderWidth: 1, borderColor: "#E0E5E1", borderRadius: 14, padding: 13, backgroundColor: "#FFFFFF" },
+  shopGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  listingCard: { width: "48%", borderWidth: 1, borderColor: "#E0E5E1", borderRadius: 18, padding: 14, backgroundColor: "#FFFFFF", minHeight: 205 },
+  bottomNav: { flexDirection: "row", justifyContent: "space-around", paddingTop: 14, paddingBottom: 8, borderTopWidth: 1, borderTopColor: "#DDDCD6", backgroundColor: "#FFFDF8", borderRadius: 18 },
+  navItem: { alignItems: "center", gap: 3, color: "#737B75" },
+  navActive: { alignItems: "center", gap: 3, color: "#123D2A", fontWeight: "900" },
   status: { fontSize: 18, fontWeight: "900", color: "#123D2A" },
   locationBox: { borderWidth: 1, borderColor: "#E1E8E3", borderRadius: 16, padding: 12, gap: 8, backgroundColor: "#FAFCFA" },
   map: { width: "100%", height: 260, borderRadius: 14 },

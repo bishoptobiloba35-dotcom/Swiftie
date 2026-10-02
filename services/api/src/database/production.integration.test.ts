@@ -182,6 +182,9 @@ if (!db) {
         weightFareMinor: 5000,
         sizeFareMinor: 0,
         perishableSurchargeMinor: 0,
+        fuelReferenceMinor: 50000,
+        protectionReserveMinor: 0,
+        pricingVersion: 1,
         serviceFeeMinor: 6250,
         totalMinor: 131250
       }
@@ -210,6 +213,36 @@ if (!db) {
     )).rows[0];
     assert.equal(raceState.status, "ARRIVED");
     assert.equal(raceState.payment_status, "HELD");
+    const agentUser = await db.query(
+      `INSERT INTO users(full_name,phone,email,password_hash,role)
+       VALUES('Marketplace Agent','+2349020000099','marketplace-agent@example.test','integration-hash','AGENT')
+       RETURNING id`
+    );
+    const agentUserId = agentUser.rows[0].id;
+    await db.query(`INSERT INTO agent_profiles(user_id,status) VALUES($1,'APPROVED')`, [agentUserId]);
+    const seller = await db.query(
+      `INSERT INTO marketplace_seller_profiles(user_id,display_name,bio,location_label)
+       VALUES($1,'SwiftDrop Agent Store','Fresh listings from this seller','Abuja')
+       RETURNING id`,
+      [agentUserId]
+    );
+    const listing = await db.query(
+      `INSERT INTO marketplace_listings
+       (seller_user_id,seller_profile_id,title,description,category,price_minor,delivery_fee_minor,final_price_minor,currency,delivery_mode,stock_quantity)
+       VALUES($1,$2,'Test product','Detailed marketplace product description','General',100000,15000,115000,'NGN','SAME_STATE',3)
+       RETURNING *`,
+      [agentUserId,seller.rows[0].id]
+    );
+    assert.equal(Number(listing.rows[0].final_price_minor), 115000);
+    assert.equal(listing.rows[0].delivery_mode, "SAME_STATE");
+    const marketplaceOrder = await db.query(
+      `INSERT INTO marketplace_orders
+       (listing_id,buyer_user_id,seller_user_id,quantity,unit_final_price_minor,total_minor,currency)
+       VALUES($1,$2,$3,2,115000,230000,'NGN')
+       RETURNING *`,
+      [listing.rows[0].id, customer.id, agentUserId]
+    );
+    assert.equal(Number(marketplaceOrder.rows[0].total_minor), 230000);
   });
 }
 
