@@ -304,7 +304,7 @@ export default function App() {
     try {
       if (![weightKg, lengthCm, widthCm, heightCm].every(value => Number(value) > 0)) throw new Error("Enter parcel weight and all three dimensions first.");
       const coords = coordinates();
-      setQuote(await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable }));
+      setQuote(await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable, declaredValueMinor: Math.round(Number(declaredValue) * 100) }));
     } catch (error) {
       Alert.alert("Quote unavailable", error instanceof Error ? error.message : "Enter valid locations.");
     }
@@ -316,7 +316,7 @@ export default function App() {
       const coords = coordinates();
       if (![weightKg, lengthCm, widthCm, heightCm].every(value => Number(value) > 0)) throw new Error("Enter parcel weight and all three dimensions.");
       if (!(Number(declaredValue) > 0)) throw new Error("Enter the actual value of the goods before placing the order.");
-      const serverQuote = await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable });
+      const serverQuote = await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable, declaredValueMinor: Math.round(Number(declaredValue) * 100) });
       setQuote(serverQuote);
       const created = await api.createDelivery({
         receiverName: receiver.trim(),
