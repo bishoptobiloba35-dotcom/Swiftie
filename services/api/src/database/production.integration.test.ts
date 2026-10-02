@@ -78,7 +78,9 @@ if (!db) {
     });
 
     await createPayment({ deliveryId: delivery.id, provider: "paystack", amountMinor: 81900 });
-    assert.equal((await updatePaymentStatus(delivery.id, "AUTHORIZED", "integration-payment")).status, "AUTHORIZED");
+    const authorizedPayment = await updatePaymentStatus(delivery.id, "AUTHORIZED", "integration-payment");
+    assert.ok(authorizedPayment);
+    assert.equal(authorizedPayment.status, "AUTHORIZED");
     assert.equal((await transitionDelivery(delivery.id, "CREATED", "PAYMENT_AUTHORIZED"))?.status, "PAYMENT_AUTHORIZED");
     assert.equal((await transitionDelivery(delivery.id, "PAYMENT_AUTHORIZED", "DRIVER_ASSIGNED", driver.id))?.driverId, driver.id);
     assert.equal((await transitionDelivery(delivery.id, "DRIVER_ASSIGNED", "DRIVER_AT_PICKUP", driver.id))?.status, "DRIVER_AT_PICKUP");
@@ -115,5 +117,5 @@ if (!db) {
 }
 
 after(async () => {
-  if (pool) await db.end();
+  if (db) await db.end();
 });
