@@ -12,7 +12,9 @@ import {
   updatePaymentStatus
 } from "./deliveryRepository.js";
 
-if (!pool) {
+const db = pool;
+
+if (!db) {
   test("production database integration suite requires DATABASE_URL", { skip: true }, () => {});
 } else {
   test("migrations are idempotent and core delivery escrow flow is transactional", async () => {
@@ -22,30 +24,30 @@ if (!pool) {
     // CI provisions a dedicated empty PostgreSQL database for this suite.
     // Rebuilding the schema here keeps the test independent from migration order
     // outside the repository and verifies that every committed migration applies.
-    await pool.query(schema);
+    await db.query(schema);
     await runMigrations();
     await runMigrations();
 
-    const customer = (await pool.query(
+    const customer = (await db.query(
       `INSERT INTO users (role, full_name, phone, email)
        VALUES ('CUSTOMER','Integration Customer',$1,$2)
        RETURNING id`,
       [`+234900${Date.now()}`, `integration-${Date.now()}@example.test`]
     )).rows[0];
 
-    const driverUser = (await pool.query(
+    const driverUser = (await db.query(
       `INSERT INTO users (role, full_name, phone, email)
        VALUES ('DRIVER','Integration Driver',$1,$2)
        RETURNING id`,
       [`+234901${Date.now()}`, `driver-${Date.now()}@example.test`]
     )).rows[0];
 
-    const driver = (await pool.query(
+    const driver = (await db.query(
       "INSERT INTO drivers (user_id,status,online) VALUES ($1,'APPROVED',true) RETURNING id",
       [driverUser.id]
     )).rows[0];
 
-    await pool.query(
+    await db.query(
       `INSERT INTO driver_documents (driver_id,document_type,document_url,status)
        VALUES ($1,'DRIVER_LICENSE','integration://kyc','APPROVED')`,
       [driver.id]
@@ -96,7 +98,7 @@ if (!pool) {
     assert.equal(completed.delivery.status, "DELIVERED");
     assert.equal(completed.payoutAmountMinor, 73710);
 
-    const financial = (await pool.query(
+    const financial = (await db.query(
       `SELECT p.status AS payment_status, p.escrow_status,
               po.status AS payout_status, po.amount_minor
          FROM payments p
@@ -113,5 +115,5 @@ if (!pool) {
 }
 
 after(async () => {
-  if (pool) await pool.end();
+  if (pool) await db.end();
 });
