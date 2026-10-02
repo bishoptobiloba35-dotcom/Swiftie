@@ -539,7 +539,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   const parsed = createDeliverySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const input = { ...parsed.data, senderId: identity(req) };
-  const quote = calculateQuote(
+  const quote = await calculateQuote(
     { latitude: parsed.data.pickup.latitude, longitude: parsed.data.pickup.longitude },
     { latitude: parsed.data.dropoff.latitude, longitude: parsed.data.dropoff.longitude },
     { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable, declaredValueMinor: parsed.data.declaredValueMinor }
