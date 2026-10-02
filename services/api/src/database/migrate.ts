@@ -29,7 +29,8 @@ const migrations = [
   { id: "026_support_ticket_messages", file: "026_support_ticket_messages.sql" },
   { id: "027_recurring_business_dispatch", file: "027_recurring_business_dispatch.sql" },
   { id: "028_delivery_exceptions", file: "028_delivery_exceptions.sql" },
-  { id: "029_returned_delivery_status", file: "029_returned_delivery_status.sql" }
+  { id: "029_returned_delivery_status", file: "029_returned_delivery_status.sql" },
+  { id: "034_declared_goods_value", file: "034_declared_goods_value.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
