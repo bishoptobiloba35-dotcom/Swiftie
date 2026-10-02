@@ -76,6 +76,9 @@ if (!db) {
         weightFareMinor: 10000,
         sizeFareMinor: 0,
         perishableSurchargeMinor: 0,
+        fuelReferenceMinor: 50000,
+        protectionReserveMinor: 0,
+        pricingVersion: 1,
         serviceFeeMinor: 3900,
         totalMinor: 81900
       }
@@ -138,6 +141,9 @@ if (!db) {
         weightFareMinor: 5000,
         sizeFareMinor: 0,
         perishableSurchargeMinor: 0,
+        fuelReferenceMinor: 50000,
+        protectionReserveMinor: 0,
+        pricingVersion: 1,
         serviceFeeMinor: 6250,
         totalMinor: 131250
       }
