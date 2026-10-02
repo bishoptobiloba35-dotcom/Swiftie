@@ -22,7 +22,7 @@ ALTER TABLE deliveries
   ADD COLUMN IF NOT EXISTS return_reason TEXT,
   ADD COLUMN IF NOT EXISTS returned_at TIMESTAMPTZ;
 
-DO $
+DO $swiftdrop$
 BEGIN
   IF NOT EXISTS (
     SELECT 1
@@ -34,7 +34,7 @@ BEGIN
       ADD CONSTRAINT deliveries_exception_status_check
       CHECK (exception_status IN ('NONE','FAILED_ATTEMPT','RESCHEDULED','RETURN_REQUESTED','RETURN_IN_TRANSIT','RETURNED'));
   END IF;
-END $;
+END $swiftdrop$;
 
 CREATE INDEX IF NOT EXISTS idx_deliveries_exception_status
   ON deliveries(exception_status, next_delivery_at);
