@@ -1090,9 +1090,9 @@ export async function transitionDelivery(id: string, from: string, to: string, d
      WHERE id=$1
        AND status=$4
        AND (
-         ($4='PAYMENT_AUTHORIZED' AND driver_id IS NULL AND $3 IS NOT NULL)
-         OR ($4<>'PAYMENT_AUTHORIZED' AND $3 IS NOT NULL AND driver_id=$3)
-         OR ($3 IS NULL)
+         ($4='PAYMENT_AUTHORIZED' AND driver_id IS NULL AND $3::uuid IS NOT NULL)
+         OR ($4<>'PAYMENT_AUTHORIZED' AND $3::uuid IS NOT NULL AND driver_id=$3::uuid)
+         OR ($3::uuid IS NULL)
        )
      RETURNING *`,
     [id, to, driverId ?? null, from]
