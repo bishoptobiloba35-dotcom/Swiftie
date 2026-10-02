@@ -14,6 +14,12 @@ const api = new SwiftDropApi(API_URL);
 
 export default function App() {
   const [signedIn, setSignedIn] = React.useState(false);
+  const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "TRACK" | "SHOP">("HOME");
+  const [marketplaceListings, setMarketplaceListings] = React.useState<any[]>([]);
+  const [selectedListing, setSelectedListing] = React.useState<any | null>(null);
+  const [recommendedListings, setRecommendedListings] = React.useState<any[]>([]);
+  const [marketplaceSearch, setMarketplaceSearch] = React.useState("");
+  const [marketplaceLoading, setMarketplaceLoading] = React.useState(false);
   const [authMode, setAuthMode] = React.useState<"login" | "register">("login");
   const [authName, setAuthName] = React.useState("");
   const [authPhone, setAuthPhone] = React.useState("");
@@ -127,6 +133,29 @@ export default function App() {
 
   async function loadNotifications() {
     try { setNotifications(await api.notifications()); } catch {}
+  }
+
+  async function loadMarketplace(query = "") {
+    setMarketplaceLoading(true);
+    try { setMarketplaceListings(await api.marketplaceListings(query)); }
+    catch (error) { Alert.alert("Shop", error instanceof Error ? error.message : "Unable to load SwiftDrop Shop"); }
+    finally { setMarketplaceLoading(false); }
+  }
+
+  async function openMarketplaceListing(id: string) {
+    try {
+      const data = await api.marketplaceListing(id);
+      setSelectedListing(data.listing);
+      setRecommendedListings(data.recommended ?? []);
+    } catch (error) { Alert.alert("Shop", error instanceof Error ? error.message : "Unable to open this product"); }
+  }
+
+  async function checkoutMarketplaceListing() {
+    if (!selectedListing) return;
+    try {
+      const data = await api.checkoutMarketplaceListing(selectedListing.id, 1);
+      Alert.alert("Checkout created", "Final price including delivery: ₦" + (Number(data.order.total_minor) / 100).toLocaleString() + ". Payment authorization is the next step.");
+    } catch (error) { Alert.alert("Checkout", error instanceof Error ? error.message : "Unable to create checkout"); }
   }
 
   async function loadSupportTickets() {
@@ -458,6 +487,86 @@ export default function App() {
       <Pressable onPress={() => setAuthMode(authMode === "login" ? "register" : "login")}><Text style={styles.link}>{authMode === "login" ? "Create an account" : "Already have an account? Sign in"}</Text></Pressable>
       <Pressable onPress={() => setReceiverMode(true)}><Text style={styles.link}>I am a receiver — confirm a delivery</Text></Pressable>
     </View></SafeAreaView>;
+  }
+
+  if (homeSection === "HOME") {
+    return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}>
+      <View style={styles.heroHeader}>
+        <View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.brandTag}>LOGISTICS · SHOPPING · SERVICES</Text></View>
+        <View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View>
+      </View>
+
+      <Pressable style={styles.trackSearch} onPress={() => setHomeSection("TRACK")}><Text style={styles.trackIcon}>◉</Text><Text style={styles.trackText}>Track Your Order</Text><Text style={styles.trackArrow}>›</Text></Pressable>
+
+      <View style={styles.homeCard}>
+        <Text style={styles.homeHeading}>Get Quote of Order</Text>
+        <View style={styles.homeTwoCol}>
+          <Pressable style={styles.homeChoice} onPress={() => { setHomeSection("ORDER"); }}>
+            <Text style={styles.homeEmoji}>📦</Text><Text style={styles.homeChoiceTitle}>Same state</Text><Text style={styles.homeChoiceSub}>Within your state</Text>
+          </Pressable>
+          <Pressable style={styles.homeChoice} onPress={() => { setHomeSection("ORDER"); }}>
+            <Text style={styles.homeEmoji}>🗺️</Text><Text style={styles.homeChoiceTitle}>Inter state</Text><Text style={styles.homeChoiceSub}>Across Nigerian states</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <View style={styles.homeCard}>
+        <Text style={styles.homeHeading}>Place your order</Text>
+        <View style={styles.actionGrid}>
+          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>📦</Text><Text style={styles.tileTitle}>Send within Nigeria</Text></Pressable>
+          <Pressable style={styles.actionTile} onPress={() => { setHomeSection("ORDER"); }}><Text style={styles.tileEmoji}>🛵</Text><Text style={styles.tileTitle}>Hire an Errand</Text></Pressable>
+          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>⚡</Text><Text style={styles.tileTitle}>Express drop off</Text></Pressable>
+          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>💳</Text><Text style={styles.tileTitle}>Pay for Order</Text></Pressable>
+          <Pressable style={styles.actionTile} onPress={() => { setHomeSection("ORDER"); void useCurrentPickupLocation(); }}><Text style={styles.tileEmoji}>📍</Text><Text style={styles.tileTitle}>Drop-off locations</Text><Text style={styles.tileSub}>Merchant & partner points</Text></Pressable>
+        </View>
+      </View>
+
+      <View style={styles.homeCard}>
+        <View style={styles.sectionHeader}><View><Text style={styles.homeHeading}>SwiftDrop Shop</Text><Text style={styles.muted}>Every product is anchored to its own seller.</Text></View><Pressable onPress={() => { setHomeSection("SHOP"); void loadMarketplace(); }}><Text style={styles.link}>View all</Text></Pressable></View>
+        <View style={styles.shopPreviewRow}>
+          <Pressable style={styles.shopPreview} onPress={() => { setHomeSection("SHOP"); void loadMarketplace(); }}><Text style={styles.productEmoji}>🛍️</Text><Text style={styles.productName}>Shop products</Text><Text style={styles.muted}>Seller profile + recommendations</Text></Pressable>
+          <Pressable style={styles.shopPreview} onPress={() => { setHomeSection("SHOP"); void loadMarketplace("food"); }}><Text style={styles.productEmoji}>🍱</Text><Text style={styles.productName}>Food & perishables</Text><Text style={styles.muted}>Delivery included in price</Text></Pressable>
+        </View>
+      </View>
+
+      <View style={styles.homeCard}>
+        <Text style={styles.eyebrow}>SWIFT AI</Text><Text style={styles.homeHeading}>Ask Swift AI</Text><Text style={styles.muted}>Basic AI explains your orders and app. Premium can take authorized actions.</Text>
+        <Pressable style={styles.secondary} onPress={() => Alert.alert("Swift AI", "Use the Swift AI section below your order workspace to ask questions. Premium actions remain permission-controlled.")}><Text style={styles.secondaryText}>Open Swift AI</Text></Pressable>
+      </View>
+
+      <View style={styles.bottomNav}>
+        <Pressable style={styles.navActive}><Text>⌂</Text><Text>Home</Text></Pressable>
+        <Pressable style={styles.navItem} onPress={() => setHomeSection("ORDER")}><Text>□</Text><Text>Order</Text></Pressable>
+        <Pressable style={styles.navItem} onPress={() => { setHomeSection("SHOP"); void loadMarketplace(); }}><Text>🛍</Text><Text>Shop</Text></Pressable>
+        <Pressable style={styles.navItem} onPress={() => setShowSupport(v => !v)}><Text>?</Text><Text>Support</Text></Pressable>
+      </View>
+    </ScrollView></SafeAreaView>;
+  }
+
+  if (homeSection === "SHOP") {
+    return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}>
+      <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop Shop</Text><Text style={styles.subtitle}>Marketplace with seller-anchored product pages.</Text></View><Pressable onPress={() => setHomeSection("HOME")}><Text style={styles.link}>Home</Text></Pressable></View>
+      <TextInput style={styles.input} placeholder="Search products, categories or sellers" value={marketplaceSearch} onChangeText={setMarketplaceSearch} onSubmitEditing={() => void loadMarketplace(marketplaceSearch)} />
+      <Pressable style={styles.primary} onPress={() => void loadMarketplace(marketplaceSearch)}><Text style={styles.primaryText}>{marketplaceLoading ? "Loading…" : "Search SwiftDrop Shop"}</Text></Pressable>
+      {selectedListing ? <View style={styles.productDetail}>
+        <Text style={styles.productHero}>🛍️</Text><Text style={styles.heroTitle}>{selectedListing.title}</Text>
+        <Text style={styles.muted}>{selectedListing.category} · {String(selectedListing.delivery_mode).replaceAll("_"," ")}</Text>
+        <Text style={styles.productPrice}>₦{(Number(selectedListing.final_price_minor)/100).toLocaleString()}</Text>
+        <Text style={styles.priceNote}>Final price includes delivery.</Text>
+        <Text style={styles.productDescription}>{selectedListing.description}</Text>
+        <View style={styles.sellerCard}><Text style={styles.eyebrow}>SELLER</Text><Text style={styles.homeHeading}>{selectedListing.seller_name}</Text><Text>{selectedListing.seller_bio || "Verified SwiftDrop marketplace seller."}</Text><Text style={styles.muted}>{selectedListing.seller_location || "Nigeria"}</Text></View>
+        <Pressable style={styles.primary} onPress={() => void checkoutMarketplaceListing()}><Text style={styles.primaryText}>Proceed to checkout</Text></Pressable>
+        <Text style={styles.homeHeading}>More from this seller</Text>
+        {recommendedListings.map(item => <Pressable key={item.id} style={styles.recommendCard} onPress={() => void openMarketplaceListing(item.id)}><Text style={styles.productName}>{item.title}</Text><Text>₦{(Number(item.final_price_minor)/100).toLocaleString()} · delivery included</Text></Pressable>)}
+        <Pressable style={styles.secondary} onPress={() => setSelectedListing(null)}><Text style={styles.secondaryText}>Back to Shop</Text></Pressable>
+      </View> : <View style={styles.shopGrid}>
+        {marketplaceListings.length === 0 && <Text style={styles.muted}>No published products yet. Approved agents can publish seller-anchored listings from their command centre.</Text>}
+        {marketplaceListings.map(item => <Pressable key={item.id} style={styles.listingCard} onPress={() => void openMarketplaceListing(item.id)}>
+          <Text style={styles.productEmoji}>🛍️</Text><Text style={styles.productName}>{item.title}</Text><Text style={styles.muted}>{item.category}</Text><Text style={styles.productPrice}>₦{(Number(item.final_price_minor)/100).toLocaleString()}</Text><Text style={styles.priceNote}>Delivery included · {String(item.delivery_mode).replaceAll("_"," ")}</Text><Text style={styles.muted}>Seller: {item.seller_name}</Text>
+        </Pressable>)}
+      </View>}
+      <Pressable style={styles.secondary} onPress={() => setHomeSection("HOME")}><Text style={styles.secondaryText}>Back to home</Text></Pressable>
+    </ScrollView></SafeAreaView>;
   }
 
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.container}>
