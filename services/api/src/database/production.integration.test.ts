@@ -243,6 +243,39 @@ if (!db) {
       [listing.rows[0].id, customer.id, agentUserId]
     );
     assert.equal(Number(marketplaceOrder.rows[0].total_minor), 230000);
+
+    const stockReservation = await db.query(
+      `UPDATE marketplace_listings
+          SET stock_quantity = stock_quantity - $2,
+              status = CASE WHEN stock_quantity - $2 = 0 THEN 'SOLD_OUT' ELSE status END,
+              updated_at = now()
+        WHERE id=$1 AND status='PUBLISHED' AND stock_quantity >= $2
+        RETURNING stock_quantity,status`,
+      [listing.rows[0].id, 1]
+    );
+    assert.equal(Number(stockReservation.rows[0].stock_quantity), 2);
+    assert.equal(stockReservation.rows[0].status, "PUBLISHED");
+
+    const exhausted = await db.query(
+      `UPDATE marketplace_listings
+          SET stock_quantity = stock_quantity - $2,
+              status = CASE WHEN stock_quantity - $2 = 0 THEN 'SOLD_OUT' ELSE status END,
+              updated_at = now()
+        WHERE id=$1 AND status='PUBLISHED' AND stock_quantity >= $2
+        RETURNING stock_quantity,status`,
+      [listing.rows[0].id, 2]
+    );
+    assert.equal(Number(exhausted.rows[0].stock_quantity), 0);
+    assert.equal(exhausted.rows[0].status, "SOLD_OUT");
+
+    const blockedAfterSellOut = await db.query(
+      `UPDATE marketplace_listings
+          SET stock_quantity = stock_quantity - $2
+        WHERE id=$1 AND status='PUBLISHED' AND stock_quantity >= $2
+        RETURNING id`,
+      [listing.rows[0].id, 1]
+    );
+    assert.equal(blockedAfterSellOut.rowCount, 0);
   });
 }
 
