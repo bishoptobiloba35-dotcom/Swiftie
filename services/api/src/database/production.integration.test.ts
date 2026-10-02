@@ -57,6 +57,7 @@ if (!db) {
       senderId: customer.id,
       receiverName: "Integration Receiver",
       receiverPhone: "+2349020000000",
+      declaredValueMinor: 250000,
       pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.0765, longitude: 7.3986 } },
       dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.4 } },
       receiverPin: "123456",
