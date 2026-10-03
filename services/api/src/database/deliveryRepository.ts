@@ -1248,7 +1248,7 @@ export async function confirmReceiverOnDeliveryPaymentDue(id: string, receiverPh
     const row = result.rows[0];
     if (!row || row.collection_mode !== "RECEIVER_ON_DELIVERY" || row.receiver_phone !== receiverPhone ||
         row.status !== "ARRIVED" || row.payment_status !== "PENDING" ||
-        row.receiver_confirmed_at IS NOT NULL ||
+        row.receiver_confirmed_at != null ||
         ["pending","processing","needs-attention"].includes(String(row.refund_status ?? "")) ||
         !verifyPin(pin, row.receiver_pin_hash) || !row.driver_id) {
       await client.query("ROLLBACK");
@@ -1302,7 +1302,7 @@ export async function settleReceiverPaymentAndReleasePayout(
     );
     const row = result.rows[0];
     if (!row || row.collection_mode !== "RECEIVER_ON_DELIVERY" ||
-        row.status !== "ARRIVED" || row.receiver_confirmed_at IS NULL ||
+        row.status !== "ARRIVED" || row.receiver_confirmed_at == null ||
         !["PENDING","AUTHORIZED"].includes(String(row.payment_status)) ||
         ["pending","processing","needs-attention"].includes(String(row.refund_status ?? "")) ||
         Number(providerAmountMinor) !== Number(row.amount_minor) ||
