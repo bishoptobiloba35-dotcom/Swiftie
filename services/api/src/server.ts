@@ -662,6 +662,7 @@ app.post("/api/deliveries/:id/payment", requireAuth("CUSTOMER"), async (req, res
     ? await findDeliveryForUser(routeParam(req.params.id, "id"), userId, "CUSTOMER")
     : await getOne(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  if (delivery.paymentMode === "RECEIVER_ON_DELIVERY") return res.status(409).json({ error: "Receiver payment is collected after receiver confirmation." });
 
   const amountMinor = delivery.quote?.totalMinor;
   if (!amountMinor || !Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
@@ -676,7 +677,8 @@ app.post("/api/deliveries/:id/payment", requireAuth("CUSTOMER"), async (req, res
     deliveryId: delivery.id,
     provider: process.env.PAYMENT_PROVIDER || "pending",
     amountMinor,
-    currency: "NGN"
+    currency: "NGN",
+    collectionMode: "SENDER_ESCROW"
   });
   await recordDeliveryEvent({
     deliveryId: delivery.id,
