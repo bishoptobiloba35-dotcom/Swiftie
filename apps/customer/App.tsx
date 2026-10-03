@@ -3,8 +3,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
+import * as ImagePicker from "expo-image-picker";
 import Constants from "expo-constants";
-import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, ScrollView, Platform } from "react-native";
+import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, ScrollView, Platform, Image } from "react-native";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { SwiftDropApi, type ApiDelivery } from "../../packages/shared/src/api";
 import { haversineDistanceMeters, etaMinutes } from "./src/trackingMath";
@@ -29,6 +30,7 @@ export default function App() {
   const [sellerCondition, setSellerCondition] = React.useState<"NEW" | "LIKE_NEW" | "GOOD" | "FAIR" | "USED" | "FOR_PARTS">("NEW");
   const [sellerUseDescription, setSellerUseDescription] = React.useState("");
   const [sellerUsageInstructions, setSellerUsageInstructions] = React.useState("");
+  const [sellerMedia, setSellerMedia] = React.useState<string[]>([]);
   const [sellerPrice, setSellerPrice] = React.useState("");
   const [sellerDeliveryFee, setSellerDeliveryFee] = React.useState("");
   const [sellerDeliveryMode, setSellerDeliveryMode] = React.useState<"SAME_STATE" | "INTER_STATE" | "EXPRESS" | "PICKUP">("SAME_STATE");
@@ -200,6 +202,37 @@ export default function App() {
     } catch (error) { Alert.alert("Shop", error instanceof Error ? error.message : "Unable to open this product"); }
   }
 
+  async function pickSellerMedia() {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert("Product photos", "Allow SwiftDrop access to your photos so you can add product images.");
+      return;
+    }
+    const remaining = Math.max(0, 8 - sellerMedia.length);
+    if (remaining === 0) {
+      Alert.alert("Product photos", "You can add up to 8 product images.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsMultipleSelection: true,
+      selectionLimit: remaining,
+      quality: 0.75,
+      base64: true,
+      exif: false
+    });
+    if (result.canceled) return;
+    const selected = result.assets
+      .filter(asset => asset.mimeType === "image/jpeg" || asset.mimeType === "image/png" || asset.mimeType === "image/webp")
+      .map(asset => asset.base64 ? "data:" + (asset.mimeType ?? "image/jpeg") + ";base64," + asset.base64 : "")
+      .filter(Boolean);
+    if (!selected.length) {
+      Alert.alert("Product photos", "Please choose JPEG, PNG, or WebP images.");
+      return;
+    }
+    setSellerMedia(current => [...current, ...selected].slice(0, 8));
+  }
+
   async function publishMarketplaceListing() {
     const price = Number(sellerPrice);
     const deliveryFee = Number(sellerDeliveryFee || 0);
@@ -244,9 +277,10 @@ export default function App() {
         lengthCm: Number.isFinite(length) ? length : 1,
         widthCm: Number.isFinite(width) ? width : 1,
         heightCm: Number.isFinite(height) ? height : 1,
-        isPerishable: sellerPerishable
+        isPerishable: sellerPerishable,
+        media: sellerMedia
       });
-      setSellerTitle(""); setSellerDescription(""); setSellerCategory(""); setSellerUseDescription(""); setSellerUsageInstructions("");
+      setSellerTitle(""); setSellerDescription(""); setSellerCategory(""); setSellerUseDescription(""); setSellerUsageInstructions(""); setSellerMedia([]);
       setSellerPrice(""); setSellerDeliveryFee(""); setSellerStock("1");
       setSellerPickupAddress(""); setSellerPickupLat(""); setSellerPickupLng(""); setSellerWeightKg(""); setSellerLengthCm(""); setSellerWidthCm(""); setSellerHeightCm(""); setSellerPerishable(false);
       setShowSellerForm(false);
@@ -806,6 +840,17 @@ export default function App() {
         <TextInput style={styles.input} placeholder="Description" value={sellerDescription} onChangeText={setSellerDescription} multiline />
         <TextInput style={styles.input} placeholder="What is it normally used for?" value={sellerUseDescription} onChangeText={setSellerUseDescription} multiline />
         <TextInput style={styles.input} placeholder="Usage instructions (optional)" value={sellerUsageInstructions} onChangeText={setSellerUsageInstructions} multiline />
+        <View style={styles.mediaPanel}>
+          <Text style={styles.photoTitle}>Product photos / illustrations ({sellerMedia.length}/8)</Text>
+          <Text style={styles.muted}>Add clear photos. For goods that need explanation, include a photo or illustration showing how the item is used.</Text>
+          <Pressable style={styles.secondary} onPress={() => void pickSellerMedia()}><Text style={styles.secondaryText}>Add product photos</Text></Pressable>
+          {sellerMedia.length > 0 && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mediaRow}>
+            {sellerMedia.map((uri, index) => <View key={index} style={styles.mediaThumbWrap}>
+              <Image source={{ uri }} style={styles.mediaThumb} />
+              <Pressable style={styles.mediaRemove} onPress={() => setSellerMedia(current => current.filter((_, i) => i !== index))}><Text style={styles.mediaRemoveText}>×</Text></Pressable>
+            </View>)}
+          </ScrollView>}
+        </View>
         <TextInput style={styles.input} placeholder="Condition: NEW / LIKE_NEW / GOOD / FAIR / USED / FOR_PARTS" value={sellerCondition} onChangeText={v => setSellerCondition((v.trim().toUpperCase() || "NEW") as typeof sellerCondition)} />
         <TextInput style={styles.input} placeholder="Price (₦)" keyboardType="decimal-pad" value={sellerPrice} onChangeText={setSellerPrice} />
         <TextInput style={styles.input} placeholder="Delivery fee (₦)" keyboardType="decimal-pad" value={sellerDeliveryFee} onChangeText={setSellerDeliveryFee} />
@@ -1087,6 +1132,13 @@ const styles = StyleSheet.create({
   locationBox: { borderWidth: 1, borderColor: "#E6DED7", borderRadius: 16, padding: 12, gap: 8, backgroundColor: "#FBF7F2" },
   map: { width: "100%", height: 260, borderRadius: 14 },
   photoTitle: { fontWeight: "800", color: "#27232A" },
+  mediaPanel: { borderWidth: 1, borderColor: "#E6DED7", borderRadius: 16, padding: 12, gap: 10, backgroundColor: "#FBF7F2" },
+  mediaRow: { gap: 10 },
+  mediaThumbWrap: { width: 86, height: 86, position: "relative" },
+  mediaThumb: { width: 86, height: 86, borderRadius: 12 },
+  mediaRemove: { position: "absolute", right: -5, top: -5, width: 24, height: 24, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "#C53B3B" },
+  mediaRemoveText: { color: "#FFFFFF", fontSize: 18, fontWeight: "900", lineHeight: 20 },
+
   muted: { color: "#746D72" },
   done: { fontSize: 16, fontWeight: "900", color: "#B7654A", marginTop: 6 },
   eta: { fontSize: 20, fontWeight: "900", color: "#2B2630", marginTop: 6 },
