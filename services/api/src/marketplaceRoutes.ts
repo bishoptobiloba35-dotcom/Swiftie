@@ -55,6 +55,45 @@ router.get("/marketplace/listings", async (req, res) => {
   return res.json({ listings: result.rows });
 });
 
+router.get("/marketplace/orders", requireAuth(), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool.query(
+    `SELECT mo.id,mo.listing_id,mo.quantity,mo.unit_final_price_minor,mo.total_minor,mo.currency,
+            mo.status,mo.requested_delivery_at,mo.created_at,mo.updated_at,
+            l.title,l.condition,
+            s.display_name AS seller_name,
+            mop.status AS payment_status,mop.provider_reference
+       FROM marketplace_orders mo
+       JOIN marketplace_listings l ON l.id=mo.listing_id
+       JOIN marketplace_seller_profiles s ON s.id=l.seller_profile_id
+       LEFT JOIN marketplace_order_payments mop ON mop.marketplace_order_id=mo.id
+      WHERE mo.buyer_user_id=$1
+      ORDER BY mo.created_at DESC
+      LIMIT 50`,
+    [identity(req)]
+  );
+  return res.json({ orders: result.rows });
+});
+
+router.get("/marketplace/orders/:id", requireAuth(), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool.query(
+    `SELECT mo.id,mo.listing_id,mo.quantity,mo.unit_final_price_minor,mo.total_minor,mo.currency,
+            mo.status,mo.requested_delivery_at,mo.created_at,mo.updated_at,
+            l.title,l.description,l.condition,l.use_description,l.usage_instructions,l.delivery_mode,
+            s.display_name AS seller_name,s.location_label AS seller_location,
+            mop.status AS payment_status,mop.provider_status,mop.provider_reference,mop.authorization_url
+       FROM marketplace_orders mo
+       JOIN marketplace_listings l ON l.id=mo.listing_id
+       JOIN marketplace_seller_profiles s ON s.id=l.seller_profile_id
+       LEFT JOIN marketplace_order_payments mop ON mop.marketplace_order_id=mo.id
+      WHERE mo.id=$1 AND mo.buyer_user_id=$2`,
+    [String(req.params.id), identity(req)]
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: "Marketplace order not found" });
+  return res.json({ order: result.rows[0] });
+});
+
 router.get("/marketplace/listings/:id/media/:mediaId", async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool.query(
