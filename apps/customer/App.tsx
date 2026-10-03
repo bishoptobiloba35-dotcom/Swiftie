@@ -241,9 +241,13 @@ export default function App() {
       const data = await api.checkoutMarketplaceListing(selectedListing.id, 1, requestedDeliveryAt, checkoutIdempotencyKey);
       const payment = await api.initializeMarketplacePayment(data.order.id, authEmail.trim());
       await WebBrowser.openBrowserAsync(payment.authorizationUrl);
+      try {
+        await api.verifyMarketplacePayment(data.order.id);
+      } catch {}
+      await loadMarketplaceOrders();
       Alert.alert(
-        "Payment started",
-        "Your marketplace order is awaiting Paystack confirmation. Final price including delivery: ₦" +
+        "Payment submitted",
+        "SwiftDrop has checked the payment status. If Paystack is still processing, refresh My marketplace orders shortly. Final price including delivery: ₦" +
           (Number(data.order.total_minor) / 100).toLocaleString()
       );
     } catch (error) {
