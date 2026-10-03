@@ -198,7 +198,7 @@ router.post("/marketplace/orders/:id/cancel", requireAuth(), async (req, res) =>
     );
     const order = orderResult.rows[0];
     if (!order) { await client.query("ROLLBACK"); return res.status(404).json({ error: "Order not found" }); }
-    if (!["PENDING","PROCESSING"].includes(order.status)) { await client.query("ROLLBACK"); return res.status(409).json({ error: "Order cannot be cancelled in its current state" }); }
+    if (!["PENDING_PAYMENT","PROCESSING"].includes(order.status)) { await client.query("ROLLBACK"); return res.status(409).json({ error: "Order cannot be cancelled in its current state" }); }
     if (order.payment_status === "AUTHORIZED") { await client.query("ROLLBACK"); return res.status(409).json({ error: "Paid orders must be refunded before cancellation" }); }
 
     await client.query(
