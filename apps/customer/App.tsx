@@ -228,7 +228,8 @@ export default function App() {
         Alert.alert("Delivery time", "Enter a valid date/time, for example 2026-10-05T14:00:00+01:00.");
         return;
       }
-      const data = await api.checkoutMarketplaceListing(selectedListing.id, 1, requestedDeliveryAt);
+      const checkoutIdempotencyKey = `mkt-${selectedListing.id}-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+      const data = await api.checkoutMarketplaceListing(selectedListing.id, 1, requestedDeliveryAt, checkoutIdempotencyKey);
       const payment = await api.initializeMarketplacePayment(data.order.id, authEmail.trim());
       await WebBrowser.openBrowserAsync(payment.authorizationUrl);
       Alert.alert(

@@ -27,7 +27,8 @@ const listingSchema = z.object({
 
 const checkoutSchema = z.object({
   quantity: z.number().int().min(1).max(100).default(1),
-  requestedDeliveryAt: z.string().datetime().optional()
+  requestedDeliveryAt: z.string().datetime().optional(),
+  idempotencyKey: z.string().trim().min(16).max(100)
 });
 
 router.get("/marketplace/listings", async (req, res) => {
@@ -229,10 +230,12 @@ router.post("/marketplace/listings/:id/checkout", requireAuth(), async (req, res
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const parsedCheckout = checkoutSchema.safeParse({
     quantity: Number(req.body?.quantity ?? 1),
-    requestedDeliveryAt: req.body?.requestedDeliveryAt
+    requestedDeliveryAt: req.body?.requestedDeliveryAt,
+    idempotencyKey: req.body?.idempotencyKey
   });
   if (!parsedCheckout.success) return res.status(400).json({ error: parsedCheckout.error.flatten() });
   const quantity = parsedCheckout.data.quantity;
+  const idempotencyKey = parsedCheckout.data.idempotencyKey;
   const requestedDeliveryAt = parsedCheckout.data.requestedDeliveryAt ? new Date(parsedCheckout.data.requestedDeliveryAt) : null;
   if (requestedDeliveryAt && requestedDeliveryAt.getTime() <= Date.now()) {
     return res.status(400).json({ error: "requestedDeliveryAt must be in the future" });
@@ -240,6 +243,14 @@ router.post("/marketplace/listings/:id/checkout", requireAuth(), async (req, res
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const existingOrder = await client.query(
+      `SELECT * FROM marketplace_orders WHERE buyer_user_id=$1 AND checkout_idempotency_key=$2`,
+      [identity(req), idempotencyKey]
+    );
+    if (existingOrder.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(200).json({ order: existingOrder.rows[0], idempotentReplay: true, message: "Checkout already created for this request." });
+    }
     const locked = await client.query("SELECT * FROM marketplace_listings WHERE id=$1 FOR UPDATE", [String(req.params.id)]);
     const listing = locked.rows[0];
     if (!listing || listing.status !== "PUBLISHED") { await client.query("ROLLBACK"); return res.status(404).json({ error: "Listing is not available" }); }
@@ -256,9 +267,9 @@ router.post("/marketplace/listings/:id/checkout", requireAuth(), async (req, res
     );
     if (!stockUpdate.rows[0]) { await client.query("ROLLBACK"); return res.status(409).json({ error: "The requested quantity is no longer available" }); }
     const order = await client.query(
-      `INSERT INTO marketplace_orders(listing_id,buyer_user_id,seller_user_id,quantity,unit_final_price_minor,total_minor,currency,requested_delivery_at)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [listing.id,identity(req),listing.seller_user_id,quantity,listing.final_price_minor,total,listing.currency,requestedDeliveryAt]
+      `INSERT INTO marketplace_orders(listing_id,buyer_user_id,seller_user_id,quantity,unit_final_price_minor,total_minor,currency,requested_delivery_at,checkout_idempotency_key)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [listing.id,identity(req),listing.seller_user_id,quantity,listing.final_price_minor,total,listing.currency,requestedDeliveryAt,idempotencyKey]
     );
     await client.query("COMMIT");
     return res.status(201).json({ order: order.rows[0], stockRemaining: Number(stockUpdate.rows[0].stock_quantity), message: "Checkout created. Payment authorization is the next step." });
