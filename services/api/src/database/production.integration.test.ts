@@ -276,8 +276,8 @@ if (!db) {
     );
     const listing = await db.query(
       `INSERT INTO marketplace_listings
-       (seller_user_id,seller_profile_id,title,description,category,price_minor,delivery_fee_minor,final_price_minor,currency,delivery_mode,stock_quantity)
-       VALUES($1,$2,'Test product','Detailed marketplace product description','General',100000,15000,115000,'NGN','SAME_STATE',3)
+       (seller_user_id,seller_profile_id,title,description,condition,use_description,usage_instructions,category,price_minor,delivery_fee_minor,final_price_minor,currency,delivery_mode,stock_quantity)
+       VALUES($1,$2,'Test product','Detailed marketplace product description','GOOD','Everyday household use','Use according to the included product instructions.','General',100000,15000,115000,'NGN','SAME_STATE',3)
        RETURNING *`,
       [agentUserId,seller.rows[0].id]
     );
@@ -355,6 +355,19 @@ if (!db) {
       [listing.rows[0].id, 1]
     );
     assert.equal(blockedAfterSellOut.rowCount, 0);
+
+    const fixedCommission = (await db.query(
+      `SELECT column_default, pg_get_constraintdef(c.oid) AS constraint_definition
+         FROM information_schema.columns col
+         LEFT JOIN pg_constraint c
+           ON c.conrelid='drop_off_commission_ledger'::regclass
+          AND c.conname='drop_off_commission_fixed_amount_check'
+        WHERE col.table_schema='public'
+          AND col.table_name='drop_off_commission_ledger'
+          AND col.column_name='amount_minor'`
+    )).rows[0];
+    assert.match(String(fixedCommission.column_default), /50000/);
+    assert.match(String(fixedCommission.constraint_definition), /50000/);
   });
 }
 
