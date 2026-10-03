@@ -322,6 +322,8 @@ if (!db) {
       `SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_marketplace_orders_buyer_checkout_key'`
     )).rowCount;
     assert.equal(checkoutKeyIndex, 1);
+    const orderHistoryIndex = (await db.query("SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_marketplace_orders_buyer_status_created'")).rowCount;
+    assert.equal(orderHistoryIndex, 1);
 
     const marketplacePayment = await db.query(
       `INSERT INTO marketplace_order_payments
