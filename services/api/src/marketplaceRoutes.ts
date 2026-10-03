@@ -252,6 +252,132 @@ router.post("/marketplace/orders/:id/payment/initialize", requireAuth(), async (
   return res.status(201).json({ payment: payment.rows[0], authorizationUrl: payload.data.authorization_url, accessCode: payload.data.access_code ?? null, reference });
 });
 
+router.post("/marketplace/orders/:id/payment/verify", requireAuth(), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const orderId = String(req.params.id);
+  const userId = identity(req);
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  if (!secret) return res.status(503).json({ error: "Paystack is not configured" });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const payment = (await client.query(
+      `SELECT mop.*, mo.quantity, mo.status AS order_status
+         FROM marketplace_order_payments mop
+         JOIN marketplace_orders mo ON mo.id=mop.marketplace_order_id
+        WHERE mop.marketplace_order_id=$1 AND mo.buyer_user_id=$2
+        FOR UPDATE`,
+      [orderId, userId]
+    )).rows[0];
+    if (!payment) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Marketplace payment not found" });
+    }
+    if (payment.status === "AUTHORIZED") {
+      await client.query("ROLLBACK");
+      return res.json({ status: "AUTHORIZED", orderStatus: payment.order_status, providerStatus: payment.provider_status });
+    }
+    if (payment.status === "REFUNDED") {
+      await client.query("ROLLBACK");
+      return res.json({ status: "REFUNDED", orderStatus: payment.order_status, providerStatus: payment.provider_status });
+    }
+    if (!payment.provider_reference) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Marketplace payment has no provider reference" });
+    }
+
+    const response = await fetch("https://api.paystack.co/transaction/verify/" + encodeURIComponent(String(payment.provider_reference)), {
+      headers: { authorization: "Bearer " + secret }
+    });
+    const payload = await response.json() as {
+      status?: boolean;
+      message?: string;
+      data?: { status?: string; amount?: number; currency?: string; reference?: string };
+    };
+    if (!response.ok || !payload.status || !payload.data) {
+      await client.query("ROLLBACK");
+      return res.status(502).json({ error: "Payment provider verification failed" });
+    }
+
+    const providerStatus = String(payload.data.status ?? "").toLowerCase();
+    const providerAmount = Number(payload.data.amount);
+    const providerCurrency = String(payload.data.currency ?? "");
+    const amountMatches = Number.isSafeInteger(providerAmount) &&
+      providerAmount === Number(payment.amount_minor) &&
+      providerCurrency === String(payment.currency).trim();
+
+    if (providerStatus === "success" && amountMatches) {
+      await client.query(
+        `UPDATE marketplace_order_payments
+            SET status='AUTHORIZED', provider_status='success', updated_at=now()
+          WHERE id=$1 AND status='PENDING'`,
+        [payment.id]
+      );
+      await client.query(
+        `UPDATE marketplace_orders
+            SET status='PAID', updated_at=now()
+          WHERE id=$1 AND status='PENDING_PAYMENT'`,
+        [orderId]
+      );
+    } else if (providerStatus === "failed" || providerStatus === "abandoned" || !amountMatches) {
+      await client.query(
+        `UPDATE marketplace_order_payments
+            SET status='FAILED', provider_status=$2, updated_at=now()
+          WHERE id=$1 AND status='PENDING'`,
+        [payment.id, !amountMatches ? "amount_mismatch" : providerStatus]
+      );
+      const restored = await client.query(
+        `UPDATE marketplace_listings l
+            SET stock_quantity=l.stock_quantity+$2,
+                status=CASE WHEN l.status='SOLD_OUT' THEN 'PUBLISHED' ELSE l.status END,
+                updated_at=now()
+           FROM marketplace_orders mo
+          WHERE mo.id=$1 AND l.id=mo.listing_id AND mo.status='PENDING_PAYMENT'
+          RETURNING l.stock_quantity,l.status`,
+        [orderId, payment.quantity]
+      );
+      const cancelled = await client.query(
+        `UPDATE marketplace_orders
+            SET status='CANCELLED', updated_at=now()
+          WHERE id=$1 AND status='PENDING_PAYMENT'
+          RETURNING id`,
+        [orderId]
+      );
+      if (cancelled.rowCount === 1 && restored.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return res.status(500).json({ error: "Marketplace stock reconciliation failed" });
+      }
+    } else if (!amountMatches) {
+      await client.query(
+        `UPDATE marketplace_order_payments SET provider_status='amount_mismatch', updated_at=now() WHERE id=$1`,
+        [payment.id]
+      );
+    } else {
+      await client.query(
+        `UPDATE marketplace_order_payments SET provider_status=$2, updated_at=now() WHERE id=$1`,
+        [payment.id, providerStatus || "pending"]
+      );
+    }
+
+    await client.query("COMMIT");
+    const refreshed = (await pool.query(
+      `SELECT mo.status AS order_status,mop.status,mop.provider_status
+         FROM marketplace_orders mo
+         JOIN marketplace_order_payments mop ON mop.marketplace_order_id=mo.id
+        WHERE mo.id=$1 AND mo.buyer_user_id=$2`,
+      [orderId, userId]
+    )).rows[0];
+    return res.json({ status: refreshed?.status ?? "PENDING", orderStatus: refreshed?.order_status ?? "PENDING_PAYMENT", providerStatus: refreshed?.provider_status ?? providerStatus });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error(JSON.stringify({ event: "marketplace_payment_verification_failed", orderId, error: error instanceof Error ? error.message : "unknown" }));
+    return res.status(500).json({ error: "Marketplace payment verification failed" });
+  } finally {
+    client.release();
+  }
+});
+
 router.get("/marketplace/orders/:id/payment", requireAuth(), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool.query(
