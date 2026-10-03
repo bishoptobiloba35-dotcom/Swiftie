@@ -46,6 +46,7 @@ export default function App() {
   const [widthCm, setWidthCm] = React.useState("");
   const [heightCm, setHeightCm] = React.useState("");
   const [isPerishable, setIsPerishable] = React.useState(false);
+  const [paymentMode, setPaymentMode] = React.useState<"SENDER_ESCROW" | "RECEIVER_ON_DELIVERY">("SENDER_ESCROW");
   const [receiverConfirmPin, setReceiverConfirmPin] = React.useState("");
   const [receiverRatingStars, setReceiverRatingStars] = React.useState(0);
   const [receiverRatingComment, setReceiverRatingComment] = React.useState("");
@@ -365,7 +366,8 @@ export default function App() {
 
   async function createDelivery() {
     try {
-      if (!pickup.trim() || !dropoff.trim() || !receiver.trim() || !phone.trim() || !email.trim() || !/^\d{6}$/.test(receiverPin)) throw new Error("Complete the delivery details and enter a 6-digit receiver PIN.");
+      if (!pickup.trim() || !dropoff.trim() || !receiver.trim() || !phone.trim() || !/^\d{6}$/.test(receiverPin)) throw new Error("Complete the delivery details and enter a 6-digit receiver PIN.");
+      if (paymentMode === "SENDER_ESCROW" && !email.trim()) throw new Error("Enter your payment email for sender-paid escrow.");
       const coords = coordinates();
       if (![weightKg, lengthCm, widthCm, heightCm].every(value => Number(value) > 0)) throw new Error("Enter parcel weight and all three dimensions.");
       if (!(Number(declaredValue) > 0)) throw new Error("Enter the actual value of the goods before placing the order.");
@@ -375,6 +377,7 @@ export default function App() {
         receiverName: receiver.trim(),
         receiverPhone: phone.trim(),
         receiverPin,
+        paymentMode,
         declaredValueMinor: Math.round(Number(declaredValue) * 100),
         weightKg: Number(weightKg),
         dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) },
@@ -387,9 +390,13 @@ export default function App() {
       });
       setDelivery(created);
       setTrackingCode(created.trackingCode);
-      const payment = await api.initializePayment(created.id, email.trim());
-      await WebBrowser.openBrowserAsync(payment.authorizationUrl);
-      Alert.alert("Payment", "Complete payment in the browser. SwiftDrop will verify it from the payment provider.");
+      if (paymentMode === "SENDER_ESCROW") {
+        const payment = await api.initializePayment(created.id, email.trim());
+        await WebBrowser.openBrowserAsync(payment.authorizationUrl);
+        Alert.alert("Payment", "Complete payment in the browser. SwiftDrop will verify it from the payment provider.");
+      } else {
+        Alert.alert("Receiver payment", "Order created. The receiver will confirm the package at arrival and then pay the final amount through SwiftDrop. No sender escrow is used.");
+      }
     } catch (error) {
       Alert.alert("Delivery failed", error instanceof Error ? error.message : "Unable to create delivery.");
     }
@@ -417,7 +424,17 @@ export default function App() {
     try {
       const result = await api.confirmReceiver(delivery.id, trackingPhone.trim(), receiverConfirmPin);
       setDelivery(result.delivery);
-      Alert.alert("Receipt confirmed", "The delivery is complete and the held payment has been released for courier payout.");
+      if (result.paymentRequired) {
+        if (!email.trim()) {
+          Alert.alert("Receiver payment", "Package confirmed. Enter the receiver's payment email and tap Pay receiver amount to complete payment.");
+          return;
+        }
+        const payment = await api.initializeReceiverPayment(delivery.id, trackingPhone.trim(), receiverConfirmPin, email.trim());
+        await WebBrowser.openBrowserAsync(payment.authorizationUrl);
+        Alert.alert("Receiver payment", "Complete payment. SwiftDrop will verify the provider webhook and then complete the order.");
+      } else {
+        Alert.alert("Receipt confirmed", "The delivery is complete and the held payment has been released for courier payout.");
+      }
     } catch (error) {
       Alert.alert("Confirmation failed", error instanceof Error ? error.message : "Unable to confirm receipt");
     }
@@ -674,8 +691,18 @@ export default function App() {
       <Text>Fuel reference: ₦{(quote.fuelReferenceMinor / 100).toLocaleString()} (2 litres)</Text><Text>Refundable protection reserve: ₦{(quote.protectionReserveMinor / 100).toLocaleString()}</Text><Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
       <Text style={styles.code}>Total: ₦{(quote.totalMinor / 100).toLocaleString()}</Text>
     </View>}
-    <Text style={styles.hint}>Escrow protection: your payment is held after successful payment and is only released for courier payout after the receiver confirms receipt.</Text>
-    <Pressable style={styles.primary} onPress={() => void createDelivery()}><Text style={styles.primaryText}>Create & continue to escrow payment</Text></Pressable>
+    <Text style={styles.heading}>Who pays for this order?</Text>
+    <View style={styles.row}>
+      <Pressable style={[styles.choice, paymentMode === "SENDER_ESCROW" && styles.choiceActive]} onPress={() => setPaymentMode("SENDER_ESCROW")}>
+        <Text style={styles.photoTitle}>Sender pays</Text><Text style={styles.muted}>Payment is held until receiver PIN confirmation.</Text>
+      </Pressable>
+      <Pressable style={[styles.choice, paymentMode === "RECEIVER_ON_DELIVERY" && styles.choiceActive]} onPress={() => setPaymentMode("RECEIVER_ON_DELIVERY")}>
+        <Text style={styles.photoTitle}>Receiver pays</Text><Text style={styles.muted}>No escrow. Receiver pays after confirming the package.</Text>
+      </Pressable>
+    </View>
+    {paymentMode === "SENDER_ESCROW" && <Text style={styles.hint}>Sender payment is held in SwiftDrop's application-level escrow ledger and released only after receiver PIN confirmation.</Text>}
+    {paymentMode === "RECEIVER_ON_DELIVERY" && <Text style={styles.hint}>The receiver confirms the package first, then pays the server-authoritative order total through SwiftDrop. Courier payout waits for verified payment.</Text>}
+    <Pressable style={styles.primary} onPress={() => void createDelivery()}><Text style={styles.primaryText}>{paymentMode === "SENDER_ESCROW" ? "Place order & pay" : "Place order — receiver pays"}</Text></Pressable>
     {delivery?.status === "PAYMENT_AUTHORIZED" && <Text style={styles.done}>✓ Payment verified — driver matching can begin.</Text>}
     {delivery && <Text style={styles.code}>Tracking code: {delivery.trackingCode}</Text>}
 
@@ -733,7 +760,7 @@ export default function App() {
       </View>}
 {delivery.status === "ARRIVED" && <View style={styles.ratingBox}>
         <Text style={styles.photoTitle}>Receiver confirmation</Text>
-        <Text style={styles.muted}>Only confirm after you have physically received the parcel. This releases the held courier payment.</Text>
+        <Text style={styles.muted}>{delivery.paymentMode === "RECEIVER_ON_DELIVERY" ? "Only confirm after you have physically received the parcel. Your confirmation starts the receiver payment step." : "Only confirm after you have physically received the parcel. This releases the held courier payment."}</Text>
         <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} />
         <Pressable style={styles.primary} onPress={() => void confirmReceipt()}><Text style={styles.primaryText}>I received the parcel & complete delivery</Text></Pressable>
       </View>}
