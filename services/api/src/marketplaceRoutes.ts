@@ -438,6 +438,22 @@ router.post("/marketplace/orders/:id/payment/initialize", requireAuth(), async (
   if (current?.status === "AUTHORIZED" || current?.status === "REFUNDED") {
     return res.status(409).json({ error: `Marketplace order payment is already ${String(current.status).toLowerCase()}` });
   }
+  // Reuse an existing live Paystack authorization instead of creating a second
+  // provider transaction when the client retries initialization.
+  const liveProviderStatuses = new Set(["pending", "ongoing", "processing", "queued"]);
+  if (
+    current?.status === "PENDING" &&
+    current.provider_reference &&
+    current.authorization_url &&
+    liveProviderStatuses.has(String(current.provider_status ?? "").toLowerCase())
+  ) {
+    return res.status(200).json({
+      payment: current,
+      authorizationUrl: current.authorization_url,
+      accessCode: current.access_code ?? null,
+      reference: current.provider_reference
+    });
+  }
   const order = (await pool.query(
     `SELECT id,buyer_user_id,total_minor,currency,status FROM marketplace_orders WHERE id=$1 AND buyer_user_id=$2`,
     [orderId, userId]
