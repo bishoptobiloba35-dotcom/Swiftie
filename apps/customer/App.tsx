@@ -3,8 +3,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
+import * as ImagePicker from "expo-image-picker";
 import Constants from "expo-constants";
-import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, ScrollView, Platform } from "react-native";
+import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, ScrollView, Platform, Image } from "react-native";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { SwiftDropApi, type ApiDelivery } from "../../packages/shared/src/api";
 import { haversineDistanceMeters, etaMinutes } from "./src/trackingMath";
@@ -12,7 +13,9 @@ import { haversineDistanceMeters, etaMinutes } from "./src/trackingMath";
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 const api = new SwiftDropApi(API_URL);
 
-export default function App() {
+export default function ImagePickerPreview({ source }: { source: { uri: string } }) { return <Image source={source} style={{ width: 76, height: 76, borderRadius: 12 }} resizeMode="cover" />; }
+
+function App() {
   const [signedIn, setSignedIn] = React.useState(false);
   const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "TRACK" | "SHOP" | "LOCATIONS">("HOME");
   const [marketplaceListings, setMarketplaceListings] = React.useState<any[]>([]);
@@ -41,6 +44,7 @@ export default function App() {
   const [sellerWidthCm, setSellerWidthCm] = React.useState("");
   const [sellerHeightCm, setSellerHeightCm] = React.useState("");
   const [sellerPerishable, setSellerPerishable] = React.useState(false);
+  const [sellerMedia, setSellerMedia] = React.useState<string[]>([]);
   const [marketplaceReceiverName, setMarketplaceReceiverName] = React.useState("");
   const [marketplaceReceiverPhone, setMarketplaceReceiverPhone] = React.useState("");
   const [marketplaceReceiverPin, setMarketplaceReceiverPin] = React.useState("");
@@ -200,6 +204,41 @@ export default function App() {
     } catch (error) { Alert.alert("Shop", error instanceof Error ? error.message : "Unable to open this product"); }
   }
 
+  async function pickSellerMedia() {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("Photos permission", "Allow SwiftDrop to access your photos so you can illustrate the item you are selling.");
+        return;
+      }
+      const remaining = Math.max(0, 8 - sellerMedia.length);
+      if (!remaining) {
+        Alert.alert("Listing photos", "You can add up to 8 photos per listing.");
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsMultipleSelection: true,
+        selectionLimit: remaining,
+        quality: 0.82,
+        base64: true
+      });
+      if (result.canceled) return;
+      const next = result.assets
+        .filter(asset => asset.base64)
+        .map(asset => {
+          const mime = asset.mimeType === "image/png" ? "image/png" : asset.mimeType === "image/webp" ? "image/webp" : "image/jpeg";
+          return `data:${mime};base64,${asset.base64}`;
+        });
+      if (!next.length) throw new Error("The selected photos could not be prepared for upload.");
+      const oversized = next.find(item => item.length > 8 * 1024 * 1024 * 1.37);
+      if (oversized) throw new Error("One of the selected photos is too large. Choose smaller images.");
+      setSellerMedia(current => [...current, ...next].slice(0, 8));
+    } catch (error) {
+      Alert.alert("Listing photos", error instanceof Error ? error.message : "Unable to select photos");
+    }
+  }
+
   async function publishMarketplaceListing() {
     const price = Number(sellerPrice);
     const deliveryFee = Number(sellerDeliveryFee || 0);
@@ -244,11 +283,12 @@ export default function App() {
         lengthCm: Number.isFinite(length) ? length : 1,
         widthCm: Number.isFinite(width) ? width : 1,
         heightCm: Number.isFinite(height) ? height : 1,
-        isPerishable: sellerPerishable
+        isPerishable: sellerPerishable,
+        media: sellerMedia
       });
       setSellerTitle(""); setSellerDescription(""); setSellerCategory(""); setSellerUseDescription(""); setSellerUsageInstructions("");
       setSellerPrice(""); setSellerDeliveryFee(""); setSellerStock("1");
-      setSellerPickupAddress(""); setSellerPickupLat(""); setSellerPickupLng(""); setSellerWeightKg(""); setSellerLengthCm(""); setSellerWidthCm(""); setSellerHeightCm(""); setSellerPerishable(false);
+      setSellerPickupAddress(""); setSellerPickupLat(""); setSellerPickupLng(""); setSellerWeightKg(""); setSellerLengthCm(""); setSellerWidthCm(""); setSellerHeightCm(""); setSellerPerishable(false); setSellerMedia([]);
       setShowSellerForm(false);
       await loadMarketplace(marketplaceSearch);
       Alert.alert("Published", "Your item is now listed for sale on SwiftDrop Shop.");
@@ -795,6 +835,15 @@ export default function App() {
         <TextInput style={styles.input} placeholder="Description" value={sellerDescription} onChangeText={setSellerDescription} multiline />
         <TextInput style={styles.input} placeholder="What is it normally used for?" value={sellerUseDescription} onChangeText={setSellerUseDescription} multiline />
         <TextInput style={styles.input} placeholder="Usage instructions (optional)" value={sellerUsageInstructions} onChangeText={setSellerUsageInstructions} multiline />
+        <Pressable style={styles.secondary} onPress={() => void pickSellerMedia()}><Text style={styles.secondaryText}>{sellerMedia.length ? `Add more photos (${sellerMedia.length}/8)` : "Add product photos"}</Text></Pressable>
+        {sellerMedia.length > 0 && <View style={styles.mediaRow}>
+          {sellerMedia.map((src, index) => <View key={`${src.slice(0, 24)}-${index}`} style={styles.mediaThumbWrap}>
+            <Text style={styles.mediaNumber}>{index + 1}</Text>
+            <ImagePickerPreview source={{ uri: src }} />
+            <Pressable style={styles.mediaRemove} onPress={() => setSellerMedia(items => items.filter((_, i) => i !== index))}><Text style={styles.mediaRemoveText}>×</Text></Pressable>
+          </View>)}
+        </View>}
+        <Text style={styles.hint}>Use clear photos that show the actual item and its condition. For goods that need illustration, include photos showing how the item is used or any important parts.</Text>
         <TextInput style={styles.input} placeholder="Condition: NEW / LIKE_NEW / GOOD / FAIR / USED / FOR_PARTS" value={sellerCondition} onChangeText={v => setSellerCondition((v.trim().toUpperCase() || "NEW") as typeof sellerCondition)} />
         <TextInput style={styles.input} placeholder="Price (₦)" keyboardType="decimal-pad" value={sellerPrice} onChangeText={setSellerPrice} />
         <TextInput style={styles.input} placeholder="Delivery fee (₦)" keyboardType="decimal-pad" value={sellerDeliveryFee} onChangeText={setSellerDeliveryFee} />
@@ -1097,4 +1146,9 @@ const styles = StyleSheet.create({
   supportChoiceActive: { borderColor: "#B7654A", backgroundColor: "#F6E8E1" },
   supportChoiceText: { fontWeight: "800", color: "#2B2630" },
   multiline: { minHeight: 110, textAlignVertical: "top" },
+  mediaRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  mediaThumbWrap: { width: 76, height: 76, position: "relative" },
+  mediaNumber: { position: "absolute", zIndex: 2, top: 4, left: 4, backgroundColor: "#FFFFFF", borderRadius: 10, paddingHorizontal: 5, fontSize: 10, fontWeight: "800" },
+  mediaRemove: { position: "absolute", zIndex: 3, top: 3, right: 3, width: 22, height: 22, borderRadius: 11, backgroundColor: "#C53B3B", alignItems: "center", justifyContent: "center" },
+  mediaRemoveText: { color: "#FFFFFF", fontWeight: "900" },
 });
