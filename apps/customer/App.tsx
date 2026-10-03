@@ -17,6 +17,7 @@ export default function App() {
   const [signedIn, setSignedIn] = React.useState(false);
   const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "TRACK" | "SHOP" | "LOCATIONS">("HOME");
   const [marketplaceListings, setMarketplaceListings] = React.useState<any[]>([]);
+  const [marketplaceSales, setMarketplaceSales] = React.useState<any[]>([]);
   const [selectedListing, setSelectedListing] = React.useState<any | null>(null);
   const [recommendedListings, setRecommendedListings] = React.useState<any[]>([]);
   const [marketplaceDeliveryAt, setMarketplaceDeliveryAt] = React.useState("");
@@ -180,6 +181,11 @@ export default function App() {
 
   async function loadMarketplaceOrders() {
     try { setMarketplaceOrders(await api.marketplaceOrders()); } catch {}
+  }
+
+  async function loadMarketplaceSales() {
+    try { setMarketplaceSales(await api.marketplaceSales()); }
+    catch (error) { Alert.alert("Marketplace sales", error instanceof Error ? error.message : "Unable to load your sales"); }
   }
 
   async function loadMarketplace(query = "") {
@@ -792,6 +798,15 @@ export default function App() {
   if (homeSection === "SHOP") {
     return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}>
       <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop Shop</Text><Text style={styles.subtitle}>Marketplace with seller-anchored product pages.</Text></View><Pressable onPress={() => setHomeSection("HOME")}><Text style={styles.link}>Home</Text></Pressable></View>
+      {signedIn && <View style={styles.card}>
+        <View style={styles.rowBetween}><Text style={styles.homeHeading}>My seller sales</Text><Pressable onPress={() => void loadMarketplaceSales()}><Text style={styles.link}>Refresh</Text></Pressable></View>
+        {marketplaceSales.length === 0 ? <Text style={styles.muted}>No marketplace sales yet.</Text> : marketplaceSales.map((sale:any) => <View key={sale.id} style={styles.notification}>
+          <Text style={styles.notificationTitle}>{sale.title} · ×{sale.quantity}</Text>
+          <Text>₦{(Number(sale.total_minor) / 100).toLocaleString()} · {String(sale.status).replaceAll("_"," ")}</Text>
+          <Text style={styles.muted}>{sale.fulfillment_status?.replaceAll("_"," ")}{sale.delivery_status ? " · Delivery " + sale.delivery_status.replaceAll("_"," ") : ""}</Text>
+          {sale.tracking_code && <Text style={styles.code}>Tracking: {sale.tracking_code}</Text>}
+        </View>)}
+      </View>}
       <TextInput style={styles.input} placeholder="Search products, categories or sellers" value={marketplaceSearch} onChangeText={setMarketplaceSearch} onSubmitEditing={() => void loadMarketplace(marketplaceSearch)} />
       <Pressable style={styles.primary} onPress={() => void loadMarketplace(marketplaceSearch)}><Text style={styles.primaryText}>{marketplaceLoading ? "Loading…" : "Search SwiftDrop Shop"}</Text></Pressable>
       <Pressable style={styles.secondary} onPress={() => setShowSellerForm(v => !v)}><Text style={styles.secondaryText}>{showSellerForm ? "Close selling form" : "Sell an item"}</Text></Pressable>
