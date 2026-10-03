@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import { pool } from "./db.js";
 import { runMigrations } from "./migrate.js";
 
@@ -9,6 +10,9 @@ test("drop-off partner commission source and ledger are fixed at NGN 500", async
     return;
   }
 
+  const schemaUrl = new URL("./schema.sql", import.meta.url);
+  const schema = await readFile(schemaUrl, "utf8");
+  await pool.query(schema);
   await runMigrations();
 
   const source = (await pool.query(
