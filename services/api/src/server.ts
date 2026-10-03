@@ -564,7 +564,6 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
 
       const created = await createPersistentDelivery({
         senderId: input.senderId,
-        paymentMode: input.paymentMode,
         receiverName: input.receiverName,
         receiverPhone: input.receiverPhone,
         pickup: { label: input.pickup.label, formattedAddress: input.pickup.formattedAddress, location: { latitude: input.pickup.latitude, longitude: input.pickup.longitude } },
@@ -657,7 +656,7 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
     metadata: { paymentId: saved.id, reference: payload.data.reference ?? reference, amountMinor }
   });
   res.status(201).json({
-    paymentId: payment.id,
+    paymentId: saved.id,
     reference: payload.data.reference ?? reference,
     authorizationUrl: payload.data.authorization_url,
     accessCode: payload.data.access_code
