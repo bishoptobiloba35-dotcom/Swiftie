@@ -234,12 +234,24 @@ export class SwiftDropApi {
     condition: "NEW" | "LIKE_NEW" | "GOOD" | "FAIR" | "USED" | "FOR_PARTS"; useDescription: string;
     usageInstructions?: string; category: string; priceMinor: number; deliveryFeeMinor: number;
     deliveryMode: "SAME_STATE" | "INTER_STATE" | "EXPRESS" | "PICKUP"; stockQuantity: number;
+    pickupAddress: string; pickupLatitude: number; pickupLongitude: number;
+    weightKg: number; lengthCm: number; widthCm: number; heightCm: number; isPerishable?: boolean;
     media?: string[];
   }): Promise<any> {
     const response = await fetch(this.baseUrl + "/api/marketplace/listings", {
       method: "POST", headers: this.headers(true), body: JSON.stringify(input)
     });
     const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Unable to publish marketplace listing");
+    return data;
+  }
+  async fulfillMarketplaceOrder(orderId: string, input: { receiverName: string; receiverPhone: string; receiverPin: string; dropoffAddress: string; dropoffLatitude: number; dropoffLongitude: number }): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/marketplace/orders/" + encodeURIComponent(orderId) + "/fulfill", {
+      method: "POST",
+      headers: this.headers(true),
+      body: JSON.stringify(input)
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to initialize marketplace delivery");
     return data;
   }
   async checkoutMarketplaceListing(id: string, quantity = 1, requestedDeliveryAt?: string, idempotencyKey?: string): Promise<any> {
