@@ -310,12 +310,13 @@ if (!db) {
     assert.equal(listing.rows[0].delivery_mode, "SAME_STATE");
     const marketplaceOrder = await db.query(
       `INSERT INTO marketplace_orders
-       (listing_id,buyer_user_id,seller_user_id,quantity,unit_final_price_minor,total_minor,currency)
-       VALUES($1,$2,$3,2,115000,230000,'NGN')
+       (listing_id,buyer_user_id,seller_user_id,quantity,unit_final_price_minor,total_minor,currency,requested_delivery_at)
+       VALUES($1,$2,$3,2,115000,230000,'NGN',now() + interval '2 days')
        RETURNING *`,
       [listing.rows[0].id, customer.id, agentUserId]
     );
     assert.equal(Number(marketplaceOrder.rows[0].total_minor), 230000);
+    assert.ok(marketplaceOrder.rows[0].requested_delivery_at instanceof Date || marketplaceOrder.rows[0].requested_delivery_at);
 
     const marketplacePayment = await db.query(
       `INSERT INTO marketplace_order_payments

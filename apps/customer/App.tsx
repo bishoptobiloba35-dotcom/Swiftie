@@ -18,6 +18,7 @@ export default function App() {
   const [marketplaceListings, setMarketplaceListings] = React.useState<any[]>([]);
   const [selectedListing, setSelectedListing] = React.useState<any | null>(null);
   const [recommendedListings, setRecommendedListings] = React.useState<any[]>([]);
+  const [marketplaceDeliveryAt, setMarketplaceDeliveryAt] = React.useState("");
   const [marketplaceSearch, setMarketplaceSearch] = React.useState("");
   const [marketplaceLoading, setMarketplaceLoading] = React.useState(false);
   const [showSellerForm, setShowSellerForm] = React.useState(false);
@@ -171,6 +172,7 @@ export default function App() {
     try {
       const data = await api.marketplaceListing(id);
       setSelectedListing(data.listing);
+      setMarketplaceDeliveryAt("");
       setRecommendedListings(data.recommended ?? []);
     } catch (error) { Alert.alert("Shop", error instanceof Error ? error.message : "Unable to open this product"); }
   }
@@ -221,7 +223,12 @@ export default function App() {
       return;
     }
     try {
-      const data = await api.checkoutMarketplaceListing(selectedListing.id, 1);
+      const requestedDeliveryAt = marketplaceDeliveryAt.trim() || undefined;
+      if (requestedDeliveryAt && Number.isNaN(new Date(requestedDeliveryAt).getTime())) {
+        Alert.alert("Delivery time", "Enter a valid date/time, for example 2026-10-05T14:00:00+01:00.");
+        return;
+      }
+      const data = await api.checkoutMarketplaceListing(selectedListing.id, 1, requestedDeliveryAt);
       const payment = await api.initializeMarketplacePayment(data.order.id, authEmail.trim());
       await WebBrowser.openBrowserAsync(payment.authorizationUrl);
       Alert.alert(
@@ -689,6 +696,9 @@ export default function App() {
         <Text style={styles.productPrice}>₦{(Number(selectedListing.final_price_minor)/100).toLocaleString()}</Text>
         <Text style={styles.priceNote}>Final price includes delivery.</Text>
         <Text style={styles.productDescription}>{selectedListing.description}</Text>
+        <Text style={styles.muted}>Condition: {selectedListing.condition} · Use: {selectedListing.use_description}</Text>
+        {selectedListing.usage_instructions ? <Text style={styles.muted}>How to use: {selectedListing.usage_instructions}</Text> : null}
+        <TextInput style={styles.input} placeholder="Preferred delivery date/time (optional), e.g. 2026-10-05T14:00:00+01:00" value={marketplaceDeliveryAt} onChangeText={setMarketplaceDeliveryAt} />
         <View style={styles.sellerCard}><Text style={styles.eyebrow}>SELLER</Text><Text style={styles.homeHeading}>{selectedListing.seller_name}</Text><Text>{selectedListing.seller_bio || "Verified SwiftDrop marketplace seller."}</Text><Text style={styles.muted}>{selectedListing.seller_location || "Nigeria"}</Text></View>
         <Pressable style={styles.primary} onPress={() => void checkoutMarketplaceListing()}><Text style={styles.primaryText}>Proceed to checkout</Text></Pressable>
         <Text style={styles.homeHeading}>More from this seller</Text>
