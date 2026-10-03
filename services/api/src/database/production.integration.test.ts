@@ -244,6 +244,37 @@ if (!db) {
     );
     assert.equal(Number(marketplaceOrder.rows[0].total_minor), 230000);
 
+    const marketplacePayment = await db.query(
+      `INSERT INTO marketplace_order_payments
+       (marketplace_order_id,buyer_user_id,provider,provider_reference,amount_minor,currency,status,provider_status)
+       VALUES($1,$2,'paystack','SD-MKT-INTEGRATION-1',230000,'NGN','PENDING','pending')
+       RETURNING *`,
+      [marketplaceOrder.rows[0].id, customer.id]
+    );
+    assert.equal(marketplacePayment.rows[0].status, "PENDING");
+    const paymentMismatch = await db.query(
+      `SELECT COUNT(*)::int AS count FROM marketplace_order_payments
+        WHERE provider_reference='SD-MKT-INTEGRATION-1' AND amount_minor=230000 AND currency='NGN'`
+    );
+    assert.equal(paymentMismatch.rows[0].count, 1);
+
+    await db.query(
+      `UPDATE marketplace_order_payments SET status='AUTHORIZED',provider_status='success',updated_at=now() WHERE id=$1`,
+      [marketplacePayment.rows[0].id]
+    );
+    await db.query(
+      `UPDATE marketplace_orders SET status='PAID',updated_at=now() WHERE id=$1 AND status='PENDING_PAYMENT'`,
+      [marketplaceOrder.rows[0].id]
+    );
+    const paidMarketplace = (await db.query(
+      `SELECT mo.status AS order_status,mop.status AS payment_status
+         FROM marketplace_orders mo JOIN marketplace_order_payments mop ON mop.marketplace_order_id=mo.id
+        WHERE mo.id=$1`,
+      [marketplaceOrder.rows[0].id]
+    )).rows[0];
+    assert.equal(paidMarketplace.order_status, "PAID");
+    assert.equal(paidMarketplace.payment_status, "AUTHORIZED");
+
     const stockReservation = await db.query(
       `UPDATE marketplace_listings
           SET stock_quantity = stock_quantity - $2,
