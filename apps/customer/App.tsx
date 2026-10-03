@@ -305,7 +305,7 @@ export default function App() {
   async function fulfillExistingMarketplaceOrder(orderId: string) {
     const lat = Number(marketplaceDropoffLat);
     const lng = Number(marketplaceDropoffLng);
-    if (!marketplaceReceiverName.trim() || !marketplaceReceiverPhone.trim() || !/^\\d{6}$/.test(marketplaceReceiverPin) || !marketplaceDropoffAddress.trim() || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+    if (!marketplaceReceiverName.trim() || !marketplaceReceiverPhone.trim() || !/^\d{6}$/.test(marketplaceReceiverPin) || !marketplaceDropoffAddress.trim() || !Number.isFinite(lat) || !Number.isFinite(lng)) {
       Alert.alert("Delivery details", "Enter receiver name, phone, a 6-digit PIN, and a valid drop-off address with GPS coordinates.");
       return;
     }
