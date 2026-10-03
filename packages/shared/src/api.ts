@@ -229,6 +229,19 @@ export class SwiftDropApi {
     const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Unable to load marketplace listing");
     return data;
   }
+  async marketplaceMyListings(): Promise<any[]> {
+    const response = await fetch(this.baseUrl + "/api/marketplace/my-listings", { headers: this.headers() });
+    const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Unable to load your listings");
+    return data.listings ?? [];
+  }
+  async updateMarketplaceListing(id: string, input: any): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/marketplace/listings/" + encodeURIComponent(id), {
+      method: "PATCH", headers: this.headers(true), body: JSON.stringify(input)
+    });
+    const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Unable to update listing");
+    return data.listing;
+  }
+
   async createMarketplaceListing(input: {
     displayName: string; bio?: string; locationLabel?: string; title: string; description: string;
     condition: "NEW" | "LIKE_NEW" | "GOOD" | "FAIR" | "USED" | "FOR_PARTS"; useDescription: string;
