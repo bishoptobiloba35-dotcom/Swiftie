@@ -257,6 +257,18 @@ export class SwiftDropApi {
     if (!response.ok) throw new Error(data.error ?? "Unable to initialize marketplace payment");
     return data;
   }
+  async marketplaceOrders(): Promise<any[]> {
+    const response = await fetch(this.baseUrl + "/api/marketplace/orders", { headers: this.headers() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to load marketplace orders");
+    return data.orders ?? [];
+  }
+  async marketplaceOrder(orderId: string): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/marketplace/orders/" + encodeURIComponent(orderId), { headers: this.headers() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to load marketplace order");
+    return data.order;
+  }
   async marketplacePayment(orderId: string): Promise<any> {
     const response = await fetch(this.baseUrl + "/api/marketplace/orders/" + encodeURIComponent(orderId) + "/payment", { headers: this.headers() });
     const data = await response.json();
