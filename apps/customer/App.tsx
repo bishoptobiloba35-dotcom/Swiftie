@@ -20,6 +20,18 @@ export default function App() {
   const [recommendedListings, setRecommendedListings] = React.useState<any[]>([]);
   const [marketplaceSearch, setMarketplaceSearch] = React.useState("");
   const [marketplaceLoading, setMarketplaceLoading] = React.useState(false);
+  const [showSellerForm, setShowSellerForm] = React.useState(false);
+  const [sellerTitle, setSellerTitle] = React.useState("");
+  const [sellerDescription, setSellerDescription] = React.useState("");
+  const [sellerCategory, setSellerCategory] = React.useState("");
+  const [sellerCondition, setSellerCondition] = React.useState<"NEW" | "LIKE_NEW" | "GOOD" | "FAIR" | "USED" | "FOR_PARTS">("NEW");
+  const [sellerUseDescription, setSellerUseDescription] = React.useState("");
+  const [sellerUsageInstructions, setSellerUsageInstructions] = React.useState("");
+  const [sellerPrice, setSellerPrice] = React.useState("");
+  const [sellerDeliveryFee, setSellerDeliveryFee] = React.useState("");
+  const [sellerDeliveryMode, setSellerDeliveryMode] = React.useState<"SAME_STATE" | "INTER_STATE" | "EXPRESS" | "PICKUP">("SAME_STATE");
+  const [sellerStock, setSellerStock] = React.useState("1");
+  const [sellerPublishing, setSellerPublishing] = React.useState(false);
   const [authMode, setAuthMode] = React.useState<"login" | "register">("login");
   const [authName, setAuthName] = React.useState("");
   const [authPhone, setAuthPhone] = React.useState("");
@@ -161,6 +173,45 @@ export default function App() {
       setSelectedListing(data.listing);
       setRecommendedListings(data.recommended ?? []);
     } catch (error) { Alert.alert("Shop", error instanceof Error ? error.message : "Unable to open this product"); }
+  }
+
+  async function publishMarketplaceListing() {
+    const price = Number(sellerPrice);
+    const deliveryFee = Number(sellerDeliveryFee || 0);
+    const stock = Number(sellerStock);
+    if (!sellerTitle.trim() || sellerDescription.trim().length < 10 || sellerCategory.trim().length < 2 || sellerUseDescription.trim().length < 5) {
+      Alert.alert("Sell an item", "Add a title, at least 10 characters of description, category, and explain the item's ordinary use.");
+      return;
+    }
+    if (!Number.isSafeInteger(Math.round(price * 100)) || price <= 0 || !Number.isFinite(deliveryFee) || deliveryFee < 0 || !Number.isInteger(stock) || stock < 0) {
+      Alert.alert("Sell an item", "Enter valid price, delivery fee, and stock values.");
+      return;
+    }
+    setSellerPublishing(true);
+    try {
+      await api.createMarketplaceListing({
+        displayName: authName.trim() || "SwiftDrop Seller",
+        bio: "SwiftDrop marketplace seller",
+        title: sellerTitle.trim(),
+        description: sellerDescription.trim(),
+        condition: sellerCondition,
+        useDescription: sellerUseDescription.trim(),
+        usageInstructions: sellerUsageInstructions.trim() || undefined,
+        category: sellerCategory.trim(),
+        priceMinor: Math.round(price * 100),
+        deliveryFeeMinor: Math.round(deliveryFee * 100),
+        deliveryMode: sellerDeliveryMode,
+        stockQuantity: stock
+      });
+      setSellerTitle(""); setSellerDescription(""); setSellerCategory(""); setSellerUseDescription(""); setSellerUsageInstructions("");
+      setSellerPrice(""); setSellerDeliveryFee(""); setSellerStock("1"); setShowSellerForm(false);
+      await loadMarketplace(marketplaceSearch);
+      Alert.alert("Published", "Your item is now listed for sale on SwiftDrop Shop.");
+    } catch (error) {
+      Alert.alert("Publish failed", error instanceof Error ? error.message : "Unable to publish your item");
+    } finally {
+      setSellerPublishing(false);
+    }
   }
 
   async function checkoutMarketplaceListing() {
@@ -616,6 +667,22 @@ export default function App() {
       <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop Shop</Text><Text style={styles.subtitle}>Marketplace with seller-anchored product pages.</Text></View><Pressable onPress={() => setHomeSection("HOME")}><Text style={styles.link}>Home</Text></Pressable></View>
       <TextInput style={styles.input} placeholder="Search products, categories or sellers" value={marketplaceSearch} onChangeText={setMarketplaceSearch} onSubmitEditing={() => void loadMarketplace(marketplaceSearch)} />
       <Pressable style={styles.primary} onPress={() => void loadMarketplace(marketplaceSearch)}><Text style={styles.primaryText}>{marketplaceLoading ? "Loading…" : "Search SwiftDrop Shop"}</Text></Pressable>
+      <Pressable style={styles.secondary} onPress={() => setShowSellerForm(v => !v)}><Text style={styles.secondaryText}>{showSellerForm ? "Close selling form" : "Sell an item"}</Text></Pressable>
+      {showSellerForm && <View style={styles.productDetail}>
+        <Text style={styles.homeHeading}>Sell your item</Text>
+        <Text style={styles.muted}>Ordinary everyday goods are welcome. Categories help discovery but do not restrict what you can list. Regulated or prohibited goods remain subject to SwiftDrop rules.</Text>
+        <TextInput style={styles.input} placeholder="Product title" value={sellerTitle} onChangeText={setSellerTitle} />
+        <TextInput style={styles.input} placeholder="Category (free-form)" value={sellerCategory} onChangeText={setSellerCategory} />
+        <TextInput style={styles.input} placeholder="Description" value={sellerDescription} onChangeText={setSellerDescription} multiline />
+        <TextInput style={styles.input} placeholder="What is it normally used for?" value={sellerUseDescription} onChangeText={setSellerUseDescription} multiline />
+        <TextInput style={styles.input} placeholder="Usage instructions (optional)" value={sellerUsageInstructions} onChangeText={setSellerUsageInstructions} multiline />
+        <TextInput style={styles.input} placeholder="Condition: NEW / LIKE_NEW / GOOD / FAIR / USED / FOR_PARTS" value={sellerCondition} onChangeText={v => setSellerCondition((v.trim().toUpperCase() || "NEW") as typeof sellerCondition)} />
+        <TextInput style={styles.input} placeholder="Price (₦)" keyboardType="decimal-pad" value={sellerPrice} onChangeText={setSellerPrice} />
+        <TextInput style={styles.input} placeholder="Delivery fee (₦)" keyboardType="decimal-pad" value={sellerDeliveryFee} onChangeText={setSellerDeliveryFee} />
+        <TextInput style={styles.input} placeholder="Stock quantity" keyboardType="number-pad" value={sellerStock} onChangeText={setSellerStock} />
+        <TextInput style={styles.input} placeholder="Delivery mode: SAME_STATE / INTER_STATE / EXPRESS / PICKUP" value={sellerDeliveryMode} onChangeText={v => setSellerDeliveryMode((v.trim().toUpperCase() || "SAME_STATE") as typeof sellerDeliveryMode)} />
+        <Pressable style={styles.primary} onPress={() => void publishMarketplaceListing()}><Text style={styles.primaryText}>{sellerPublishing ? "Publishing…" : "Publish item for sale"}</Text></Pressable>
+      </View>}
       {selectedListing ? <View style={styles.productDetail}>
         <Text style={styles.productHero}>🛍️</Text><Text style={styles.heroTitle}>{selectedListing.title}</Text>
         <Text style={styles.muted}>{selectedListing.category} · {String(selectedListing.delivery_mode).replaceAll("_"," ")}</Text>
@@ -628,7 +695,7 @@ export default function App() {
         {recommendedListings.map(item => <Pressable key={item.id} style={styles.recommendCard} onPress={() => void openMarketplaceListing(item.id)}><Text style={styles.productName}>{item.title}</Text><Text>₦{(Number(item.final_price_minor)/100).toLocaleString()} · delivery included</Text></Pressable>)}
         <Pressable style={styles.secondary} onPress={() => setSelectedListing(null)}><Text style={styles.secondaryText}>Back to Shop</Text></Pressable>
       </View> : <View style={styles.shopGrid}>
-        {marketplaceListings.length === 0 && <Text style={styles.muted}>No published products yet. Approved agents can publish seller-anchored listings from their command centre.</Text>}
+        {marketplaceListings.length === 0 && <Text style={styles.muted}>No published products yet. Be the first seller to publish an everyday item.</Text>}
         {marketplaceListings.map(item => <Pressable key={item.id} style={styles.listingCard} onPress={() => void openMarketplaceListing(item.id)}>
           <Text style={styles.productEmoji}>🛍️</Text><Text style={styles.productName}>{item.title}</Text><Text style={styles.muted}>{item.category}</Text><Text style={styles.productPrice}>₦{(Number(item.final_price_minor)/100).toLocaleString()}</Text><Text style={styles.priceNote}>Delivery included · {String(item.delivery_mode).replaceAll("_"," ")}</Text><Text style={styles.muted}>Seller: {item.seller_name}</Text>
         </Pressable>)}
