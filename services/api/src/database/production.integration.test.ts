@@ -14,7 +14,8 @@ import {
   prepareRefund,
   savePickupPhoto,
   transitionDelivery,
-  updatePaymentStatus
+  updatePaymentStatus,
+  updatePayoutProviderStatus
 } from "./deliveryRepository.js";
 
 const db = pool;
@@ -261,6 +262,30 @@ if (!db) {
     assert.equal(receiverFinancial.collection_mode, "RECEIVER_ON_DELIVERY");
     assert.equal(receiverFinancial.delivery_status, "DELIVERED");
     assert.equal(receiverFinancial.payout_status, "ELIGIBLE");
+
+    await db.query(
+      `UPDATE payouts
+          SET status='PROCESSING', provider='paystack', provider_reference='SD-PAYOUT-MISMATCH-1', updated_at=now()
+        WHERE delivery_id=$1`,
+      [receiverPaidDelivery.id]
+    );
+    const mismatchedPayout = await updatePayoutProviderStatus(
+      "SD-PAYOUT-MISMATCH-1",
+      "RELEASED",
+      null,
+      105799,
+      "NGN"
+    );
+    assert.ok(mismatchedPayout);
+    assert.equal(mismatchedPayout.status, "FAILED");
+    assert.equal(mismatchedPayout.providerStatus, "amount_mismatch");
+    const mismatchState = (await db.query(
+      `SELECT status, provider_status, failure_reason
+         FROM payouts
+        WHERE provider_reference='SD-PAYOUT-MISMATCH-1'`
+    )).rows[0];
+    assert.equal(mismatchState.status, "FAILED");
+    assert.equal(mismatchState.provider_status, "amount_mismatch");
     const agentUser = await db.query(
       `INSERT INTO users(full_name,phone,email,password_hash,role)
        VALUES('Marketplace Agent','+2349020000099','marketplace-agent@example.test','integration-hash','AGENT')
