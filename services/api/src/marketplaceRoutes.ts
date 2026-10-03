@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "./database/db.js";
@@ -129,7 +130,7 @@ router.post("/marketplace/listings", requireAuth(), async (req, res) => {
         if (!bytes.length || bytes.length > 8 * 1024 * 1024) throw new Error("Each marketplace image must not exceed 8MB");
         const extension = match[1].toLowerCase() === "webp" ? "webp" : match[1].toLowerCase() === "png" ? "png" : "jpg";
         const contentType = extension === "webp" ? "image/webp" : extension === "png" ? "image/png" : "image/jpeg";
-        const key = "marketplace/listings/" + listing.rows[0].id + "/" + String(index).padStart(2, "0") + "-" + crypto.randomUUID() + "." + extension;
+        const key = "marketplace/listings/" + listing.rows[0].id + "/" + String(index).padStart(2, "0") + "-" + randomUUID() + "." + extension;
         await putPrivateObject(key, bytes, contentType);
         uploadedKeys.push(key);
         await client.query(
