@@ -257,6 +257,13 @@ export class SwiftDropApi {
     const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Unable to publish marketplace listing");
     return data;
   }
+  async cancelMarketplaceOrder(orderId: string): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/marketplace/orders/" + encodeURIComponent(orderId) + "/cancel", {
+      method: "POST", headers: this.headers(true)
+    });
+    const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Unable to cancel marketplace order");
+    return data;
+  }
   async fulfillMarketplaceOrder(orderId: string, input: { receiverName: string; receiverPhone: string; receiverPin: string; dropoffAddress: string; dropoffLatitude: number; dropoffLongitude: number }): Promise<any> {
     const response = await fetch(this.baseUrl + "/api/marketplace/orders/" + encodeURIComponent(orderId) + "/fulfill", {
       method: "POST",
