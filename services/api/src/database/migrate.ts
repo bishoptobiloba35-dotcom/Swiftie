@@ -34,8 +34,10 @@ const migrations = [
   { id: "035_authoritative_pricing_config", file: "035_authoritative_pricing_config.sql" },
   { id: "036_marketplace_listings", file: "036_marketplace_listings.sql" },
   { id: "037_marketplace_order_payments", file: "037_marketplace_order_payments.sql" },
+  { id: "037_marketplace_listing_disclosure", file: "037_marketplace_listing_disclosure.sql" },
   { id: "038_receiver_payment_mode", file: "038_receiver_payment_mode.sql" },
-  { id: "039_payment_checkout_session", file: "039_payment_checkout_session.sql" }
+  { id: "039_payment_checkout_session", file: "039_payment_checkout_session.sql" },
+  { id: "040_fixed_drop_off_partner_earning", file: "040_fixed_drop_off_partner_earning.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
