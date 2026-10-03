@@ -51,15 +51,20 @@ export async function runMigrations(): Promise<void> {
   `);
 
   for (const migration of migrations) {
-    const exists = await pool.query("SELECT 1 FROM schema_migrations WHERE id=$1", [migration.id]);
-    if (exists.rowCount) continue;
-
     const migrationUrl = new URL("./migrations/" + migration.file, import.meta.url);
     const sql = await readFile(migrationUrl, "utf8");
+
+    // Multiple API workers/tests can bootstrap the same database concurrently.
+    // Serialize migration check + execution so two processes cannot both insert
+    // the same migration id or partially advance the schema at the same time.
     await pool.query("BEGIN");
     try {
-      await pool.query(sql);
-      await pool.query("INSERT INTO schema_migrations (id) VALUES ($1)", [migration.id]);
+      await pool.query("SELECT pg_advisory_xact_lock(hashtext('swiftdrop:schema-migrations'))");
+      const exists = await pool.query("SELECT 1 FROM schema_migrations WHERE id=$1", [migration.id]);
+      if (!exists.rowCount) {
+        await pool.query(sql);
+        await pool.query("INSERT INTO schema_migrations (id) VALUES ($1)", [migration.id]);
+      }
       await pool.query("COMMIT");
     } catch (error) {
       await pool.query("ROLLBACK");

@@ -31,6 +31,12 @@ jobs:
       - run: npm install --global npm@11
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run build --workspace=@swiftdrop/${{ matrix.project }}
+      - name: Validate Expo production configuration
+        if: matrix.project == 'customer' || matrix.project == 'driver'
+        working-directory: apps/${{ matrix.project }}
+        env:
+          GOOGLE_MAPS_API_KEY: ci-validation-placeholder
+        run: npx expo config --type public --json
 
   api-tests:
     runs-on: ubuntu-latest
