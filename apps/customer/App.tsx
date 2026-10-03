@@ -33,6 +33,20 @@ export default function App() {
   const [sellerDeliveryFee, setSellerDeliveryFee] = React.useState("");
   const [sellerDeliveryMode, setSellerDeliveryMode] = React.useState<"SAME_STATE" | "INTER_STATE" | "EXPRESS" | "PICKUP">("SAME_STATE");
   const [sellerStock, setSellerStock] = React.useState("1");
+  const [sellerPickupAddress, setSellerPickupAddress] = React.useState("");
+  const [sellerPickupLat, setSellerPickupLat] = React.useState("");
+  const [sellerPickupLng, setSellerPickupLng] = React.useState("");
+  const [sellerWeightKg, setSellerWeightKg] = React.useState("");
+  const [sellerLengthCm, setSellerLengthCm] = React.useState("");
+  const [sellerWidthCm, setSellerWidthCm] = React.useState("");
+  const [sellerHeightCm, setSellerHeightCm] = React.useState("");
+  const [sellerPerishable, setSellerPerishable] = React.useState(false);
+  const [marketplaceReceiverName, setMarketplaceReceiverName] = React.useState("");
+  const [marketplaceReceiverPhone, setMarketplaceReceiverPhone] = React.useState("");
+  const [marketplaceReceiverPin, setMarketplaceReceiverPin] = React.useState("");
+  const [marketplaceDropoffAddress, setMarketplaceDropoffAddress] = React.useState("");
+  const [marketplaceDropoffLat, setMarketplaceDropoffLat] = React.useState("");
+  const [marketplaceDropoffLng, setMarketplaceDropoffLng] = React.useState("");
   const [sellerPublishing, setSellerPublishing] = React.useState(false);
   const [authMode, setAuthMode] = React.useState<"login" | "register">("login");
   const [authName, setAuthName] = React.useState("");
@@ -198,6 +212,16 @@ export default function App() {
       Alert.alert("Sell an item", "Enter valid price, delivery fee, and stock values.");
       return;
     }
+    const pickupLatitude = Number(sellerPickupLat);
+    const pickupLongitude = Number(sellerPickupLng);
+    const weight = Number(sellerWeightKg);
+    const length = Number(sellerLengthCm);
+    const width = Number(sellerWidthCm);
+    const height = Number(sellerHeightCm);
+    if (sellerDeliveryMode !== "PICKUP" && (!sellerPickupAddress.trim() || !Number.isFinite(pickupLatitude) || !Number.isFinite(pickupLongitude) || !Number.isFinite(weight) || weight <= 0 || !Number.isFinite(length) || length <= 0 || !Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0)) {
+      Alert.alert("Sell an item", "Courier-delivered items need the seller pickup address, GPS coordinates, weight and dimensions.");
+      return;
+    }
     setSellerPublishing(true);
     try {
       await api.createMarketplaceListing({
@@ -212,10 +236,20 @@ export default function App() {
         priceMinor: Math.round(price * 100),
         deliveryFeeMinor: Math.round(deliveryFee * 100),
         deliveryMode: sellerDeliveryMode,
-        stockQuantity: stock
+        stockQuantity: stock,
+        pickupAddress: sellerPickupAddress.trim(),
+        pickupLatitude: Number.isFinite(pickupLatitude) ? pickupLatitude : 0,
+        pickupLongitude: Number.isFinite(pickupLongitude) ? pickupLongitude : 0,
+        weightKg: Number.isFinite(weight) ? weight : 1,
+        lengthCm: Number.isFinite(length) ? length : 1,
+        widthCm: Number.isFinite(width) ? width : 1,
+        heightCm: Number.isFinite(height) ? height : 1,
+        isPerishable: sellerPerishable
       });
       setSellerTitle(""); setSellerDescription(""); setSellerCategory(""); setSellerUseDescription(""); setSellerUsageInstructions("");
-      setSellerPrice(""); setSellerDeliveryFee(""); setSellerStock("1"); setShowSellerForm(false);
+      setSellerPrice(""); setSellerDeliveryFee(""); setSellerStock("1");
+      setSellerPickupAddress(""); setSellerPickupLat(""); setSellerPickupLng(""); setSellerWeightKg(""); setSellerLengthCm(""); setSellerWidthCm(""); setSellerHeightCm(""); setSellerPerishable(false);
+      setShowSellerForm(false);
       await loadMarketplace(marketplaceSearch);
       Alert.alert("Published", "Your item is now listed for sale on SwiftDrop Shop.");
     } catch (error) {
@@ -241,9 +275,22 @@ export default function App() {
       const data = await api.checkoutMarketplaceListing(selectedListing.id, 1, requestedDeliveryAt, checkoutIdempotencyKey);
       const payment = await api.initializeMarketplacePayment(data.order.id, authEmail.trim());
       await WebBrowser.openBrowserAsync(payment.authorizationUrl);
-      try {
-        await api.verifyMarketplacePayment(data.order.id);
-      } catch {}
+      let verification: any = null;
+      try { verification = await api.verifyMarketplacePayment(data.order.id); } catch {}
+      if (verification?.status === "AUTHORIZED" && selectedListing.delivery_mode !== "PICKUP") {
+        const lat = Number(marketplaceDropoffLat);
+        const lng = Number(marketplaceDropoffLng);
+        if (marketplaceReceiverName.trim() && marketplaceReceiverPhone.trim() && /^\d{6}$/.test(marketplaceReceiverPin) && marketplaceDropoffAddress.trim() && Number.isFinite(lat) && Number.isFinite(lng)) {
+          await api.fulfillMarketplaceOrder(data.order.id, {
+            receiverName: marketplaceReceiverName.trim(),
+            receiverPhone: marketplaceReceiverPhone.trim(),
+            receiverPin: marketplaceReceiverPin,
+            dropoffAddress: marketplaceDropoffAddress.trim(),
+            dropoffLatitude: lat,
+            dropoffLongitude: lng
+          });
+        }
+      }
       await loadMarketplaceOrders();
       Alert.alert(
         "Payment submitted",
@@ -722,6 +769,13 @@ export default function App() {
           <View style={styles.row}><TextInput style={styles.half} placeholder="Width (cm)" keyboardType="decimal-pad" value={sellerWidthCm} onChangeText={setSellerWidthCm} /><TextInput style={styles.half} placeholder="Height (cm)" keyboardType="decimal-pad" value={sellerHeightCm} onChangeText={setSellerHeightCm} /></View>
           <Pressable style={[styles.choice, sellerPerishable && styles.choiceActive]} onPress={() => setSellerPerishable(v => !v)}><Text style={styles.photoTitle}>{sellerPerishable ? "✓ Perishable / food" : "Mark as perishable / food"}</Text></Pressable>
         </>}
+        {sellerDeliveryMode !== "PICKUP" && <>
+          <TextInput style={styles.input} placeholder="Seller pickup address" value={sellerPickupAddress} onChangeText={setSellerPickupAddress} />
+          <View style={styles.row}><TextInput style={styles.half} placeholder="Pickup latitude" keyboardType="decimal-pad" value={sellerPickupLat} onChangeText={setSellerPickupLat} /><TextInput style={styles.half} placeholder="Pickup longitude" keyboardType="decimal-pad" value={sellerPickupLng} onChangeText={setSellerPickupLng} /></View>
+          <View style={styles.row}><TextInput style={styles.half} placeholder="Weight (kg)" keyboardType="decimal-pad" value={sellerWeightKg} onChangeText={setSellerWeightKg} /><TextInput style={styles.half} placeholder="Length (cm)" keyboardType="decimal-pad" value={sellerLengthCm} onChangeText={setSellerLengthCm} /></View>
+          <View style={styles.row}><TextInput style={styles.half} placeholder="Width (cm)" keyboardType="decimal-pad" value={sellerWidthCm} onChangeText={setSellerWidthCm} /><TextInput style={styles.half} placeholder="Height (cm)" keyboardType="decimal-pad" value={sellerHeightCm} onChangeText={setSellerHeightCm} /></View>
+          <Pressable style={[styles.choice, sellerPerishable && styles.choiceActive]} onPress={() => setSellerPerishable(v => !v)}><Text style={styles.photoTitle}>{sellerPerishable ? "✓ Perishable / food" : "Mark as perishable / food"}</Text></Pressable>
+        </>}
         <Pressable style={styles.primary} onPress={() => void publishMarketplaceListing()}><Text style={styles.primaryText}>{sellerPublishing ? "Publishing…" : "Publish item for sale"}</Text></Pressable>
       </View>}
       {selectedListing ? <View style={styles.productDetail}>
@@ -733,6 +787,15 @@ export default function App() {
         <Text style={styles.muted}>Condition: {selectedListing.condition} · Use: {selectedListing.use_description}</Text>
         {selectedListing.usage_instructions ? <Text style={styles.muted}>How to use: {selectedListing.usage_instructions}</Text> : null}
         <TextInput style={styles.input} placeholder="Preferred delivery date/time (optional), e.g. 2026-10-05T14:00:00+01:00" value={marketplaceDeliveryAt} onChangeText={setMarketplaceDeliveryAt} />
+        {selectedListing.delivery_mode !== "PICKUP" && <View style={styles.sellerCard}>
+          <Text style={styles.eyebrow}>DELIVERY DETAILS</Text>
+          <Text style={styles.muted}>These details create the real SwiftDrop delivery after Paystack confirms payment.</Text>
+          <TextInput style={styles.input} placeholder="Receiver full name" value={marketplaceReceiverName} onChangeText={setMarketplaceReceiverName} />
+          <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={marketplaceReceiverPhone} onChangeText={setMarketplaceReceiverPhone} />
+          <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
+          <TextInput style={styles.input} placeholder="Drop-off address" value={marketplaceDropoffAddress} onChangeText={setMarketplaceDropoffAddress} />
+          <View style={styles.row}><TextInput style={styles.half} placeholder="Drop-off latitude" keyboardType="decimal-pad" value={marketplaceDropoffLat} onChangeText={setMarketplaceDropoffLat} /><TextInput style={styles.half} placeholder="Drop-off longitude" keyboardType="decimal-pad" value={marketplaceDropoffLng} onChangeText={setMarketplaceDropoffLng} /></View>
+        </View>}
         {selectedListing.delivery_mode !== "PICKUP" && <View style={styles.sellerCard}>
           <Text style={styles.eyebrow}>DELIVERY DETAILS</Text>
           <Text style={styles.muted}>These details are used to create the real SwiftDrop delivery after Paystack confirms payment.</Text>
