@@ -861,6 +861,8 @@ const styles = StyleSheet.create({
   reviewFair: { backgroundColor: "#D4A62A" },
   reviewExcellent: { backgroundColor: "#B7654A" },
   dangerButton: { backgroundColor: "#C53B3B", borderRadius: 14, padding: 15, alignItems: "center" },
+  choice: { flex: 1, borderWidth: 1, borderColor: "#DED8D2", borderRadius: 12, padding: 13, alignItems: "center", backgroundColor: "#FFFFFF" },
+  choiceActive: { borderColor: "#B7654A", backgroundColor: "#F6E8E1" },
   supportChoice: { flex: 1, borderWidth: 1, borderColor: "#DED8D2", borderRadius: 12, padding: 13, alignItems: "center", backgroundColor: "#FFFFFF" },
   supportChoiceActive: { borderColor: "#B7654A", backgroundColor: "#F6E8E1" },
   supportChoiceText: { fontWeight: "800", color: "#2B2630" },
