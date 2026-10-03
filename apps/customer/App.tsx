@@ -164,10 +164,22 @@ export default function App() {
 
   async function checkoutMarketplaceListing() {
     if (!selectedListing) return;
+    if (!authEmail.trim()) {
+      Alert.alert("Payment email", "Add your email to your account before paying for a marketplace order.");
+      return;
+    }
     try {
       const data = await api.checkoutMarketplaceListing(selectedListing.id, 1);
-      Alert.alert("Checkout created", "Final price including delivery: ₦" + (Number(data.order.total_minor) / 100).toLocaleString() + ". Payment authorization is the next step.");
-    } catch (error) { Alert.alert("Checkout", error instanceof Error ? error.message : "Unable to create checkout"); }
+      const payment = await api.initializeMarketplacePayment(data.order.id, authEmail.trim());
+      await WebBrowser.openBrowserAsync(payment.authorizationUrl);
+      Alert.alert(
+        "Payment started",
+        "Your marketplace order is awaiting Paystack confirmation. Final price including delivery: ₦" +
+          (Number(data.order.total_minor) / 100).toLocaleString()
+      );
+    } catch (error) {
+      Alert.alert("Checkout", error instanceof Error ? error.message : "Unable to start marketplace payment");
+    }
   }
 
   async function loadSupportTickets() {
