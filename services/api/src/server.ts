@@ -608,6 +608,7 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
   const userId = identity(req);
   const delivery = databaseEnabled() ? await findDeliveryForUser(routeParam(req.params.id, "id"), userId, "CUSTOMER") : await getOne(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  if (delivery.paymentMode === "RECEIVER_ON_DELIVERY") return res.status(409).json({ error: "This order is payable by the receiver on delivery and does not use sender escrow." });
   if (!databaseEnabled()) return res.status(503).json({ error: "Payments require the production database" });
 
   const email = String(req.body?.email ?? "").trim();
@@ -639,7 +640,7 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
     return res.status(502).json({ error: "Payment provider initialization failed" });
   }
 
-  const payment = await createPayment({ deliveryId: delivery.id, provider: "paystack", amountMinor, currency: "NGN" });
+  const payment = await createPayment({ deliveryId: delivery.id, provider: "paystack", amountMinor, currency: "NGN", collectionMode: "SENDER_ESCROW" });
   await updatePaymentStatus(delivery.id, "PENDING", payload.data.reference ?? reference);
   await recordDeliveryEvent({
     deliveryId: delivery.id,
