@@ -1901,6 +1901,36 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
     }
   }
 
+  const receiverPaymentDelivery = await findDelivery(routeParam(req.params.id, "id"));
+  if (receiverPaymentDelivery?.paymentMode === "RECEIVER_ON_DELIVERY") {
+    if (receiverPaymentDelivery.status !== "ARRIVED") return res.status(409).json({ error: "The courier must arrive before receiver confirmation." });
+    if (receiverPaymentDelivery.receiverPhone !== receiverPhone) return res.status(403).json({ error: "Receiver details could not be verified" });
+    const pinKey = "receiver-payment:" + receiverPaymentDelivery.id + ":" + receiverPhone;
+    const pinRate = checkReceiverPinRate(pinKey);
+    if (!pinRate.allowed) return res.status(429).json({ error: "Too many PIN attempts. Try again later.", retryAfterMs: pinRate.retryAfterMs });
+    if (!await verifyReceiverPin(receiverPaymentDelivery.id, receiverPin)) {
+      recordReceiverPinFailure(pinKey);
+      return res.status(403).json({ error: "Receiver details could not be verified" });
+    }
+    clearReceiverPinFailures(pinKey);
+    const confirmed = await confirmReceiverOnDeliveryPaymentDue(receiverPaymentDelivery.id, receiverPhone, receiverPin);
+    if (!confirmed) return res.status(409).json({ error: "Receiver confirmation has already been recorded or the payment is no longer awaiting collection." });
+    await notificationForDelivery(
+      confirmed.id,
+      confirmed.senderId,
+      "Receiver confirmed package",
+      "The receiver confirmed the package. Payment is now due from the receiver before courier payout.",
+      "RECEIVER_PAYMENT_DUE"
+    );
+    return res.status(200).json({
+      delivery: safeDelivery(confirmed),
+      paymentMode: "RECEIVER_ON_DELIVERY",
+      paymentRequired: true,
+      amountMinor: confirmed.quote?.totalMinor ?? 0,
+      message: "Package receipt confirmed. The receiver must now complete payment."
+    });
+  }
+
   const payment = await findPayment(routeParam(req.params.id, "id"));
   if (!payment || payment.status !== "HELD") return res.status(409).json({ error: "Payment is not currently held for delivery release" });
   const deliveryForPin = await findDelivery(routeParam(req.params.id, "id"));
