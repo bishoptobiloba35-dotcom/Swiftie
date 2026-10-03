@@ -51,6 +51,51 @@ const checkoutSchema = z.object({
   idempotencyKey: z.string().trim().min(16).max(100)
 });
 
+router.get("/marketplace/my-listings", requireAuth(), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool.query(
+    `SELECT l.id,l.title,l.description,l.condition,l.category,l.price_minor,l.delivery_fee_minor,
+            l.delivery_mode,l.stock_quantity,l.is_active,l.created_at,l.updated_at,
+            s.display_name,s.location_label,
+            COALESCE((SELECT COUNT(*) FROM marketplace_orders mo WHERE mo.listing_id=l.id AND mo.status NOT IN ('CANCELLED','REFUNDED')),0)::int AS order_count
+       FROM marketplace_listings l
+       JOIN marketplace_seller_profiles s ON s.id=l.seller_profile_id
+      WHERE l.seller_user_id=$1
+      ORDER BY l.created_at DESC
+      LIMIT 100`,
+    [identity(req)]
+  );
+  return res.json({ listings: result.rows });
+});
+
+router.patch("/marketplace/listings/:id", requireAuth(), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const parsed = z.object({
+    title: z.string().trim().min(2).max(160).optional(),
+    description: z.string().trim().min(10).max(5000).optional(),
+    condition: z.enum(["NEW","LIKE_NEW","GOOD","FAIR","USED","FOR_PARTS"]).optional(),
+    priceMinor: z.number().int().positive().max(100000000000).optional(),
+    deliveryFeeMinor: z.number().int().nonnegative().max(10000000000).optional(),
+    stockQuantity: z.number().int().min(0).max(100000).optional(),
+    isActive: z.boolean().optional()
+  }).strict().safeParse(req.body);
+  if (!parsed.success || Object.keys(parsed.data).length === 0) return res.status(400).json({ error: parsed.success ? "No listing changes supplied" : parsed.error.flatten() });
+  const keys = Object.keys(parsed.data);
+  const cols: Record<string,string> = { title:"title",description:"description",condition:"condition",priceMinor:"price_minor",deliveryFeeMinor:"delivery_fee_minor",stockQuantity:"stock_quantity",isActive:"is_active" };
+  const sets:string[]=[]; const values:any[]=[];
+  for (const key of keys) { sets.push(`${cols[key]}=${values.length+1}`); values.push((parsed.data as any)[key]); }
+  values.push(String(req.params.id), identity(req));
+  const result = await pool.query(
+    `UPDATE marketplace_listings l SET ${sets.join(",")},updated_at=now()
+       FROM marketplace_seller_profiles s
+      WHERE l.id=${values.length-1} AND l.seller_profile_id=s.id AND l.seller_user_id=${values.length}
+      RETURNING l.id,l.title,l.description,l.condition,l.price_minor,l.delivery_fee_minor,l.stock_quantity,l.is_active,l.updated_at`,
+    values
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: "Listing not found" });
+  return res.json({ listing: result.rows[0] });
+});
+
 router.get("/marketplace/listings", async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const q = String(req.query.q ?? "").trim();
