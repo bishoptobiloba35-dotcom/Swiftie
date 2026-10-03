@@ -26,6 +26,8 @@ export type ApiDelivery = {
     totalMinor: number;
   };
   status: string;
+  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
+  receiverConfirmedAt?: string;
   exceptionStatus?: "NONE" | "FAILED_ATTEMPT" | "RESCHEDULED" | "RETURN_REQUESTED" | "RETURN_IN_TRANSIT" | "RETURNED";
   nextDeliveryAt?: string | null;
   driverId?: string;
@@ -51,6 +53,7 @@ export type ApiDelivery = {
 
 export type CreateDeliveryInput = {
   senderId?: string;
+  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
   receiverPin: string;
   receiverName: string;
   receiverPhone: string;
@@ -137,12 +140,23 @@ export class SwiftDropApi {
     if (!response.ok) throw new Error(data.error ?? "Unable to save rating");
   }
 
-  async confirmReceiver(deliveryId: string, receiverPhone: string, receiverPin: string): Promise<{ delivery: ApiDelivery; payoutAmountMinor: number; escrowStatus: string }> {
+  async confirmReceiver(deliveryId: string, receiverPhone: string, receiverPin: string): Promise<{ delivery: ApiDelivery; payoutAmountMinor?: number; escrowStatus?: string; paymentMode?: string; paymentRequired?: boolean; amountMinor?: number }> {
     const response = await fetch(this.baseUrl + `/api/deliveries/${encodeURIComponent(deliveryId)}/receiver-confirm`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ receiverPhone, receiverPin })
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error ?? "Unable to confirm receipt");
+    return data;
+  }
+
+  async initializeReceiverPayment(deliveryId: string, receiverPhone: string, receiverPin: string, email: string): Promise<{ paymentId: string; reference: string; authorizationUrl: string; accessCode?: string; amountMinor: number }> {
+    const response = await fetch(this.baseUrl + `/api/deliveries/${encodeURIComponent(deliveryId)}/receiver-payment/initialize`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ receiverPhone, receiverPin, email })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Receiver payment initialization failed");
     return data;
   }
 
