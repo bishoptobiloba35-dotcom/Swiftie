@@ -1137,7 +1137,7 @@ export async function assignNextDeliveryToDriver(driverId: string): Promise<Stor
        SELECT id
        FROM deliveries
        WHERE driver_id IS NULL
-         AND status = 'PAYMENT_AUTHORIZED'
+         AND (status = 'PAYMENT_AUTHORIZED' OR (status='CREATED' AND payment_mode='RECEIVER_ON_DELIVERY'))
        ORDER BY created_at ASC
        FOR UPDATE SKIP LOCKED
        LIMIT 1
@@ -1157,7 +1157,7 @@ export async function listOpenJobs(driverId: string): Promise<StoredDelivery[]> 
   const result = await pool.query(
     `SELECT d.* FROM deliveries d
      WHERE d.driver_id IS NULL
-       AND d.status = 'PAYMENT_AUTHORIZED'
+       AND (d.status = 'PAYMENT_AUTHORIZED' OR (d.status='CREATED' AND d.payment_mode='RECEIVER_ON_DELIVERY'))
        AND EXISTS (
          SELECT 1 FROM drivers dr
          WHERE dr.id=$1 AND dr.status='APPROVED' AND dr.online=true
@@ -1177,8 +1177,9 @@ export async function transitionDelivery(id: string, from: string, to: string, d
      WHERE id=$1
        AND status=$4
        AND (
-         ($4='PAYMENT_AUTHORIZED' AND driver_id IS NULL AND $3::uuid IS NOT NULL)
-         OR ($4<>'PAYMENT_AUTHORIZED' AND $3::uuid IS NOT NULL AND driver_id=$3::uuid)
+         (($4='PAYMENT_AUTHORIZED' OR ($4='CREATED' AND $2='DRIVER_ASSIGNED' AND payment_mode='RECEIVER_ON_DELIVERY'))
+           AND driver_id IS NULL AND $3::uuid IS NOT NULL)
+         OR ($4<>'PAYMENT_AUTHORIZED' AND NOT ($4='CREATED' AND $2='DRIVER_ASSIGNED') AND $3::uuid IS NOT NULL AND driver_id=$3::uuid)
          OR ($3::uuid IS NULL)
        )
      RETURNING *`,
