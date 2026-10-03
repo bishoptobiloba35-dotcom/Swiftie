@@ -23,15 +23,26 @@ const listingSchema = z.object({
   deliveryFeeMinor: z.number().int().nonnegative().max(10000000000),
   deliveryMode: z.enum(["SAME_STATE","INTER_STATE","EXPRESS","PICKUP"]),
   stockQuantity: z.number().int().min(0).max(100000),
-  pickupAddress: z.string().trim().min(5).max(300),
-  pickupLatitude: z.number().min(-90).max(90),
-  pickupLongitude: z.number().min(-180).max(180),
-  weightKg: z.number().positive().max(1000),
-  lengthCm: z.number().positive().max(500),
-  widthCm: z.number().positive().max(500),
-  heightCm: z.number().positive().max(500),
+  pickupAddress: z.string().trim().max(300).optional(),
+  pickupLatitude: z.number().min(-90).max(90).optional(),
+  pickupLongitude: z.number().min(-180).max(180).optional(),
+  weightKg: z.number().positive().max(1000).optional(),
+  lengthCm: z.number().positive().max(500).optional(),
+  widthCm: z.number().positive().max(500).optional(),
+  heightCm: z.number().positive().max(500).optional(),
   isPerishable: z.boolean().default(false),
   media: z.array(z.string()).max(8).optional()
+}).superRefine((value, ctx) => {
+  if (value.deliveryMode === "PICKUP") return;
+  const required: Array<[keyof typeof value, unknown]> = [
+    ["pickupAddress", value.pickupAddress], ["pickupLatitude", value.pickupLatitude], ["pickupLongitude", value.pickupLongitude],
+    ["weightKg", value.weightKg], ["lengthCm", value.lengthCm], ["widthCm", value.widthCm], ["heightCm", value.heightCm]
+  ];
+  for (const [field, fieldValue] of required) {
+    if (fieldValue === undefined || fieldValue === null || (field === "pickupAddress" && String(fieldValue).trim().length < 5)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: "Required for courier delivery" });
+    }
+  }
 });
 
 const checkoutSchema = z.object({
@@ -266,7 +277,7 @@ router.post("/marketplace/listings", requireAuth(), async (req, res) => {
        (seller_user_id,seller_profile_id,title,description,condition,use_description,usage_instructions,category,price_minor,delivery_fee_minor,final_price_minor,currency,delivery_mode,stock_quantity,pickup_address,pickup_lat,pickup_lng,weight_kg,length_cm,width_cm,height_cm,is_perishable)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'NGN',$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
        RETURNING *`,
-      [userId,seller.rows[0].id,p.title,p.description,p.condition,p.useDescription,p.usageInstructions ?? null,p.category,p.priceMinor,p.deliveryFeeMinor,finalPriceMinor,p.deliveryMode,p.stockQuantity,p.pickupAddress,p.pickupLatitude,p.pickupLongitude,p.weightKg,p.lengthCm,p.widthCm,p.heightCm,p.isPerishable]
+      [userId,seller.rows[0].id,p.title,p.description,p.condition,p.useDescription,p.usageInstructions ?? null,p.category,p.priceMinor,p.deliveryFeeMinor,finalPriceMinor,p.deliveryMode,p.stockQuantity,p.pickupAddress ?? null,p.pickupLatitude ?? null,p.pickupLongitude ?? null,p.weightKg ?? null,p.lengthCm ?? null,p.widthCm ?? null,p.heightCm ?? null,p.isPerishable]
     );
 
     const uploadedKeys: string[] = [];
