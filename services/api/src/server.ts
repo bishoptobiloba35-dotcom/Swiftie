@@ -577,6 +577,9 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
         paymentMode: input.paymentMode,
         quote: input.quote
       });
+      if (input.paymentMode === "RECEIVER_ON_DELIVERY") {
+        await createPayment({ deliveryId: created.id, provider: process.env.PAYMENT_PROVIDER || "paystack", amountMinor: input.quote.totalMinor, currency: "NGN", collectionMode: "RECEIVER_ON_DELIVERY" });
+      }
       if (input.pickupDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'PICKUP',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.pickupDropOffLocationId]);
       if (input.dropoffDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'DROPOFF',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.dropoffDropOffLocationId]);
       return res.status(201).json(safeDelivery(created));
