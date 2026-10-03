@@ -100,6 +100,89 @@ router.post("/marketplace/listings", requireAuth("AGENT"), async (req, res) => {
   } finally { client.release(); }
 });
 
+
+router.post("/marketplace/orders/:id/payment/initialize", requireAuth("CUSTOMER","AGENT","DRIVER"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const orderId = String(req.params.id);
+  const email = String(req.body?.email ?? "").trim().toLowerCase();
+  if (!email) return res.status(400).json({ error: "Email is required" });
+  const userId = identity(req);
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  if (!secret) return res.status(503).json({ error: "Paystack is not configured" });
+
+  const existing = await pool.query(
+    `SELECT mop.*, mo.buyer_user_id, mo.status AS order_status
+       FROM marketplace_order_payments mop
+       JOIN marketplace_orders mo ON mo.id=mop.marketplace_order_id
+      WHERE mop.marketplace_order_id=$1 AND mo.buyer_user_id=$2
+      ORDER BY mop.created_at DESC LIMIT 1`,
+    [orderId, userId]
+  );
+  const current = existing.rows[0];
+  if (current?.status === "AUTHORIZED" || current?.status === "REFUNDED") {
+    return res.status(409).json({ error: `Marketplace order payment is already ${String(current.status).toLowerCase()}` });
+  }
+  const order = (await pool.query(
+    `SELECT id,buyer_user_id,total_minor,currency,status FROM marketplace_orders WHERE id=$1 AND buyer_user_id=$2`,
+    [orderId, userId]
+  )).rows[0];
+  if (!order) return res.status(404).json({ error: "Marketplace order not found" });
+  if (order.status !== "PENDING_PAYMENT") return res.status(409).json({ error: "Marketplace order is not awaiting payment" });
+
+  const amountMinor = Number(order.total_minor);
+  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) return res.status(409).json({ error: "Marketplace order amount is invalid" });
+
+  const reference = "SD-MKT-" + orderId + "-" + Date.now();
+  const response = await fetch("https://api.paystack.co/transaction/initialize", {
+    method: "POST",
+    headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
+    body: JSON.stringify({
+      email,
+      amount: String(amountMinor),
+      currency: "NGN",
+      reference,
+      metadata: { marketplaceOrderId: orderId, buyerUserId: userId }
+    })
+  });
+  const payload = await response.json() as { status?: boolean; message?: string; data?: { authorization_url?: string; access_code?: string; reference?: string } };
+  if (!response.ok || !payload.status || !payload.data?.authorization_url) {
+    return res.status(502).json({ error: "Payment provider initialization failed" });
+  }
+
+  const payment = await pool.query(
+    `INSERT INTO marketplace_order_payments
+       (marketplace_order_id,buyer_user_id,provider,provider_reference,amount_minor,currency,status,provider_status,authorization_url)
+     VALUES($1,$2,'paystack',$3,$4,'NGN','PENDING','pending',$5)
+     ON CONFLICT (marketplace_order_id) DO UPDATE
+       SET provider_reference=EXCLUDED.provider_reference,
+           amount_minor=EXCLUDED.amount_minor,
+           provider_status='pending',
+           authorization_url=EXCLUDED.authorization_url,
+           updated_at=now()
+     RETURNING *`,
+    [orderId, userId, reference, amountMinor, payload.data.authorization_url]
+  );
+  return res.status(201).json({
+    payment: payment.rows[0],
+    authorizationUrl: payload.data.authorization_url,
+    accessCode: payload.data.access_code ?? null,
+    reference
+  });
+});
+
+router.get("/marketplace/orders/:id/payment", requireAuth("CUSTOMER","AGENT","DRIVER"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool.query(
+    `SELECT mop.id,mop.marketplace_order_id,mop.amount_minor,mop.currency,mop.status,mop.provider_status,mop.provider_reference,mop.created_at,mop.updated_at
+       FROM marketplace_order_payments mop
+       JOIN marketplace_orders mo ON mo.id=mop.marketplace_order_id
+      WHERE mop.marketplace_order_id=$1 AND mo.buyer_user_id=$2`,
+    [String(req.params.id), identity(req)]
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: "Marketplace payment not found" });
+  return res.json({ payment: result.rows[0] });
+});
+
 router.post("/marketplace/listings/:id/checkout", requireAuth("CUSTOMER","AGENT","DRIVER"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const quantity = Number(req.body?.quantity ?? 1);
