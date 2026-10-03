@@ -851,24 +851,28 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
               [payment.marketplace_order_id]
             );
           } else if (event.event === "charge.failed" || !amountMatches) {
-            await client.query(
+            const failedPayment = await client.query(
               `UPDATE marketplace_order_payments
                   SET status='FAILED',
                       provider_status=$2,
                       updated_at=now()
-                WHERE id=$1 AND status='PENDING'`,
+                WHERE id=$1 AND status='PENDING'
+                RETURNING id`,
               [payment.id, !amountMatches ? "amount_mismatch" : "failed"]
             );
-            const restored = await client.query(
-              `UPDATE marketplace_listings l
-                  SET stock_quantity=l.stock_quantity+$2,
-                      status=CASE WHEN l.status='SOLD_OUT' THEN 'PUBLISHED' ELSE l.status END,
-                      updated_at=now()
-                 FROM marketplace_orders mo
-                WHERE mo.id=$1 AND l.id=mo.listing_id
-                RETURNING l.stock_quantity,l.status`,
-              [payment.marketplace_order_id, payment.quantity]
-            );
+            let restored = { rows: [{ stock_quantity: null, status: null }] as Array<{ stock_quantity: unknown; status: unknown }> };
+            if (failedPayment.rows[0]) {
+              restored = await client.query(
+                `UPDATE marketplace_listings l
+                    SET stock_quantity=l.stock_quantity+$2,
+                        status=CASE WHEN l.status='SOLD_OUT' THEN 'PUBLISHED' ELSE l.status END,
+                        updated_at=now()
+                   FROM marketplace_orders mo
+                  WHERE mo.id=$1 AND l.id=mo.listing_id
+                  RETURNING l.stock_quantity,l.status`,
+                [payment.marketplace_order_id, payment.quantity]
+              );
+            }
             await client.query(
               `UPDATE marketplace_orders
                   SET status='CANCELLED', updated_at=now()
