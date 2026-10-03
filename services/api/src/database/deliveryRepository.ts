@@ -166,6 +166,7 @@ export type StoredDelivery = {
   pickup: { label: string; formattedAddress: string; location: { latitude: number; longitude: number } };
   dropoff: { label: string; formattedAddress: string; location: { latitude: number; longitude: number } };
   status: string;
+  paymentMode: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
   exceptionStatus?: string;
   nextDeliveryAt?: string | null;
   driverId?: string;
@@ -205,6 +206,7 @@ function rowToDelivery(row: any): StoredDelivery {
     pickup: { label: "Pickup", formattedAddress: row.pickup_address, location: { latitude: Number(row.pickup_lat), longitude: Number(row.pickup_lng) } },
     dropoff: { label: "Drop-off", formattedAddress: row.dropoff_address, location: { latitude: Number(row.dropoff_lat), longitude: Number(row.dropoff_lng) } },
     status: row.status,
+    paymentMode: row.payment_mode === "RECEIVER_ON_DELIVERY" ? "RECEIVER_ON_DELIVERY" : "SENDER_ESCROW",
     exceptionStatus: row.exception_status ?? "NONE",
     nextDeliveryAt: row.next_delivery_at ? new Date(row.next_delivery_at).toISOString() : null,
     driverId: row.driver_id ?? undefined,
