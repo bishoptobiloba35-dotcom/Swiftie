@@ -220,6 +220,23 @@ export class SwiftDropApi {
     const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Unable to create checkout");
     return data;
   }
+  async initializeMarketplacePayment(orderId: string, email: string): Promise<{ authorizationUrl: string; accessCode?: string | null; reference: string; payment: any }> {
+    const response = await fetch(this.baseUrl + "/api/marketplace/orders/" + encodeURIComponent(orderId) + "/payment/initialize", {
+      method: "POST",
+      headers: this.headers(true),
+      body: JSON.stringify({ email })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to initialize marketplace payment");
+    return data;
+  }
+  async marketplacePayment(orderId: string): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/marketplace/orders/" + encodeURIComponent(orderId) + "/payment", { headers: this.headers() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to load marketplace payment");
+    return data.payment;
+  }
+
   async health(): Promise<{ ok: boolean }> {
     const response = await fetch(this.baseUrl + "/health");
     if (!response.ok) throw new Error("API health check failed");
