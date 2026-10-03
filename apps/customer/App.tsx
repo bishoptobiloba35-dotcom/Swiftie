@@ -894,6 +894,7 @@ const styles = StyleSheet.create({
   container: { padding: 20, paddingBottom: 42, gap: 14 },
   homeContainer: { padding: 18, paddingBottom: 40, gap: 14 },
   row: { flexDirection: "row", gap: 10 },
+  rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   third: { flex: 1 },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   headerActions: { flexDirection: "row", gap: 14, alignItems: "center" },
