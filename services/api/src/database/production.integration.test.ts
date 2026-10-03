@@ -5,6 +5,8 @@ import { pool } from "./db.js";
 import { runMigrations } from "./migrate.js";
 import {
   confirmReceiverAndReleaseEscrow,
+  confirmReceiverOnDeliveryPaymentDue,
+  settleReceiverPaymentAndReleasePayout,
   createDispute,
   createEligiblePayout,
   createPayment,
@@ -213,6 +215,52 @@ if (!db) {
     )).rows[0];
     assert.equal(raceState.status, "ARRIVED");
     assert.equal(raceState.payment_status, "HELD");
+    const receiverPaidDelivery = await createPersistentDelivery({
+      senderId: customer.id,
+      receiverName: "Receiver Pays Customer",
+      receiverPhone: "+2349020000003",
+      declaredValueMinor: 200000,
+      paymentMode: "RECEIVER_ON_DELIVERY",
+      pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.0765, longitude: 7.3986 } },
+      dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.4 } },
+      receiverPin: "333444",
+      weightKg: 2,
+      dimensionsCm: { length: 20, width: 20, height: 20 },
+      isPerishable: false,
+      quote: { currency: "NGN", distanceMeters: 1000, durationSeconds: 450, baseFareMinor: 50000, distanceFareMinor: 18000, weightFareMinor: 10000, sizeFareMinor: 0, perishableSurchargeMinor: 0, fuelReferenceMinor: 50000, protectionReserveMinor: 20000, pricingVersion: 1, serviceFeeMinor: 7800, totalMinor: 105800 }
+    });
+    await createPayment({ deliveryId: receiverPaidDelivery.id, provider: "paystack", amountMinor: 105800, collectionMode: "RECEIVER_ON_DELIVERY" });
+    assert.equal(receiverPaidDelivery.paymentMode, "RECEIVER_ON_DELIVERY");
+    assert.equal((await transitionDelivery(receiverPaidDelivery.id, "CREATED", "DRIVER_ASSIGNED", driver.id))?.driverId, driver.id);
+    assert.equal((await transitionDelivery(receiverPaidDelivery.id, "DRIVER_ASSIGNED", "DRIVER_AT_PICKUP", driver.id))?.status, "DRIVER_AT_PICKUP");
+    assert.equal((await savePickupPhoto(receiverPaidDelivery.id, driver.id, "supabase://receiver-paid/pickup"))?.status, "PICKED_UP");
+    assert.equal((await transitionDelivery(receiverPaidDelivery.id, "PICKED_UP", "IN_TRANSIT", driver.id))?.status, "IN_TRANSIT");
+    assert.equal((await transitionDelivery(receiverPaidDelivery.id, "IN_TRANSIT", "ARRIVED", driver.id))?.status, "ARRIVED");
+    const receiverConfirmed = await confirmReceiverOnDeliveryPaymentDue(receiverPaidDelivery.id, "+2349020000003", "333444");
+    assert.ok(receiverConfirmed);
+    assert.equal(receiverConfirmed.status, "ARRIVED");
+    assert.ok(receiverConfirmed.receiverConfirmedAt);
+    const beforeReceiverPayment = (await db.query(
+      "SELECT p.status AS payment_status, p.escrow_status, d.status AS delivery_status FROM payments p JOIN deliveries d ON d.id=p.delivery_id WHERE p.delivery_id=$1",
+      [receiverPaidDelivery.id]
+    )).rows[0];
+    assert.equal(beforeReceiverPayment.payment_status, "PENDING");
+    assert.equal(beforeReceiverPayment.escrow_status, "NOT_APPLICABLE");
+    assert.equal(beforeReceiverPayment.delivery_status, "ARRIVED");
+    assert.equal(await settleReceiverPaymentAndReleasePayout(receiverPaidDelivery.id, "SD-RECEIVER-PAYMENT-1", 105799, "NGN", 90), null);
+    const settledReceiver = await settleReceiverPaymentAndReleasePayout(receiverPaidDelivery.id, "SD-RECEIVER-PAYMENT-1", 105800, "NGN", 90);
+    assert.ok(settledReceiver);
+    assert.equal(settledReceiver.delivery.status, "DELIVERED");
+    assert.equal(settledReceiver.payoutAmountMinor, 77220);
+    const receiverFinancial = (await db.query(
+      "SELECT p.status AS payment_status, p.escrow_status, p.collection_mode, d.status AS delivery_status, po.status AS payout_status FROM payments p JOIN deliveries d ON d.id=p.delivery_id LEFT JOIN payouts po ON po.delivery_id=d.id WHERE p.delivery_id=$1",
+      [receiverPaidDelivery.id]
+    )).rows[0];
+    assert.equal(receiverFinancial.payment_status, "RELEASED");
+    assert.equal(receiverFinancial.escrow_status, "NOT_APPLICABLE");
+    assert.equal(receiverFinancial.collection_mode, "RECEIVER_ON_DELIVERY");
+    assert.equal(receiverFinancial.delivery_status, "DELIVERED");
+    assert.equal(receiverFinancial.payout_status, "ELIGIBLE");
     const agentUser = await db.query(
       `INSERT INTO users(full_name,phone,email,password_hash,role)
        VALUES('Marketplace Agent','+2349020000099','marketplace-agent@example.test','integration-hash','AGENT')
