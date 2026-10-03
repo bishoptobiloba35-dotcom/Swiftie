@@ -32,7 +32,8 @@ const migrations = [
   { id: "029_returned_delivery_status", file: "029_returned_delivery_status.sql" },
   { id: "034_declared_goods_value", file: "034_declared_goods_value.sql" },
   { id: "035_authoritative_pricing_config", file: "035_authoritative_pricing_config.sql" },
-  { id: "036_marketplace_listings", file: "036_marketplace_listings.sql" }
+  { id: "036_marketplace_listings", file: "036_marketplace_listings.sql" },
+  { id: "037_marketplace_order_payments", file: "037_marketplace_order_payments.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
