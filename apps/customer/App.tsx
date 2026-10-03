@@ -5,7 +5,7 @@ import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import * as ImagePicker from "expo-image-picker";
 import Constants from "expo-constants";
-import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, ScrollView, Platform } from "react-native";
+import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, ScrollView, Platform, Image } from "react-native";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { SwiftDropApi, type ApiDelivery } from "../../packages/shared/src/api";
 import { haversineDistanceMeters, etaMinutes } from "./src/trackingMath";
@@ -13,7 +13,7 @@ import { haversineDistanceMeters, etaMinutes } from "./src/trackingMath";
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 const api = new SwiftDropApi(API_URL);
 
-export default function ImagePickerPreview({ source }: { source: { uri: string } }) { return <View style={{ width: 76, height: 76, borderRadius: 12, overflow: "hidden", backgroundColor: "#EEE" }}><Text style={{ fontSize: 10, textAlign: "center", paddingTop: 28 }}>Photo</Text></View>; }
+export default function ImagePickerPreview({ source }: { source: { uri: string } }) { return <Image source={source} style={{ width: 76, height: 76, borderRadius: 12 }} resizeMode="cover" />; }
 
 function App() {
   const [signedIn, setSignedIn] = React.useState(false);
