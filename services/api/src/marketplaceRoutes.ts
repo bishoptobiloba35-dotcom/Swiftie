@@ -37,7 +37,7 @@ router.get("/marketplace/listings", async (req, res) => {
     `SELECT l.id,l.title,l.description,l.condition,l.use_description,l.usage_instructions,l.category,l.delivery_fee_minor,l.final_price_minor,
             l.currency,l.delivery_mode,l.stock_quantity,l.created_at,
             s.id AS seller_id,s.display_name AS seller_name,s.bio AS seller_bio,s.location_label AS seller_location,
-            COALESCE((SELECT json_agg(json_build_object('storageKey',m.storage_key,'sortOrder',m.sort_order) ORDER BY m.sort_order)
+            COALESCE((SELECT json_agg(json_build_object('id',m.id,'url','/api/marketplace/listings/' || m.listing_id || '/media/' || m.id,'sortOrder',m.sort_order) ORDER BY m.sort_order)
                       FROM marketplace_listing_media m WHERE m.listing_id=l.id),'[]'::json) AS media
        FROM marketplace_listings l
        JOIN marketplace_seller_profiles s ON s.id=l.seller_profile_id
@@ -76,7 +76,9 @@ router.get("/marketplace/listings/:id", async (req, res) => {
   const result = await pool.query(
     `SELECT l.id,l.title,l.description,l.condition,l.use_description,l.usage_instructions,l.category,l.delivery_fee_minor,l.final_price_minor,
             l.currency,l.delivery_mode,l.stock_quantity,l.created_at,
-            s.id AS seller_id,s.user_id AS seller_user_id,s.display_name AS seller_name,s.bio AS seller_bio,s.location_label AS seller_location
+            s.id AS seller_id,s.user_id AS seller_user_id,s.display_name AS seller_name,s.bio AS seller_bio,s.location_label AS seller_location,
+            COALESCE((SELECT json_agg(json_build_object('id',m.id,'url','/api/marketplace/listings/' || m.listing_id || '/media/' || m.id,'sortOrder',m.sort_order) ORDER BY m.sort_order)
+                      FROM marketplace_listing_media m WHERE m.listing_id=l.id),'[]'::json) AS media
        FROM marketplace_listings l
        JOIN marketplace_seller_profiles s ON s.id=l.seller_profile_id
       WHERE l.id=$1 AND l.status='PUBLISHED' AND s.status='ACTIVE'`,
