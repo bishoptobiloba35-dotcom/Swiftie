@@ -263,6 +263,13 @@ export class SwiftDropApi {
     if (!response.ok) throw new Error(data.error ?? "Unable to load marketplace orders");
     return data.orders ?? [];
   }
+  async verifyMarketplacePayment(orderId: string): Promise<any> {
+    return this.request("/api/marketplace/orders/" + encodeURIComponent(orderId) + "/payment/verify", {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+  }
+
   async marketplaceOrder(orderId: string): Promise<any> {
     const response = await fetch(this.baseUrl + "/api/marketplace/orders/" + encodeURIComponent(orderId), { headers: this.headers() });
     const data = await response.json();
