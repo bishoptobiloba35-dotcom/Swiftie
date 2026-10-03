@@ -19,5 +19,3 @@ ALTER TABLE drop_off_commission_ledger
 COMMENT ON COLUMN drop_off_commission_ledger.amount_minor IS
   'Fixed drop-off partner earning: NGN 500 (50000 minor units) per accepted order/parcel.';
 
-CREATE INDEX IF NOT EXISTS idx_drop_off_commission_parcel_unique
-  ON drop_off_commission_ledger(parcel_id);
