@@ -715,6 +715,13 @@ export default function App() {
         <TextInput style={styles.input} placeholder="Delivery fee (₦)" keyboardType="decimal-pad" value={sellerDeliveryFee} onChangeText={setSellerDeliveryFee} />
         <TextInput style={styles.input} placeholder="Stock quantity" keyboardType="number-pad" value={sellerStock} onChangeText={setSellerStock} />
         <TextInput style={styles.input} placeholder="Delivery mode: SAME_STATE / INTER_STATE / EXPRESS / PICKUP" value={sellerDeliveryMode} onChangeText={v => setSellerDeliveryMode((v.trim().toUpperCase() || "SAME_STATE") as typeof sellerDeliveryMode)} />
+        {sellerDeliveryMode !== "PICKUP" && <>
+          <TextInput style={styles.input} placeholder="Seller pickup address" value={sellerPickupAddress} onChangeText={setSellerPickupAddress} />
+          <View style={styles.row}><TextInput style={styles.half} placeholder="Pickup latitude" keyboardType="decimal-pad" value={sellerPickupLat} onChangeText={setSellerPickupLat} /><TextInput style={styles.half} placeholder="Pickup longitude" keyboardType="decimal-pad" value={sellerPickupLng} onChangeText={setSellerPickupLng} /></View>
+          <View style={styles.row}><TextInput style={styles.half} placeholder="Weight (kg)" keyboardType="decimal-pad" value={sellerWeightKg} onChangeText={setSellerWeightKg} /><TextInput style={styles.half} placeholder="Length (cm)" keyboardType="decimal-pad" value={sellerLengthCm} onChangeText={setSellerLengthCm} /></View>
+          <View style={styles.row}><TextInput style={styles.half} placeholder="Width (cm)" keyboardType="decimal-pad" value={sellerWidthCm} onChangeText={setSellerWidthCm} /><TextInput style={styles.half} placeholder="Height (cm)" keyboardType="decimal-pad" value={sellerHeightCm} onChangeText={setSellerHeightCm} /></View>
+          <Pressable style={[styles.choice, sellerPerishable && styles.choiceActive]} onPress={() => setSellerPerishable(v => !v)}><Text style={styles.photoTitle}>{sellerPerishable ? "✓ Perishable / food" : "Mark as perishable / food"}</Text></Pressable>
+        </>}
         <Pressable style={styles.primary} onPress={() => void publishMarketplaceListing()}><Text style={styles.primaryText}>{sellerPublishing ? "Publishing…" : "Publish item for sale"}</Text></Pressable>
       </View>}
       {selectedListing ? <View style={styles.productDetail}>
@@ -726,6 +733,15 @@ export default function App() {
         <Text style={styles.muted}>Condition: {selectedListing.condition} · Use: {selectedListing.use_description}</Text>
         {selectedListing.usage_instructions ? <Text style={styles.muted}>How to use: {selectedListing.usage_instructions}</Text> : null}
         <TextInput style={styles.input} placeholder="Preferred delivery date/time (optional), e.g. 2026-10-05T14:00:00+01:00" value={marketplaceDeliveryAt} onChangeText={setMarketplaceDeliveryAt} />
+        {selectedListing.delivery_mode !== "PICKUP" && <View style={styles.sellerCard}>
+          <Text style={styles.eyebrow}>DELIVERY DETAILS</Text>
+          <Text style={styles.muted}>These details are used to create the real SwiftDrop delivery after Paystack confirms payment.</Text>
+          <TextInput style={styles.input} placeholder="Receiver full name" value={marketplaceReceiverName} onChangeText={setMarketplaceReceiverName} />
+          <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={marketplaceReceiverPhone} onChangeText={setMarketplaceReceiverPhone} />
+          <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
+          <TextInput style={styles.input} placeholder="Drop-off address" value={marketplaceDropoffAddress} onChangeText={setMarketplaceDropoffAddress} />
+          <View style={styles.row}><TextInput style={styles.half} placeholder="Drop-off latitude" keyboardType="decimal-pad" value={marketplaceDropoffLat} onChangeText={setMarketplaceDropoffLat} /><TextInput style={styles.half} placeholder="Drop-off longitude" keyboardType="decimal-pad" value={marketplaceDropoffLng} onChangeText={setMarketplaceDropoffLng} /></View>
+        </View>}
         <View style={styles.sellerCard}><Text style={styles.eyebrow}>SELLER</Text><Text style={styles.homeHeading}>{selectedListing.seller_name}</Text><Text>{selectedListing.seller_bio || "Verified SwiftDrop marketplace seller."}</Text><Text style={styles.muted}>{selectedListing.seller_location || "Nigeria"}</Text></View>
         <Pressable style={styles.primary} onPress={() => void checkoutMarketplaceListing()}><Text style={styles.primaryText}>Proceed to checkout</Text></Pressable>
         <Text style={styles.homeHeading}>More from this seller</Text>
