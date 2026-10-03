@@ -477,10 +477,11 @@ export default function App() {
   if (!signedIn && receiverMode) {
     return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.auth}>
       <Text style={styles.logo}>SwiftDrop</Text><Text style={styles.brandTag}>MOVE WITH CONFIDENCE</Text><Text style={styles.eyebrow}>RECEIVER</Text>
-      <Text style={styles.subtitle}>Confirm that you received the parcel. Your confirmation releases the courier's held payment.</Text>
+      <Text style={styles.subtitle}>Confirm receipt with your PIN. If the sender selected receiver payment, you will pay the order amount immediately after confirmation.</Text>
       <TextInput style={styles.input} placeholder="Tracking code" value={trackingCode} onChangeText={setTrackingCode} autoCapitalize="characters" />
       <TextInput style={styles.input} placeholder="Receiver phone number" value={trackingPhone} onChangeText={setTrackingPhone} keyboardType="phone-pad" />
       <TextInput style={styles.input} placeholder="Six-digit receiver PIN" value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} keyboardType="number-pad" secureTextEntry maxLength={6} />
+      <TextInput style={styles.input} placeholder="Payment email (required if receiver pays)" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
       <Pressable style={styles.primary} onPress={() => void (async () => {
         try {
           const tracked = await api.track(trackingCode.trim().toUpperCase(), trackingPhone.trim());
@@ -488,7 +489,14 @@ export default function App() {
           if (tracked.status !== "ARRIVED") throw new Error("The courier has not marked the parcel as arrived yet.");
           const result = await api.confirmReceiver(tracked.id, trackingPhone.trim(), receiverConfirmPin);
           setDelivery(result.delivery);
-          Alert.alert("Delivery complete", "Receipt confirmed. Courier payment has been released for payout.");
+          if (result.paymentRequired) {
+            if (!email.trim()) throw new Error("Enter the receiver payment email before paying.");
+            const payment = await api.initializeReceiverPayment(tracked.id, trackingPhone.trim(), receiverConfirmPin, email.trim());
+            await WebBrowser.openBrowserAsync(payment.authorizationUrl);
+            Alert.alert("Payment started", "Complete the receiver payment. SwiftDrop will verify it before marking the order delivered.");
+          } else {
+            Alert.alert("Delivery complete", "Receipt confirmed. Courier payment has been released for payout.");
+          }
         } catch (error) {
           Alert.alert("Unable to complete", error instanceof Error ? error.message : "Please check the tracking details.");
         }
