@@ -302,6 +302,31 @@ export default function App() {
     }
   }
 
+  async function fulfillExistingMarketplaceOrder(orderId: string) {
+    const lat = Number(marketplaceDropoffLat);
+    const lng = Number(marketplaceDropoffLng);
+    if (!marketplaceReceiverName.trim() || !marketplaceReceiverPhone.trim() || !/^\\d{6}$/.test(marketplaceReceiverPin) || !marketplaceDropoffAddress.trim() || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+      Alert.alert("Delivery details", "Enter receiver name, phone, a 6-digit PIN, and a valid drop-off address with GPS coordinates.");
+      return;
+    }
+    try {
+      await api.fulfillMarketplaceOrder(orderId, {
+        receiverName: marketplaceReceiverName.trim(),
+        receiverPhone: marketplaceReceiverPhone.trim(),
+        receiverPin: marketplaceReceiverPin,
+        dropoffAddress: marketplaceDropoffAddress.trim(),
+        dropoffLatitude: lat,
+        dropoffLongitude: lng
+      });
+      await loadMarketplaceOrders();
+      setMarketplaceReceiverName(""); setMarketplaceReceiverPhone(""); setMarketplaceReceiverPin("");
+      setMarketplaceDropoffAddress(""); setMarketplaceDropoffLat(""); setMarketplaceDropoffLng("");
+      Alert.alert("Delivery initialized", "Your marketplace order is now connected to SwiftDrop tracking.");
+    } catch (error) {
+      Alert.alert("Delivery setup failed", error instanceof Error ? error.message : "Unable to initialize marketplace delivery");
+    }
+  }
+
   async function loadSupportTickets() {
     try { setSupportTickets(await api.supportTickets()); } catch {}
   }
@@ -745,6 +770,19 @@ export default function App() {
             <Text>₦{(Number(order.total_minor) / 100).toLocaleString()} · Qty {order.quantity}</Text>
             {order.requested_delivery_at ? <Text style={styles.muted}>Requested delivery: {new Date(order.requested_delivery_at).toLocaleString()}</Text> : null}
             <Text style={styles.muted}>Seller: {order.seller_name}</Text>
+            {order.delivery_id ? <Text style={styles.done}>✓ Connected to delivery · {order.fulfillment_status}</Text> : order.status === "PAID" && order.fulfillment_status === "NOT_STARTED" ? <View style={styles.card}>
+              <Text style={styles.photoTitle}>Complete delivery details</Text>
+              <Text style={styles.muted}>Your payment is authorized. Add the receiver and drop-off details to create the real SwiftDrop delivery and enable tracking.</Text>
+              <TextInput style={styles.input} placeholder="Receiver full name" value={marketplaceReceiverName} onChangeText={setMarketplaceReceiverName} />
+              <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={marketplaceReceiverPhone} onChangeText={setMarketplaceReceiverPhone} />
+              <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
+              <TextInput style={styles.input} placeholder="Drop-off address" value={marketplaceDropoffAddress} onChangeText={setMarketplaceDropoffAddress} />
+              <View style={styles.row}>
+                <TextInput style={[styles.input, styles.half]} placeholder="Latitude" keyboardType="decimal-pad" value={marketplaceDropoffLat} onChangeText={setMarketplaceDropoffLat} />
+                <TextInput style={[styles.input, styles.half]} placeholder="Longitude" keyboardType="decimal-pad" value={marketplaceDropoffLng} onChangeText={setMarketplaceDropoffLng} />
+              </View>
+              <Pressable style={styles.primary} onPress={() => void fulfillExistingMarketplaceOrder(order.id)}><Text style={styles.primaryText}>Start SwiftDrop delivery</Text></Pressable>
+            </View> : null}
           </View>
         )}
       </View>
