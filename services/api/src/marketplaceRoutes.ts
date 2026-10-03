@@ -181,6 +181,47 @@ router.get("/marketplace/orders/:id", requireAuth(), async (req, res) => {
   return res.json({ order: result.rows[0] });
 });
 
+router.post("/marketplace/orders/:id/cancel", requireAuth(), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const orderResult = await client.query(
+      `SELECT mo.id,mo.status,mo.quantity,mo.listing_id,mo.buyer_user_id,l.seller_user_id,l.stock_quantity,
+              mop.status AS payment_status
+         FROM marketplace_orders mo
+         JOIN marketplace_listings l ON l.id=mo.listing_id
+         LEFT JOIN marketplace_order_payments mop ON mop.marketplace_order_id=mo.id
+        WHERE mo.id=$1 AND (mo.buyer_user_id=$2 OR l.seller_user_id=$2)
+        FOR UPDATE OF mo,l`,
+      [req.params.id, identity(req)]
+    );
+    const order = orderResult.rows[0];
+    if (!order) { await client.query("ROLLBACK"); return res.status(404).json({ error: "Order not found" }); }
+    if (!["PENDING","PROCESSING"].includes(order.status)) { await client.query("ROLLBACK"); return res.status(409).json({ error: "Order cannot be cancelled in its current state" }); }
+    if (order.payment_status === "AUTHORIZED") { await client.query("ROLLBACK"); return res.status(409).json({ error: "Paid orders must be refunded before cancellation" }); }
+
+    await client.query(
+      "UPDATE marketplace_orders SET status='CANCELLED', fulfillment_status='CANCELLED', updated_at=now() WHERE id=$1",
+      [order.id]
+    );
+    await client.query(
+      "UPDATE marketplace_listings SET stock_quantity=stock_quantity+$1, is_active=CASE WHEN stock_quantity+$1>0 THEN is_active ELSE is_active END, updated_at=now() WHERE id=$2",
+      [order.quantity, order.listing_id]
+    );
+    await client.query(
+      `INSERT INTO marketplace_order_events (marketplace_order_id,event_type,payload)
+       VALUES ($1,'CANCELLED',jsonb_build_object('reason','user_requested','actor_user_id',$2))`,
+      [order.id, identity(req)]
+    );
+    await client.query("COMMIT");
+    return res.json({ ok: true, status: "CANCELLED" });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to cancel marketplace order" });
+  } finally { client.release(); }
+});
+
 router.post("/marketplace/orders/:id/fulfill", requireAuth(), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const orderId = String(req.params.id);
