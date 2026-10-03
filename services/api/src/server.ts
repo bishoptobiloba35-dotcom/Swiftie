@@ -7,7 +7,7 @@ import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
-import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout, flagPayoutReconciliationMismatch } from "./database/deliveryRepository.js";
+import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, confirmReceiverOnDeliveryPaymentDue, settleReceiverPaymentAndReleasePayout, reservePaymentInitialization, savePaymentCheckoutSession, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout, flagPayoutReconciliationMismatch } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
 import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, listSupportTicketMessages, recordAdminSupportReply, prepareRefund, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
@@ -98,7 +98,7 @@ type MemoryDelivery = {
   id: string; trackingCode: string; senderId: string; receiverName: string; receiverPhone: string;
   pickup: { label: string; formattedAddress: string; location: DeliveryLocation };
   dropoff: { label: string; formattedAddress: string; location: DeliveryLocation };
-  status: Status; driverId?: string; pickupPhotoUrl?: string; receiverPin: string;
+  status: Status; paymentMode: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY"; driverId?: string; pickupPhotoUrl?: string; receiverPin: string;
   quote?: DeliveryQuote; createdAt: string; updatedAt: string;
 };
 const deliveries = new Map<string, MemoryDelivery>();
@@ -138,7 +138,7 @@ const notificationForDelivery = async (deliveryId: string, userId: string, title
 
 
 const createDeliverySchema = z.object({
-  senderId: z.string().uuid().optional(), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
+  senderId: z.string().uuid().optional(), paymentMode: z.enum(["SENDER_ESCROW","RECEIVER_ON_DELIVERY"]).default("SENDER_ESCROW"), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
   receiverPin: z.string().regex(/^\d{6}$/, "Receiver PIN must be exactly 6 digits"),
   weightKg: z.number().positive().max(1000),
   dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
@@ -573,8 +573,12 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
         dimensionsCm: input.dimensionsCm,
         isPerishable: input.isPerishable,
         declaredValueMinor: input.declaredValueMinor,
+        paymentMode: input.paymentMode,
         quote: input.quote
       });
+      if (input.paymentMode === "RECEIVER_ON_DELIVERY") {
+        await createPayment({ deliveryId: created.id, provider: process.env.PAYMENT_PROVIDER || "paystack", amountMinor: input.quote.totalMinor, currency: "NGN", collectionMode: "RECEIVER_ON_DELIVERY" });
+      }
       if (input.pickupDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'PICKUP',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.pickupDropOffLocationId]);
       if (input.dropoffDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'DROPOFF',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.dropoffDropOffLocationId]);
       return res.status(201).json(safeDelivery(created));
@@ -586,6 +590,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
       senderId: input.senderId,
       receiverName: input.receiverName,
       receiverPhone: input.receiverPhone,
+      paymentMode: input.paymentMode,
       pickup: { label: input.pickup.label, formattedAddress: input.pickup.formattedAddress, location: { latitude: input.pickup.latitude, longitude: input.pickup.longitude } },
       dropoff: { label: input.dropoff.label, formattedAddress: input.dropoff.formattedAddress, location: { latitude: input.dropoff.latitude, longitude: input.dropoff.longitude } },
       quote,
@@ -605,6 +610,7 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
   const userId = identity(req);
   const delivery = databaseEnabled() ? await findDeliveryForUser(routeParam(req.params.id, "id"), userId, "CUSTOMER") : await getOne(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  if (delivery.paymentMode === "RECEIVER_ON_DELIVERY") return res.status(409).json({ error: "This order is payable by the receiver on delivery and does not use sender escrow." });
   if (!databaseEnabled()) return res.status(503).json({ error: "Payments require the production database" });
 
   const email = String(req.body?.email ?? "").trim();
@@ -620,6 +626,11 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
   }
 
   const reference = "SD-" + delivery.trackingCode + "-" + Date.now();
+  const reservation = await reservePaymentInitialization(delivery.id, reference);
+  if (!reservation.reserved) {
+    if (reservation.payment?.authorizationUrl) return res.status(200).json({ paymentId: reservation.payment.id, reference: reservation.payment.providerReference, authorizationUrl: reservation.payment.authorizationUrl, accessCode: reservation.payment.accessCode, amountMinor: reservation.payment.amountMinor });
+    return res.status(409).json({ error: "Payment initialization is already in progress. Retry shortly." });
+  }
   const response = await fetch("https://api.paystack.co/transaction/initialize", {
     method: "POST",
     headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
@@ -636,16 +647,16 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
     return res.status(502).json({ error: "Payment provider initialization failed" });
   }
 
-  const payment = await createPayment({ deliveryId: delivery.id, provider: "paystack", amountMinor, currency: "NGN" });
-  await updatePaymentStatus(delivery.id, "PENDING", payload.data.reference ?? reference);
+  const saved = await savePaymentCheckoutSession(delivery.id, payload.data.reference ?? reference, payload.data.authorization_url, payload.data.access_code);
+  if (!saved) return res.status(409).json({ error: "Payment checkout could not be saved. Retry shortly." });
   await recordDeliveryEvent({
     deliveryId: delivery.id,
     eventType: "PAYMENT_INITIALIZED",
     actorUserId: userId,
-    metadata: { paymentId: payment.id, reference: payload.data.reference ?? reference, amountMinor }
+    metadata: { paymentId: saved.id, reference: payload.data.reference ?? reference, amountMinor }
   });
   res.status(201).json({
-    paymentId: payment.id,
+    paymentId: saved.id,
     reference: payload.data.reference ?? reference,
     authorizationUrl: payload.data.authorization_url,
     accessCode: payload.data.access_code
@@ -658,6 +669,7 @@ app.post("/api/deliveries/:id/payment", requireAuth("CUSTOMER"), async (req, res
     ? await findDeliveryForUser(routeParam(req.params.id, "id"), userId, "CUSTOMER")
     : await getOne(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  if (delivery.paymentMode === "RECEIVER_ON_DELIVERY") return res.status(409).json({ error: "Receiver payment is collected after receiver confirmation." });
 
   const amountMinor = delivery.quote?.totalMinor;
   if (!amountMinor || !Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
@@ -672,7 +684,8 @@ app.post("/api/deliveries/:id/payment", requireAuth("CUSTOMER"), async (req, res
     deliveryId: delivery.id,
     provider: process.env.PAYMENT_PROVIDER || "pending",
     amountMinor,
-    currency: "NGN"
+    currency: "NGN",
+    collectionMode: "SENDER_ESCROW"
   });
   await recordDeliveryEvent({
     deliveryId: delivery.id,
@@ -905,6 +918,43 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
     }
   }
 
+  if (databaseEnabled() && (event?.event === "charge.success" || event?.event === "charge.failed")) {
+    const receiverDeliveryId = String(event?.data?.metadata?.deliveryId ?? "");
+    const receiverReference = String(event?.data?.reference ?? "");
+    if (receiverDeliveryId && receiverReference) {
+      const receiverPayment = await findPayment(receiverDeliveryId);
+      if (receiverPayment?.collectionMode === "RECEIVER_ON_DELIVERY" && receiverPayment.providerReference === receiverReference) {
+        if (event.event === "charge.failed") {
+          await updatePaymentStatus(receiverDeliveryId, "FAILED", receiverReference);
+          await recordDeliveryEvent({ deliveryId: receiverDeliveryId, eventType: "RECEIVER_PAYMENT_FAILED", metadata: { provider: "paystack", reference: receiverReference } });
+          return res.status(200).json({ received: true, duplicate: duplicateWebhook });
+        }
+        const providerAmount = Number(event?.data?.amount);
+        const providerCurrency = String(event?.data?.currency ?? "");
+        if (!Number.isSafeInteger(providerAmount) || providerAmount !== receiverPayment.amountMinor || providerCurrency.trim() !== receiverPayment.currency.trim()) {
+          await updatePaymentStatus(receiverDeliveryId, "FAILED", receiverReference);
+          await recordDeliveryEvent({ deliveryId: receiverDeliveryId, eventType: "RECEIVER_PAYMENT_RECONCILIATION_MISMATCH", metadata: { provider: "paystack", reference: receiverReference, expectedAmount: receiverPayment.amountMinor, expectedCurrency: receiverPayment.currency, providerAmount, providerCurrency } });
+          return res.status(200).json({ received: true, duplicate: duplicateWebhook });
+        }
+        const settled = await settleReceiverPaymentAndReleasePayout(
+          receiverDeliveryId,
+          receiverReference,
+          providerAmount,
+          providerCurrency,
+          Number(process.env.DRIVER_PAYOUT_PERCENT ?? 90)
+        );
+        if (!settled) return res.status(409).json({ error: "Receiver payment could not be settled safely" });
+        await notificationForDelivery(receiverDeliveryId, settled.delivery.senderId, "Receiver payment received", "The receiver paid for the delivery. The order is complete and courier payout is now eligible.", "RECEIVER_PAYMENT_RECEIVED");
+        if (settled.delivery.driverId) {
+          const driver = await driverForUser(settled.delivery.driverId);
+          if (driver) await notificationForDelivery(receiverDeliveryId, driver.userId, "Receiver payment received", "The receiver has paid. Your courier payout is now eligible.", "PAYOUT_ELIGIBLE");
+        }
+        publishDeliveryUpdate(receiverDeliveryId, safeDelivery(settled.delivery));
+        return res.status(200).json({ received: true, duplicate: duplicateWebhook, paymentMode: "RECEIVER_ON_DELIVERY", payoutAmountMinor: settled.payoutAmountMinor });
+      }
+    }
+  }
+
   if (event?.event !== "charge.success") return res.status(200).json({ received: true });
 
   const data = event.data;
@@ -941,6 +991,81 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
     metadata: { provider: "paystack", reference }
   });
   return res.status(200).json({ received: true, duplicate: duplicateWebhook });
+});
+
+app.post("/api/deliveries/:id/receiver-payment/initialize", async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Receiver payments require the production database" });
+  const deliveryId = routeParam(req.params.id, "id");
+  const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
+  const receiverPin = String(req.body?.receiverPin ?? "").trim();
+  const email = String(req.body?.email ?? "").trim();
+  if (!receiverPhone || !/^\d{6}$/.test(receiverPin) || !email) {
+    return res.status(400).json({ error: "Receiver phone, six-digit PIN and payment email are required" });
+  }
+  const delivery = await findDelivery(deliveryId);
+  if (!delivery || delivery.paymentMode !== "RECEIVER_ON_DELIVERY") return res.status(404).json({ error: "Receiver-paid delivery not found" });
+  if (delivery.receiverPhone !== receiverPhone) return res.status(403).json({ error: "Receiver details could not be verified" });
+  if (delivery.status !== "ARRIVED" || !delivery.receiverConfirmedAt) {
+    return res.status(409).json({ error: "Confirm receipt first. Payment is collected immediately after receiver confirmation." });
+  }
+  const payment = await findPayment(deliveryId);
+  if (!payment || payment.collectionMode !== "RECEIVER_ON_DELIVERY" || !["PENDING","AUTHORIZED"].includes(payment.status)) {
+    return res.status(409).json({ error: "This receiver payment is no longer awaiting collection." });
+  }
+  if (payment.authorizationUrl && payment.providerReference) {
+    return res.status(200).json({
+      paymentId: payment.id,
+      reference: payment.providerReference,
+      authorizationUrl: payment.authorizationUrl,
+      accessCode: payment.accessCode,
+      amountMinor: payment.amountMinor
+    });
+  }
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  const provider = process.env.PAYMENT_PROVIDER || "paystack";
+  if (provider !== "paystack" || !secret) return res.status(503).json({ error: "Paystack payment configuration is not ready" });
+  const reference = "SD-ROD-" + delivery.trackingCode + "-" + Date.now();
+  const reservation = await reservePaymentInitialization(deliveryId, reference);
+  if (!reservation.reserved) {
+    if (reservation.payment?.authorizationUrl) return res.status(200).json({
+      paymentId: reservation.payment.id,
+      reference: reservation.payment.providerReference,
+      authorizationUrl: reservation.payment.authorizationUrl,
+      accessCode: reservation.payment.accessCode,
+      amountMinor: reservation.payment.amountMinor
+    });
+    return res.status(409).json({ error: "Payment initialization is already in progress. Retry shortly." });
+  }
+  const response = await fetch("https://api.paystack.co/transaction/initialize", {
+    method: "POST",
+    headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
+    body: JSON.stringify({
+      email,
+      amount: String(payment.amountMinor),
+      currency: "NGN",
+      reference,
+      metadata: { deliveryId, trackingCode: delivery.trackingCode, collectionMode: "RECEIVER_ON_DELIVERY" }
+    }),
+    signal: AbortSignal.timeout(15_000)
+  });
+  const payload = await response.json() as any;
+  if (!response.ok || !payload.status || !payload.data?.authorization_url) {
+    return res.status(502).json({ error: "Receiver payment provider initialization failed" });
+  }
+  const saved = await savePaymentCheckoutSession(deliveryId, payload.data.reference ?? reference, payload.data.authorization_url, payload.data.access_code);
+  if (!saved) return res.status(409).json({ error: "Receiver payment checkout could not be saved. Retry shortly." });
+  await recordDeliveryEvent({
+    deliveryId,
+    eventType: "RECEIVER_PAYMENT_INITIALIZED",
+    metadata: { reference: saved.providerReference, amountMinor: saved.amountMinor, currency: saved.currency, collectionMode: "RECEIVER_ON_DELIVERY" }
+  });
+  return res.status(201).json({
+    paymentId: saved.id,
+    reference: saved.providerReference,
+    authorizationUrl: saved.authorizationUrl,
+    accessCode: saved.accessCode,
+    amountMinor: saved.amountMinor
+  });
 });
 
 app.get("/api/deliveries/:id/payment/status", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
@@ -1890,6 +2015,36 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
     } finally {
       client.release();
     }
+  }
+
+  const receiverPaymentDelivery = await findDelivery(routeParam(req.params.id, "id"));
+  if (receiverPaymentDelivery?.paymentMode === "RECEIVER_ON_DELIVERY") {
+    if (receiverPaymentDelivery.status !== "ARRIVED") return res.status(409).json({ error: "The courier must arrive before receiver confirmation." });
+    if (receiverPaymentDelivery.receiverPhone !== receiverPhone) return res.status(403).json({ error: "Receiver details could not be verified" });
+    const pinKey = "receiver-payment:" + receiverPaymentDelivery.id + ":" + receiverPhone;
+    const pinRate = checkReceiverPinRate(pinKey);
+    if (!pinRate.allowed) return res.status(429).json({ error: "Too many PIN attempts. Try again later.", retryAfterMs: pinRate.retryAfterMs });
+    if (!await verifyReceiverPin(receiverPaymentDelivery.id, receiverPin)) {
+      recordReceiverPinFailure(pinKey);
+      return res.status(403).json({ error: "Receiver details could not be verified" });
+    }
+    clearReceiverPinFailures(pinKey);
+    const confirmed = await confirmReceiverOnDeliveryPaymentDue(receiverPaymentDelivery.id, receiverPhone, receiverPin);
+    if (!confirmed) return res.status(409).json({ error: "Receiver confirmation has already been recorded or the payment is no longer awaiting collection." });
+    await notificationForDelivery(
+      confirmed.id,
+      confirmed.senderId,
+      "Receiver confirmed package",
+      "The receiver confirmed the package. Payment is now due from the receiver before courier payout.",
+      "RECEIVER_PAYMENT_DUE"
+    );
+    return res.status(200).json({
+      delivery: safeDelivery(confirmed),
+      paymentMode: "RECEIVER_ON_DELIVERY",
+      paymentRequired: true,
+      amountMinor: confirmed.quote?.totalMinor ?? 0,
+      message: "Package receipt confirmed. The receiver must now complete payment."
+    });
   }
 
   const payment = await findPayment(routeParam(req.params.id, "id"));
