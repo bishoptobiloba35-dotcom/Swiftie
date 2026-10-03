@@ -1,6 +1,6 @@
 # SwiftDrop
 
-Production delivery platform for customers, drivers, receivers, and administrators.
+Production delivery platform for customers, drivers, agents, receivers, and administrators. Merchant is a partner/drop-off/seller concept, not a SwiftDrop account mode.
 
 ## Core delivery lifecycle
 
@@ -39,6 +39,15 @@ The backend is authoritative for delivery state, pricing, GPS events, pickup pro
 - Payment-provider abstraction
 - Audit events for sensitive actions
 - Secrets supplied through environment variables
+
+## Current financial collection model
+
+Every delivery has an explicit server-side payment mode:
+
+- **Sender pays — SENDER_ESCROW:** the sender pays the quoted total through Paystack; the payment enters the existing held escrow-style ledger and is released for courier payout only after verified receiver PIN confirmation.
+- **Receiver pays — RECEIVER_ON_DELIVERY:** the sender does not prepay and no escrow is used. When the courier arrives, the receiver verifies the package with the receiver phone and PIN. SwiftDrop then opens a Paystack checkout for the exact server-authoritative order total. The order is not marked delivered and the courier payout is not eligible until Paystack verifies the receiver payment.
+- Receiver-paid collections are reconciled by amount, currency, delivery, payment mode and provider reference. Failed or mismatched payments cannot complete the delivery.
+- Marketplace/drop-off merchants remain supported as sellers or SwiftDrop partner locations, but **Merchant is not a user/business mode**.
 
 ## Current delivery/payment rules
 
