@@ -130,13 +130,22 @@ router.post("/marketplace/orders/:id/fulfill", requireAuth(), async (req, res) =
       [orderId, userId]
     )).rows[0];
     if (!order) { await client.query("ROLLBACK"); return res.status(404).json({ error: "Marketplace order not found" }); }
-    if (order.status !== "PAID") return res.status(409).json({ error: "Marketplace order must be paid before fulfillment" });
+    if (order.status !== "PAID") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Marketplace order must be paid before fulfillment" });
+    }
     if (order.fulfillment_status !== "NOT_STARTED") {
       await client.query("ROLLBACK");
       return res.json({ orderId, fulfillmentStatus: order.fulfillment_status, deliveryId: order.delivery_id ?? null, message: "Marketplace fulfillment is already initialized." });
     }
-    if (order.delivery_mode === "PICKUP") return res.status(409).json({ error: "Pickup-only marketplace orders do not require courier fulfillment" });
-    if (!order.pickup_address || order.pickup_lat == null || order.pickup_lng == null) return res.status(409).json({ error: "Seller pickup details are incomplete" });
+    if (order.delivery_mode === "PICKUP") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Pickup-only marketplace orders do not require courier fulfillment" });
+    }
+    if (!order.pickup_address || order.pickup_lat == null || order.pickup_lng == null) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Seller pickup details are incomplete" });
+    }
     const deliveryFeeMinor = Number(order.delivery_fee_minor) * Number(order.quantity);
     if (!Number.isSafeInteger(deliveryFeeMinor) || deliveryFeeMinor <= 0) {
       await client.query("ROLLBACK");
