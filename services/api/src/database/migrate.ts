@@ -41,7 +41,8 @@ const migrations = [
   { id: "042_marketplace_listing_disclosure", file: "042_marketplace_listing_disclosure.sql" },
   { id: "043_marketplace_delivery_scheduling", file: "043_marketplace_delivery_scheduling.sql" },
   { id: "044_marketplace_checkout_idempotency", file: "044_marketplace_checkout_idempotency.sql" },
-  { id: "045_marketplace_order_history_index", file: "045_marketplace_order_history_index.sql" }
+  { id: "045_marketplace_order_history_index", file: "045_marketplace_order_history_index.sql" },
+  { id: "046_marketplace_delivery_fulfillment", file: "046_marketplace_delivery_fulfillment.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
