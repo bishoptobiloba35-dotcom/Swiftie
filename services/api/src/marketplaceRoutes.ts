@@ -138,7 +138,10 @@ router.post("/marketplace/orders/:id/fulfill", requireAuth(), async (req, res) =
     if (order.delivery_mode === "PICKUP") return res.status(409).json({ error: "Pickup-only marketplace orders do not require courier fulfillment" });
     if (!order.pickup_address || order.pickup_lat == null || order.pickup_lng == null) return res.status(409).json({ error: "Seller pickup details are incomplete" });
     const deliveryFeeMinor = Number(order.delivery_fee_minor) * Number(order.quantity);
-    if (!Number.isSafeInteger(deliveryFeeMinor) || deliveryFeeMinor <= 0) return res.status(409).json({ error: "Marketplace delivery fee must be greater than zero for courier fulfillment" });
+    if (!Number.isSafeInteger(deliveryFeeMinor) || deliveryFeeMinor <= 0) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Marketplace delivery fee must be greater than zero for courier fulfillment" });
+    }
     const deliveryId = randomUUID();
     const trackingCode = "SD-" + randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase();
     const pinHash = hashPin(parsed.data.receiverPin);
