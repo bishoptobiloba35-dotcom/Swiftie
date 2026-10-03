@@ -12,7 +12,8 @@ export type PaymentRecord = {
   amountMinor: number;
   currency: string;
   status: "PENDING" | "AUTHORIZED" | "HELD" | "RELEASED" | "REFUNDED" | "FAILED";
-  escrowStatus?: "PENDING" | "HELD" | "RELEASED" | "REFUNDED";
+  escrowStatus?: "PENDING" | "HELD" | "RELEASED" | "REFUNDED" | "NOT_APPLICABLE";
+  collectionMode: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
   createdAt: string;
   refundReference?: string;
   refundStatus?: string;
@@ -38,6 +39,7 @@ function paymentFromRow(row: any): PaymentRecord {
     currency: row.currency,
     status: row.status,
     escrowStatus: row.escrow_status ?? undefined,
+    collectionMode: row.collection_mode === "RECEIVER_ON_DELIVERY" ? "RECEIVER_ON_DELIVERY" : "SENDER_ESCROW",
     refundReference: row.refund_reference ?? undefined,
     refundStatus: row.refund_status ?? undefined,
     refundAmountMinor: row.refund_amount_minor == null ? undefined : Number(row.refund_amount_minor),
@@ -53,15 +55,18 @@ export async function createPayment(input: {
   provider: string;
   amountMinor: number;
   currency?: string;
+  collectionMode?: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
 }): Promise<PaymentRecord> {
   if (!pool) throw new Error("DATABASE_URL is not configured");
   const result = await pool.query(
-    `INSERT INTO payments (delivery_id, provider, amount_minor, currency, status)
-     VALUES ($1,$2,$3,$4,'PENDING')
+    `INSERT INTO payments (delivery_id, provider, amount_minor, currency, status, collection_mode, escrow_status)
+     VALUES ($1,$2,$3,$4,'PENDING',$5,CASE WHEN $5='RECEIVER_ON_DELIVERY' THEN 'NOT_APPLICABLE' ELSE 'PENDING' END)
      ON CONFLICT (delivery_id) DO UPDATE SET amount_minor=EXCLUDED.amount_minor,
-       currency=EXCLUDED.currency, updated_at=now()
+       currency=EXCLUDED.currency, collection_mode=EXCLUDED.collection_mode,
+       escrow_status=CASE WHEN EXCLUDED.collection_mode='RECEIVER_ON_DELIVERY' THEN 'NOT_APPLICABLE' ELSE payments.escrow_status END,
+       updated_at=now()
      RETURNING *`,
-    [input.deliveryId, input.provider, input.amountMinor, input.currency ?? "NGN"]
+    [input.deliveryId, input.provider, input.amountMinor, input.currency ?? "NGN", input.collectionMode ?? "SENDER_ESCROW"]
   );
   return paymentFromRow(result.rows[0]);
 }
@@ -280,6 +285,7 @@ export async function createPersistentDelivery(input: {
   dimensionsCm: { length: number; width: number; height: number };
   isPerishable: boolean;
   declaredValueMinor: number;
+  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
   quote?: StoredDelivery["quote"];
 }): Promise<StoredDelivery> {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -288,13 +294,13 @@ export async function createPersistentDelivery(input: {
   const result = await pool.query(
     `INSERT INTO deliveries
       (id, tracking_code, sender_id, receiver_name, receiver_phone,
-       pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, status, receiver_pin_hash,
+       payment_mode, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, status, receiver_pin_hash,
        weight_kg, length_cm, width_cm, height_cm, is_perishable, declared_value_minor,
        quote_distance_meters, quote_duration_seconds, quote_base_fare_minor,
        quote_distance_fare_minor, quote_weight_fare_minor, quote_size_fare_minor, quote_perishable_surcharge_minor, quote_fuel_reference_minor, quote_protection_reserve_minor, quote_pricing_version, quote_service_fee_minor, quote_total_minor, quote_currency)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'CREATED',$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'CREATED',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)
      RETURNING *`,
-    [id, code, input.senderId, input.receiverName, input.receiverPhone,
+    [id, code, input.senderId, input.receiverName, input.receiverPhone, input.paymentMode ?? "SENDER_ESCROW",
       input.pickup.formattedAddress, input.pickup.location.latitude, input.pickup.location.longitude,
       input.dropoff.formattedAddress, input.dropoff.location.latitude, input.dropoff.location.longitude,
       hashPin(input.receiverPin), input.weightKg ?? null, input.dimensionsCm?.length ?? null, input.dimensionsCm?.width ?? null, input.dimensionsCm?.height ?? null, input.isPerishable ?? false, input.declaredValueMinor, input.quote?.distanceMeters ?? null, input.quote?.durationSeconds ?? null,
@@ -1148,9 +1154,9 @@ export async function confirmReceiverAndReleaseEscrow(id: string, receiverPhone:
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const result = await client.query(`SELECT d.*, p.amount_minor, p.currency AS payment_currency, p.status AS payment_status, p.refund_status FROM deliveries d JOIN payments p ON p.delivery_id=d.id WHERE d.id=$1 FOR UPDATE`, [id]);
+    const result = await client.query(`SELECT d.*, p.amount_minor, p.currency AS payment_currency, p.status AS payment_status, p.refund_status, p.collection_mode FROM deliveries d JOIN payments p ON p.delivery_id=d.id WHERE d.id=$1 FOR UPDATE`, [id]);
     const row = result.rows[0];
-    if (!row || row.receiver_phone !== receiverPhone || row.status !== 'ARRIVED' || row.payment_status !== 'HELD' || ['pending','processing','needs-attention'].includes(String(row.refund_status ?? '')) || !verifyPin(pin, row.receiver_pin_hash) || !row.driver_id) {
+    if (!row || row.collection_mode !== "SENDER_ESCROW" || row.receiver_phone !== receiverPhone || row.status !== 'ARRIVED' || row.payment_status !== 'HELD' || ['pending','processing','needs-attention'].includes(String(row.refund_status ?? '')) || !verifyPin(pin, row.receiver_pin_hash) || !row.driver_id) {
       await client.query('ROLLBACK');
       return null;
     }
@@ -1168,6 +1174,139 @@ export async function confirmReceiverAndReleaseEscrow(id: string, receiverPhone:
     await client.query('ROLLBACK');
     throw error;
   } finally { client.release(); }
+}
+
+export async function confirmReceiverOnDeliveryPaymentDue(id: string, receiverPhone: string, pin: string): Promise<StoredDelivery | null> {
+  if (!pool) return null;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `SELECT d.*, p.status AS payment_status, p.collection_mode, p.amount_minor, p.currency AS payment_currency,
+              p.refund_status
+         FROM deliveries d
+         JOIN payments p ON p.delivery_id=d.id
+        WHERE d.id=$1
+        FOR UPDATE`,
+      [id]
+    );
+    const row = result.rows[0];
+    if (!row || row.collection_mode !== "RECEIVER_ON_DELIVERY" || row.receiver_phone !== receiverPhone ||
+        row.status !== "ARRIVED" || row.payment_status !== "PENDING" ||
+        row.receiver_confirmed_at IS NOT NULL ||
+        ["pending","processing","needs-attention"].includes(String(row.refund_status ?? "")) ||
+        !verifyPin(pin, row.receiver_pin_hash) || !row.driver_id) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    const updated = await client.query(
+      `UPDATE deliveries
+          SET receiver_confirmed_at=now(), updated_at=now()
+        WHERE id=$1 AND status='ARRIVED' AND receiver_confirmed_at IS NULL
+        RETURNING *`,
+      [id]
+    );
+    if (!updated.rows[0]) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    await client.query(
+      `INSERT INTO delivery_events (delivery_id,event_type,metadata)
+       VALUES ($1,'RECEIVER_CONFIRMED_PACKAGE_PAYMENT_DUE',$2::jsonb)`,
+      [id, JSON.stringify({ collectionMode: "RECEIVER_ON_DELIVERY", amountMinor: Number(row.amount_minor), currency: row.payment_currency ?? "NGN" })]
+    );
+    await client.query("COMMIT");
+    return rowToDelivery(updated.rows[0]);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function settleReceiverPaymentAndReleasePayout(
+  id: string,
+  providerReference: string,
+  providerAmountMinor: number,
+  providerCurrency: string,
+  payoutPercent: number
+): Promise<{ delivery: StoredDelivery; payoutAmountMinor: number } | null> {
+  if (!pool) return null;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `SELECT d.*, p.id AS payment_id, p.amount_minor, p.currency AS payment_currency,
+              p.status AS payment_status, p.collection_mode, p.refund_status
+         FROM deliveries d
+         JOIN payments p ON p.delivery_id=d.id
+        WHERE d.id=$1
+        FOR UPDATE`,
+      [id]
+    );
+    const row = result.rows[0];
+    if (!row || row.collection_mode !== "RECEIVER_ON_DELIVERY" ||
+        row.status !== "ARRIVED" || row.receiver_confirmed_at IS NULL ||
+        !["PENDING","AUTHORIZED"].includes(String(row.payment_status)) ||
+        ["pending","processing","needs-attention"].includes(String(row.refund_status ?? "")) ||
+        Number(providerAmountMinor) !== Number(row.amount_minor) ||
+        String(providerCurrency).trim() !== String(row.payment_currency).trim() ||
+        !row.driver_id) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    await client.query(
+      `UPDATE payments
+          SET status='AUTHORIZED', escrow_status='NOT_APPLICABLE',
+              provider_reference=$2, updated_at=now()
+        WHERE id=$1 AND status='PENDING'`,
+      [row.payment_id, providerReference]
+    );
+    await client.query(
+      `UPDATE payments
+          SET status='RELEASED', escrow_status='NOT_APPLICABLE', updated_at=now()
+        WHERE id=$1 AND status IN ('AUTHORIZED','RELEASED')`,
+      [row.payment_id]
+    );
+    const protectionReserveMinor = Math.max(0, Number(row.quote_protection_reserve_minor ?? 0));
+    const payoutBaseMinor = Math.max(0, Number(row.amount_minor) - protectionReserveMinor);
+    const payoutAmountMinor = Math.max(0, Math.floor(payoutBaseMinor * Math.min(100, Math.max(0, payoutPercent)) / 100));
+    const delivered = await client.query(
+      `UPDATE deliveries
+          SET status='DELIVERED', updated_at=now()
+        WHERE id=$1 AND status='ARRIVED' AND receiver_confirmed_at IS NOT NULL
+        RETURNING *`,
+      [id]
+    );
+    if (!delivered.rows[0]) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    if (payoutAmountMinor > 0) {
+      await client.query(
+        `INSERT INTO payouts (delivery_id, driver_id, amount_minor, currency, status)
+         VALUES ($1,$2,$3,$4,'ELIGIBLE')
+         ON CONFLICT (delivery_id) DO UPDATE
+           SET amount_minor=EXCLUDED.amount_minor, currency=EXCLUDED.currency,
+               status=CASE WHEN payouts.status IN ('PENDING','ELIGIBLE') THEN 'ELIGIBLE' ELSE payouts.status END,
+               updated_at=now()`,
+        [id, row.driver_id, payoutAmountMinor, row.payment_currency ?? "NGN"]
+      );
+    }
+    await client.query(
+      `INSERT INTO delivery_events (delivery_id,event_type,metadata)
+       VALUES ($1,'RECEIVER_PAYMENT_CAPTURED',$2::jsonb)`,
+      [id, JSON.stringify({ provider: "paystack", providerReference, amountMinor: Number(row.amount_minor), currency: row.payment_currency ?? "NGN", escrowUsed: false, payoutEligible: payoutAmountMinor > 0 })]
+    );
+    await client.query("COMMIT");
+    return { delivery: rowToDelivery(delivered.rows[0]), payoutAmountMinor };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function confirmReceiverDelivery(id: string, receiverPhone: string, pin: string): Promise<StoredDelivery | null> {
