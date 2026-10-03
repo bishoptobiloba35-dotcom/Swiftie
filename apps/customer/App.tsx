@@ -842,6 +842,18 @@ export default function App() {
                 <TextInput style={[styles.input, styles.half]} placeholder="Longitude" keyboardType="decimal-pad" value={marketplaceDropoffLng} onChangeText={setMarketplaceDropoffLng} />
               </View>
               <Pressable style={styles.primary} onPress={() => void fulfillExistingMarketplaceOrder(order.id)}><Text style={styles.primaryText}>Start SwiftDrop delivery</Text></Pressable>
+            </View> : order.status === "PENDING_PAYMENT" ? <View style={styles.card}>
+              <Text style={styles.photoTitle}>Payment not completed</Text>
+              <Text style={styles.muted}>This order is still awaiting payment. You can cancel it and return the reserved stock to the listing.</Text>
+              <Pressable style={styles.dangerButton} onPress={() => void (async () => {
+                try {
+                  await api.cancelMarketplaceOrder(order.id);
+                  await loadMarketplaceOrders();
+                  Alert.alert("Order cancelled", "The unpaid marketplace order was cancelled and its stock was restored.");
+                } catch (error) {
+                  Alert.alert("Cancellation failed", error instanceof Error ? error.message : "Unable to cancel marketplace order");
+                }
+              })()}><Text style={styles.primaryText}>Cancel unpaid order</Text></Pressable>
             </View> : null}
           </View>
         )}
