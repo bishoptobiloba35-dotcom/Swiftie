@@ -10,7 +10,16 @@ ALTER TABLE marketplace_listings
 
 ALTER TABLE marketplace_listings
   ADD CONSTRAINT marketplace_listings_condition_check
-  CHECK (condition IN ('NEW','LIKE_NEW','GOOD','FAIR','USED','FOR_PARTS'));
+  CHECK (condition IN ('NEW','LIKE_NEW','GOOD','FAIR','USED','FOR_PARTS','NOT_STATED'));
+
+UPDATE marketplace_listings
+   SET condition = COALESCE(condition, 'NOT_STATED'),
+       use_description = COALESCE(NULLIF(btrim(use_description), ''), description)
+ WHERE condition IS NULL OR use_description IS NULL OR length(btrim(use_description)) < 5;
+
+ALTER TABLE marketplace_listings
+  ALTER COLUMN condition SET NOT NULL,
+  ALTER COLUMN use_description SET NOT NULL;
 
 ALTER TABLE marketplace_listings
   ADD CONSTRAINT marketplace_listings_use_description_check
