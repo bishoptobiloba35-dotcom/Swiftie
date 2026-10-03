@@ -75,6 +75,26 @@ router.get("/marketplace/listings", async (req, res) => {
   return res.json({ listings: result.rows });
 });
 
+router.get("/marketplace/sales", requireAuth(), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool.query(
+    `SELECT mo.id,mo.listing_id,mo.quantity,mo.unit_final_price_minor,mo.total_minor,mo.currency,
+            mo.status,mo.fulfillment_status,mo.delivery_id,mo.requested_delivery_at,mo.created_at,mo.updated_at,
+            l.title,l.condition,l.delivery_mode,
+            u.email AS buyer_email,
+            d.tracking_code,d.status AS delivery_status,d.receiver_name,d.receiver_phone
+       FROM marketplace_orders mo
+       JOIN marketplace_listings l ON l.id=mo.listing_id
+       JOIN users u ON u.id=mo.buyer_user_id
+       LEFT JOIN deliveries d ON d.id=mo.delivery_id
+      WHERE mo.seller_user_id=$1
+      ORDER BY mo.created_at DESC
+      LIMIT 50`,
+    [identity(req)]
+  );
+  return res.json({ sales: result.rows });
+});
+
 router.get("/marketplace/orders", requireAuth(), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool.query(
