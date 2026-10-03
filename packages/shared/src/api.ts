@@ -270,7 +270,7 @@ export class SwiftDropApi {
     return data;
   }
   async marketplaceSales(): Promise<any[]> {
-    const response = await this.authenticatedFetch(this.baseUrl + "/api/marketplace/sales");
+    const response = await fetch(this.baseUrl + "/api/marketplace/sales", { headers: this.headers() });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload?.error ?? "Unable to load marketplace sales");
     return payload.sales ?? [];
