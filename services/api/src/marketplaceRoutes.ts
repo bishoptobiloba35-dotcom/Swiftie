@@ -5,6 +5,7 @@ import { pool } from "./database/db.js";
 import { requireAuth } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
 import { deletePrivateObject, getPrivateObject, putPrivateObject } from "./storage.js";
+import { hashPin } from "./security.js";
 
 const router = Router();
 
@@ -22,6 +23,14 @@ const listingSchema = z.object({
   deliveryFeeMinor: z.number().int().nonnegative().max(10000000000),
   deliveryMode: z.enum(["SAME_STATE","INTER_STATE","EXPRESS","PICKUP"]),
   stockQuantity: z.number().int().min(0).max(100000),
+  pickupAddress: z.string().trim().min(5).max(300),
+  pickupLatitude: z.number().min(-90).max(90),
+  pickupLongitude: z.number().min(-180).max(180),
+  weightKg: z.number().positive().max(1000),
+  lengthCm: z.number().positive().max(500),
+  widthCm: z.number().positive().max(500),
+  heightCm: z.number().positive().max(500),
+  isPerishable: z.boolean().default(false),
   media: z.array(z.string()).max(8).optional()
 });
 
@@ -41,7 +50,7 @@ router.get("/marketplace/listings", async (req, res) => {
   if (category) { params.push(category); where.push("l.category=$"+params.length); }
   const result = await pool.query(
     `SELECT l.id,l.title,l.description,l.condition,l.use_description,l.usage_instructions,l.category,l.delivery_fee_minor,l.final_price_minor,
-            l.currency,l.delivery_mode,l.stock_quantity,l.created_at,
+            l.currency,l.delivery_mode,l.stock_quantity,l.pickup_address,l.pickup_lat,l.pickup_lng,l.weight_kg,l.length_cm,l.width_cm,l.height_cm,l.is_perishable,l.created_at,
             s.id AS seller_id,s.display_name AS seller_name,s.bio AS seller_bio,s.location_label AS seller_location,
             COALESCE((SELECT json_agg(json_build_object('id',m.id,'url','/api/marketplace/listings/' || m.listing_id || '/media/' || m.id,'sortOrder',m.sort_order) ORDER BY m.sort_order)
                       FROM marketplace_listing_media m WHERE m.listing_id=l.id),'[]'::json) AS media
@@ -59,7 +68,7 @@ router.get("/marketplace/orders", requireAuth(), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool.query(
     `SELECT mo.id,mo.listing_id,mo.quantity,mo.unit_final_price_minor,mo.total_minor,mo.currency,
-            mo.status,mo.requested_delivery_at,mo.created_at,mo.updated_at,
+            mo.status,mo.fulfillment_status,mo.delivery_id,mo.requested_delivery_at,mo.created_at,mo.updated_at,
             l.title,l.condition,
             s.display_name AS seller_name,
             mop.status AS payment_status,mop.provider_reference
@@ -79,7 +88,7 @@ router.get("/marketplace/orders/:id", requireAuth(), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool.query(
     `SELECT mo.id,mo.listing_id,mo.quantity,mo.unit_final_price_minor,mo.total_minor,mo.currency,
-            mo.status,mo.requested_delivery_at,mo.created_at,mo.updated_at,
+            mo.status,mo.fulfillment_status,mo.delivery_id,mo.requested_delivery_at,mo.created_at,mo.updated_at,
             l.title,l.description,l.condition,l.use_description,l.usage_instructions,l.delivery_mode,
             s.display_name AS seller_name,s.location_label AS seller_location,
             mop.status AS payment_status,mop.provider_status,mop.provider_reference,mop.authorization_url
@@ -92,6 +101,84 @@ router.get("/marketplace/orders/:id", requireAuth(), async (req, res) => {
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Marketplace order not found" });
   return res.json({ order: result.rows[0] });
+});
+
+router.post("/marketplace/orders/:id/fulfill", requireAuth(), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const orderId = String(req.params.id);
+  const parsed = z.object({
+    receiverName: z.string().trim().min(2).max(120),
+    receiverPhone: z.string().trim().min(7).max(30),
+    receiverPin: z.string().regex(/^\d{6}$/),
+    dropoffAddress: z.string().trim().min(5).max(300),
+    dropoffLatitude: z.number().min(-90).max(90),
+    dropoffLongitude: z.number().min(-180).max(180)
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const userId = identity(req);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const order = (await client.query(
+      `SELECT mo.*, l.pickup_address,l.pickup_lat,l.pickup_lng,l.weight_kg,l.length_cm,l.width_cm,l.height_cm,l.is_perishable,l.delivery_fee_minor,l.delivery_mode
+         FROM marketplace_orders mo
+         JOIN marketplace_listings l ON l.id=mo.listing_id
+        WHERE mo.id=$1 AND mo.buyer_user_id=$2
+        FOR UPDATE`,
+      [orderId, userId]
+    )).rows[0];
+    if (!order) { await client.query("ROLLBACK"); return res.status(404).json({ error: "Marketplace order not found" }); }
+    if (order.status !== "PAID") return res.status(409).json({ error: "Marketplace order must be paid before fulfillment" });
+    if (order.fulfillment_status !== "NOT_STARTED") {
+      await client.query("ROLLBACK");
+      return res.json({ orderId, fulfillmentStatus: order.fulfillment_status, deliveryId: order.delivery_id ?? null, message: "Marketplace fulfillment is already initialized." });
+    }
+    if (order.delivery_mode === "PICKUP") return res.status(409).json({ error: "Pickup-only marketplace orders do not require courier fulfillment" });
+    if (!order.pickup_address || order.pickup_lat == null || order.pickup_lng == null) return res.status(409).json({ error: "Seller pickup details are incomplete" });
+    const deliveryFeeMinor = Number(order.delivery_fee_minor) * Number(order.quantity);
+    if (!Number.isSafeInteger(deliveryFeeMinor) || deliveryFeeMinor <= 0) return res.status(409).json({ error: "Marketplace delivery fee must be greater than zero for courier fulfillment" });
+    const deliveryId = randomUUID();
+    const trackingCode = "SD-" + randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase();
+    const pinHash = hashPin(parsed.data.receiverPin);
+    const delivery = (await client.query(
+      `INSERT INTO deliveries
+        (id,tracking_code,sender_id,receiver_name,receiver_phone,payment_mode,pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng,status,receiver_pin_hash,
+         weight_kg,length_cm,width_cm,height_cm,is_perishable,declared_value_minor,
+         quote_distance_meters,quote_duration_seconds,quote_base_fare_minor,quote_distance_fare_minor,quote_weight_fare_minor,quote_size_fare_minor,quote_perishable_surcharge_minor,quote_service_fee_minor,quote_total_minor,quote_currency)
+       VALUES ($1,$2,$3,$4,$5,'SENDER_ESCROW',$6,$7,$8,$9,$10,$11,'PAYMENT_AUTHORIZED',$12,$13,$14,$15,$16,$17,$18,0,0,0,0,0,0,0,0, $19,'NGN')
+       RETURNING *`,
+      [deliveryId,trackingCode,order.seller_user_id,parsed.data.receiverName,parsed.data.receiverPhone,
+       order.pickup_address,Number(order.pickup_lat),Number(order.pickup_lng),parsed.data.dropoffAddress,parsed.data.dropoffLatitude,parsed.data.dropoffLongitude,
+       pinHash,Number(order.weight_kg),Number(order.length_cm),Number(order.width_cm),Number(order.height_cm),Boolean(order.is_perishable),Number(order.unit_final_price_minor)*Number(order.quantity),deliveryFeeMinor]
+    )).rows[0];
+    await client.query(
+      `INSERT INTO payments(delivery_id,provider,amount_minor,currency,status,collection_mode,escrow_status)
+       VALUES($1,'marketplace', $2,'NGN','HELD','SENDER_ESCROW','HELD')`,
+      [deliveryId,deliveryFeeMinor]
+    );
+    await client.query(
+      `INSERT INTO delivery_events(delivery_id,event_type,actor_user_id,metadata)
+       VALUES($1,'MARKETPLACE_FULFILLMENT_INITIALIZED',$2,$3::jsonb)`,
+      [deliveryId,userId,JSON.stringify({ marketplaceOrderId: orderId, requestedDeliveryAt: order.requested_delivery_at })]
+    );
+    await client.query(
+      `UPDATE deliveries SET next_delivery_at=$2, updated_at=now() WHERE id=$1`,
+      [deliveryId,order.requested_delivery_at ?? null]
+    );
+    const updatedOrder = (await client.query(
+      `UPDATE marketplace_orders
+          SET delivery_id=$2, fulfillment_status='READY', status='PROCESSING', updated_at=now()
+        WHERE id=$1 AND fulfillment_status='NOT_STARTED'
+        RETURNING *`,
+      [orderId,deliveryId]
+    )).rows[0];
+    if (!updatedOrder) throw new Error("Marketplace fulfillment state changed concurrently");
+    await client.query("COMMIT");
+    return res.status(201).json({ order: updatedOrder, deliveryId, trackingCode, fulfillmentStatus: "READY" });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to initialize marketplace fulfillment" });
+  } finally { client.release(); }
 });
 
 router.get("/marketplace/listings/:id/media/:mediaId", async (req, res) => {
@@ -162,10 +249,10 @@ router.post("/marketplace/listings", requireAuth(), async (req, res) => {
     );
     const listing = await client.query(
       `INSERT INTO marketplace_listings
-       (seller_user_id,seller_profile_id,title,description,condition,use_description,usage_instructions,category,price_minor,delivery_fee_minor,final_price_minor,currency,delivery_mode,stock_quantity)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'NGN',$10,$11,$12,$13)
+       (seller_user_id,seller_profile_id,title,description,condition,use_description,usage_instructions,category,price_minor,delivery_fee_minor,final_price_minor,currency,delivery_mode,stock_quantity,pickup_address,pickup_lat,pickup_lng,weight_kg,length_cm,width_cm,height_cm,is_perishable)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'NGN',$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
        RETURNING *`,
-      [userId,seller.rows[0].id,p.title,p.description,p.condition,p.useDescription,p.usageInstructions ?? null,p.category,p.priceMinor,p.deliveryFeeMinor,finalPriceMinor,p.deliveryMode,p.stockQuantity]
+      [userId,seller.rows[0].id,p.title,p.description,p.condition,p.useDescription,p.usageInstructions ?? null,p.category,p.priceMinor,p.deliveryFeeMinor,finalPriceMinor,p.deliveryMode,p.stockQuantity,p.pickupAddress,p.pickupLatitude,p.pickupLongitude,p.weightKg,p.lengthCm,p.widthCm,p.heightCm,p.isPerishable]
     );
 
     const uploadedKeys: string[] = [];
