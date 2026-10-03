@@ -803,6 +803,83 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
     return res.status(200).json({ received: true });
   }
 
+  if (databaseEnabled() && (event?.event === "charge.success" || event?.event === "charge.failed")) {
+    const marketplaceReference = String(event?.data?.reference ?? "");
+    if (marketplaceReference) {
+      const client = await pool!.connect();
+      try {
+        await client.query("BEGIN");
+        const payment = (await client.query(
+          `SELECT mop.*, mo.quantity, mo.status AS order_status
+             FROM marketplace_order_payments mop
+             JOIN marketplace_orders mo ON mo.id=mop.marketplace_order_id
+            WHERE mop.provider_reference=$1
+            FOR UPDATE`,
+          [marketplaceReference]
+        )).rows[0];
+        if (payment) {
+          const providerAmount = Number(event?.data?.amount);
+          const providerCurrency = String(event?.data?.currency ?? "");
+          const amountMatches = Number.isSafeInteger(providerAmount) &&
+            providerAmount === Number(payment.amount_minor) &&
+            providerCurrency === String(payment.currency).trim();
+
+          if (event.event === "charge.success" && amountMatches) {
+            await client.query(
+              `UPDATE marketplace_order_payments
+                  SET status='AUTHORIZED', provider_status='success', updated_at=now()
+                WHERE id=$1 AND status='PENDING'`,
+              [payment.id]
+            );
+            await client.query(
+              `UPDATE marketplace_orders
+                  SET status='PAID', updated_at=now()
+                WHERE id=$1 AND status='PENDING_PAYMENT'`,
+              [payment.marketplace_order_id]
+            );
+          } else if (event.event === "charge.failed" || !amountMatches) {
+            await client.query(
+              `UPDATE marketplace_order_payments
+                  SET status='FAILED',
+                      provider_status=$2,
+                      updated_at=now()
+                WHERE id=$1 AND status='PENDING'`,
+              [payment.id, !amountMatches ? "amount_mismatch" : "failed"]
+            );
+            const restored = await client.query(
+              `UPDATE marketplace_listings l
+                  SET stock_quantity=l.stock_quantity+$2,
+                      status=CASE WHEN l.status='SOLD_OUT' THEN 'PUBLISHED' ELSE l.status END,
+                      updated_at=now()
+                 FROM marketplace_orders mo
+                WHERE mo.id=$1 AND l.id=mo.listing_id
+                RETURNING l.stock_quantity,l.status`,
+              [payment.marketplace_order_id, payment.quantity]
+            );
+            await client.query(
+              `UPDATE marketplace_orders
+                  SET status='CANCELLED', updated_at=now()
+                WHERE id=$1 AND status='PENDING_PAYMENT'`,
+              [payment.marketplace_order_id]
+            );
+            if (!restored.rows[0]) {
+              await client.query("ROLLBACK");
+              return res.status(500).json({ error: "Marketplace stock reconciliation failed" });
+            }
+          }
+        }
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        console.error(JSON.stringify({ event: "marketplace_payment_webhook_failed", reference: marketplaceReference, error: error instanceof Error ? error.message : "unknown" }));
+        return res.status(500).json({ error: "Marketplace payment processing failed" });
+      } finally {
+        client.release();
+      }
+      return res.status(200).json({ received: true });
+    }
+  }
+
   const buyReference = String(event?.data?.reference ?? "");
   if (buyReference && databaseEnabled() && (event?.event === "charge.success" || event?.event === "charge.failed")) {
     const buyPaymentResult = await pool!.query(
