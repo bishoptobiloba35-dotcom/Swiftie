@@ -9,6 +9,8 @@ export type PaymentRecord = {
   deliveryId: string;
   provider: string;
   providerReference?: string;
+  authorizationUrl?: string;
+  accessCode?: string;
   amountMinor: number;
   currency: string;
   status: "PENDING" | "AUTHORIZED" | "HELD" | "RELEASED" | "REFUNDED" | "FAILED";
@@ -35,6 +37,8 @@ function paymentFromRow(row: any): PaymentRecord {
     deliveryId: row.delivery_id,
     provider: row.provider,
     providerReference: row.provider_reference ?? undefined,
+    authorizationUrl: row.authorization_url ?? undefined,
+    accessCode: row.access_code ?? undefined,
     amountMinor: Number(row.amount_minor),
     currency: row.currency,
     status: row.status,
@@ -124,6 +128,54 @@ export async function markPaymentRefund(deliveryId: string, refundReference: str
   } finally {
     client.release();
   }
+}
+
+export async function reservePaymentInitialization(deliveryId: string, reference: string): Promise<{ reserved: boolean; payment: PaymentRecord | null }> {
+  if (!pool) return { reserved: false, payment: null };
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const existing = await client.query(
+      "SELECT * FROM payments WHERE delivery_id=$1 FOR UPDATE",
+      [deliveryId]
+    );
+    const row = existing.rows[0];
+    if (!row) {
+      await client.query("ROLLBACK");
+      return { reserved: false, payment: null };
+    }
+    if (row.status !== "PENDING") {
+      await client.query("ROLLBACK");
+      return { reserved: false, payment: paymentFromRow(row) };
+    }
+    if (row.provider_reference) {
+      await client.query("COMMIT");
+      return { reserved: false, payment: paymentFromRow(row) };
+    }
+    const updated = await client.query(
+      "UPDATE payments SET provider_reference=$2, updated_at=now() WHERE id=$1 AND status='PENDING' AND provider_reference IS NULL RETURNING *",
+      [row.id, reference]
+    );
+    await client.query("COMMIT");
+    return { reserved: Boolean(updated.rows[0]), payment: paymentFromRow(updated.rows[0] ?? row) };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function savePaymentCheckoutSession(deliveryId: string, reference: string, authorizationUrl: string, accessCode?: string): Promise<PaymentRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `UPDATE payments
+        SET authorization_url=$3, access_code=$4, updated_at=now()
+      WHERE delivery_id=$1 AND provider_reference=$2 AND status='PENDING'
+      RETURNING *`,
+    [deliveryId, reference, authorizationUrl, accessCode ?? null]
+  );
+  return result.rows[0] ? paymentFromRow(result.rows[0]) : null;
 }
 
 export async function updatePaymentStatus(
