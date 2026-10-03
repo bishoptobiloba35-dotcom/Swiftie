@@ -242,8 +242,8 @@ export class SwiftDropApi {
     const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Unable to publish marketplace listing");
     return data;
   }
-  async checkoutMarketplaceListing(id: string, quantity = 1, requestedDeliveryAt?: string): Promise<any> {
-    const response = await fetch(this.baseUrl + "/api/marketplace/listings/" + encodeURIComponent(id) + "/checkout", { method: "POST", headers: this.headers(true), body: JSON.stringify({ quantity, requestedDeliveryAt }) });
+  async checkoutMarketplaceListing(id: string, quantity = 1, requestedDeliveryAt?: string, idempotencyKey?: string): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/marketplace/listings/" + encodeURIComponent(id) + "/checkout", { method: "POST", headers: this.headers(true), body: JSON.stringify({ quantity, requestedDeliveryAt, idempotencyKey: idempotencyKey ?? `${Date.now()}-${Math.random().toString(36).slice(2, 18)}` }) });
     const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Unable to create checkout");
     return data;
   }
