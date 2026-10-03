@@ -70,13 +70,13 @@ router.get("/marketplace/listings/:id", async (req, res) => {
   return res.json({ listing, recommended: recommended.rows });
 });
 
-router.post("/marketplace/listings", requireAuth("AGENT"), async (req, res) => {
+// Any authenticated SwiftDrop user may sell ordinary everyday goods.
+// Selling is no longer restricted to the cancelled Merchant mode or approved Agents.
+router.post("/marketplace/listings", requireAuth(), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const parsed = listingSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const userId = identity(req);
-  const agent = await pool.query("SELECT status FROM agent_profiles WHERE user_id=$1", [userId]);
-  if (agent.rows[0]?.status !== "APPROVED") return res.status(403).json({ error: "Approved agent status is required to publish marketplace goods" });
   const p = parsed.data;
   const finalPriceMinor = p.priceMinor + p.deliveryFeeMinor;
   const client = await pool.connect();
@@ -92,7 +92,7 @@ router.post("/marketplace/listings", requireAuth("AGENT"), async (req, res) => {
     const listing = await client.query(
       `INSERT INTO marketplace_listings
        (seller_user_id,seller_profile_id,title,description,condition,use_description,usage_instructions,category,price_minor,delivery_fee_minor,final_price_minor,currency,delivery_mode,stock_quantity)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,'NGN',$9,$10)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'NGN',$10,$11,$12,$13)
        RETURNING *`,
       [userId,seller.rows[0].id,p.title,p.description,p.condition,p.useDescription,p.usageInstructions ?? null,p.category,p.priceMinor,p.deliveryFeeMinor,finalPriceMinor,p.deliveryMode,p.stockQuantity]
     );
@@ -103,8 +103,7 @@ router.post("/marketplace/listings", requireAuth("AGENT"), async (req, res) => {
   } finally { client.release(); }
 });
 
-
-router.post("/marketplace/orders/:id/payment/initialize", requireAuth("CUSTOMER","AGENT","DRIVER"), async (req, res) => {
+router.post("/marketplace/orders/:id/payment/initialize", requireAuth(), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const orderId = String(req.params.id);
   const email = String(req.body?.email ?? "").trim().toLowerCase();
@@ -139,41 +138,25 @@ router.post("/marketplace/orders/:id/payment/initialize", requireAuth("CUSTOMER"
   const response = await fetch("https://api.paystack.co/transaction/initialize", {
     method: "POST",
     headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
-    body: JSON.stringify({
-      email,
-      amount: String(amountMinor),
-      currency: "NGN",
-      reference,
-      metadata: { marketplaceOrderId: orderId, buyerUserId: userId }
-    })
+    body: JSON.stringify({ email, amount: String(amountMinor), currency: "NGN", reference, metadata: { marketplaceOrderId: orderId, buyerUserId: userId } })
   });
   const payload = await response.json() as { status?: boolean; message?: string; data?: { authorization_url?: string; access_code?: string; reference?: string } };
-  if (!response.ok || !payload.status || !payload.data?.authorization_url) {
-    return res.status(502).json({ error: "Payment provider initialization failed" });
-  }
+  if (!response.ok || !payload.status || !payload.data?.authorization_url) return res.status(502).json({ error: "Payment provider initialization failed" });
 
   const payment = await pool.query(
     `INSERT INTO marketplace_order_payments
        (marketplace_order_id,buyer_user_id,provider,provider_reference,amount_minor,currency,status,provider_status,authorization_url)
      VALUES($1,$2,'paystack',$3,$4,'NGN','PENDING','pending',$5)
      ON CONFLICT (marketplace_order_id) DO UPDATE
-       SET provider_reference=EXCLUDED.provider_reference,
-           amount_minor=EXCLUDED.amount_minor,
-           provider_status='pending',
-           authorization_url=EXCLUDED.authorization_url,
-           updated_at=now()
+       SET provider_reference=EXCLUDED.provider_reference, amount_minor=EXCLUDED.amount_minor,
+           provider_status='pending', authorization_url=EXCLUDED.authorization_url, updated_at=now()
      RETURNING *`,
     [orderId, userId, reference, amountMinor, payload.data.authorization_url]
   );
-  return res.status(201).json({
-    payment: payment.rows[0],
-    authorizationUrl: payload.data.authorization_url,
-    accessCode: payload.data.access_code ?? null,
-    reference
-  });
+  return res.status(201).json({ payment: payment.rows[0], authorizationUrl: payload.data.authorization_url, accessCode: payload.data.access_code ?? null, reference });
 });
 
-router.get("/marketplace/orders/:id/payment", requireAuth("CUSTOMER","AGENT","DRIVER"), async (req, res) => {
+router.get("/marketplace/orders/:id/payment", requireAuth(), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool.query(
     `SELECT mop.id,mop.marketplace_order_id,mop.amount_minor,mop.currency,mop.status,mop.provider_status,mop.provider_reference,mop.created_at,mop.updated_at
@@ -186,7 +169,7 @@ router.get("/marketplace/orders/:id/payment", requireAuth("CUSTOMER","AGENT","DR
   return res.json({ payment: result.rows[0] });
 });
 
-router.post("/marketplace/listings/:id/checkout", requireAuth("CUSTOMER","AGENT","DRIVER"), async (req, res) => {
+router.post("/marketplace/listings/:id/checkout", requireAuth(), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const quantity = Number(req.body?.quantity ?? 1);
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100) return res.status(400).json({ error: "Quantity must be a positive whole number" });
@@ -207,21 +190,14 @@ router.post("/marketplace/listings/:id/checkout", requireAuth("CUSTOMER","AGENT"
         RETURNING stock_quantity,status`,
       [listing.id, quantity]
     );
-    if (!stockUpdate.rows[0]) {
-      await client.query("ROLLBACK");
-      return res.status(409).json({ error: "The requested quantity is no longer available" });
-    }
+    if (!stockUpdate.rows[0]) { await client.query("ROLLBACK"); return res.status(409).json({ error: "The requested quantity is no longer available" }); }
     const order = await client.query(
       `INSERT INTO marketplace_orders(listing_id,buyer_user_id,seller_user_id,quantity,unit_final_price_minor,total_minor,currency)
        VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
       [listing.id,identity(req),listing.seller_user_id,quantity,listing.final_price_minor,total,listing.currency]
     );
     await client.query("COMMIT");
-    return res.status(201).json({
-      order: order.rows[0],
-      stockRemaining: Number(stockUpdate.rows[0].stock_quantity),
-      message: "Checkout created. Payment authorization is the next step."
-    });
+    return res.status(201).json({ order: order.rows[0], stockRemaining: Number(stockUpdate.rows[0].stock_quantity), message: "Checkout created. Payment authorization is the next step." });
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally { client.release(); }
 });
