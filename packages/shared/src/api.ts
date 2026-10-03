@@ -234,6 +234,7 @@ export class SwiftDropApi {
     condition: "NEW" | "LIKE_NEW" | "GOOD" | "FAIR" | "USED" | "FOR_PARTS"; useDescription: string;
     usageInstructions?: string; category: string; priceMinor: number; deliveryFeeMinor: number;
     deliveryMode: "SAME_STATE" | "INTER_STATE" | "EXPRESS" | "PICKUP"; stockQuantity: number;
+    media?: string[];
   }): Promise<any> {
     const response = await fetch(this.baseUrl + "/api/marketplace/listings", {
       method: "POST", headers: this.headers(true), body: JSON.stringify(input)
