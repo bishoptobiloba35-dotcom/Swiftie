@@ -69,6 +69,7 @@ router.get("/marketplace/orders", requireAuth(), async (req, res) => {
   const result = await pool.query(
     `SELECT mo.id,mo.listing_id,mo.quantity,mo.unit_final_price_minor,mo.total_minor,mo.currency,
             mo.status,mo.fulfillment_status,mo.delivery_id,mo.requested_delivery_at,mo.created_at,mo.updated_at,
+            d.tracking_code,d.status AS delivery_status,d.receiver_phone,
             l.title,l.condition,
             s.display_name AS seller_name,
             mop.status AS payment_status,mop.provider_reference
@@ -76,6 +77,7 @@ router.get("/marketplace/orders", requireAuth(), async (req, res) => {
        JOIN marketplace_listings l ON l.id=mo.listing_id
        JOIN marketplace_seller_profiles s ON s.id=l.seller_profile_id
        LEFT JOIN marketplace_order_payments mop ON mop.marketplace_order_id=mo.id
+       LEFT JOIN deliveries d ON d.id=mo.delivery_id
       WHERE mo.buyer_user_id=$1
       ORDER BY mo.created_at DESC
       LIMIT 50`,

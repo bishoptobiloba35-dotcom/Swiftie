@@ -770,7 +770,18 @@ export default function App() {
             <Text>₦{(Number(order.total_minor) / 100).toLocaleString()} · Qty {order.quantity}</Text>
             {order.requested_delivery_at ? <Text style={styles.muted}>Requested delivery: {new Date(order.requested_delivery_at).toLocaleString()}</Text> : null}
             <Text style={styles.muted}>Seller: {order.seller_name}</Text>
-            {order.delivery_id ? <Text style={styles.done}>✓ Connected to delivery · {order.fulfillment_status}</Text> : order.status === "PAID" && order.fulfillment_status === "NOT_STARTED" ? <View style={styles.card}>
+            {order.delivery_id ? <View style={styles.card}>
+              <Text style={styles.done}>✓ Connected to delivery · {order.fulfillment_status}</Text>
+              {order.tracking_code ? <Text style={styles.code}>Tracking: {order.tracking_code}</Text> : null}
+              {order.delivery_status ? <Text style={styles.muted}>Delivery status: {String(order.delivery_status).replaceAll("_"," ")}</Text> : null}
+              <Pressable style={styles.secondary} onPress={async () => {
+                if (!order.tracking_code || !order.receiver_phone) { Alert.alert("Tracking", "Receiver tracking details are not available yet."); return; }
+                try {
+                  const tracked = await api.track(order.tracking_code, order.receiver_phone);
+                  setDelivery(tracked); setTrackingCode(order.tracking_code); setTrackingPhone(order.receiver_phone); setHomeSection("TRACK");
+                } catch (error) { Alert.alert("Tracking", error instanceof Error ? error.message : "Unable to load delivery tracking"); }
+              }}><Text style={styles.secondaryText}>Track this marketplace delivery</Text></Pressable>
+            </View> : order.status === "PAID" && order.fulfillment_status === "NOT_STARTED" ? <View style={styles.card}>
               <Text style={styles.photoTitle}>Complete delivery details</Text>
               <Text style={styles.muted}>Your payment is authorized. Add the receiver and drop-off details to create the real SwiftDrop delivery and enable tracking.</Text>
               <TextInput style={styles.input} placeholder="Receiver full name" value={marketplaceReceiverName} onChangeText={setMarketplaceReceiverName} />
