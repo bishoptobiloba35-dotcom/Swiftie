@@ -863,17 +863,13 @@ export default function App() {
           <View style={styles.row}><TextInput style={styles.half} placeholder="Width (cm)" keyboardType="decimal-pad" value={sellerWidthCm} onChangeText={setSellerWidthCm} /><TextInput style={styles.half} placeholder="Height (cm)" keyboardType="decimal-pad" value={sellerHeightCm} onChangeText={setSellerHeightCm} /></View>
           <Pressable style={[styles.choice, sellerPerishable && styles.choiceActive]} onPress={() => setSellerPerishable(v => !v)}><Text style={styles.photoTitle}>{sellerPerishable ? "✓ Perishable / food" : "Mark as perishable / food"}</Text></Pressable>
         </>}
-        {sellerDeliveryMode !== "PICKUP" && <>
-          <TextInput style={styles.input} placeholder="Seller pickup address" value={sellerPickupAddress} onChangeText={setSellerPickupAddress} />
-          <View style={styles.row}><TextInput style={styles.half} placeholder="Pickup latitude" keyboardType="decimal-pad" value={sellerPickupLat} onChangeText={setSellerPickupLat} /><TextInput style={styles.half} placeholder="Pickup longitude" keyboardType="decimal-pad" value={sellerPickupLng} onChangeText={setSellerPickupLng} /></View>
-          <View style={styles.row}><TextInput style={styles.half} placeholder="Weight (kg)" keyboardType="decimal-pad" value={sellerWeightKg} onChangeText={setSellerWeightKg} /><TextInput style={styles.half} placeholder="Length (cm)" keyboardType="decimal-pad" value={sellerLengthCm} onChangeText={setSellerLengthCm} /></View>
-          <View style={styles.row}><TextInput style={styles.half} placeholder="Width (cm)" keyboardType="decimal-pad" value={sellerWidthCm} onChangeText={setSellerWidthCm} /><TextInput style={styles.half} placeholder="Height (cm)" keyboardType="decimal-pad" value={sellerHeightCm} onChangeText={setSellerHeightCm} /></View>
-          <Pressable style={[styles.choice, sellerPerishable && styles.choiceActive]} onPress={() => setSellerPerishable(v => !v)}><Text style={styles.photoTitle}>{sellerPerishable ? "✓ Perishable / food" : "Mark as perishable / food"}</Text></Pressable>
-        </>}
         <Pressable style={styles.primary} onPress={() => void publishMarketplaceListing()}><Text style={styles.primaryText}>{sellerPublishing ? "Publishing…" : "Publish item for sale"}</Text></Pressable>
       </View>}
       {selectedListing ? <View style={styles.productDetail}>
-        <Text style={styles.productHero}>🛍️</Text><Text style={styles.heroTitle}>{selectedListing.title}</Text>
+        {Array.isArray(selectedListing.media) && selectedListing.media.length > 0 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaRow}>
+          {selectedListing.media.map((media: any, index: number) => <Image key={media.id ?? index} source={{ uri: String(media.url).startsWith("http") ? String(media.url) : API_URL + String(media.url) }} style={styles.productDetailImage} resizeMode="cover" />)}
+        </ScrollView> : <Text style={styles.productHero}>🛍️</Text>}
+        <Text style={styles.heroTitle}>{selectedListing.title}</Text>
         <Text style={styles.muted}>{selectedListing.category} · {String(selectedListing.delivery_mode).replaceAll("_"," ")}</Text>
         <Text style={styles.productPrice}>₦{(Number(selectedListing.final_price_minor)/100).toLocaleString()}</Text>
         <Text style={styles.priceNote}>Final price includes delivery.</Text>
@@ -907,7 +903,7 @@ export default function App() {
       </View> : <View style={styles.shopGrid}>
         {marketplaceListings.length === 0 && <Text style={styles.muted}>No published products yet. Be the first seller to publish an everyday item.</Text>}
         {marketplaceListings.map(item => <Pressable key={item.id} style={styles.listingCard} onPress={() => void openMarketplaceListing(item.id)}>
-          <Text style={styles.productEmoji}>🛍️</Text><Text style={styles.productName}>{item.title}</Text><Text style={styles.muted}>{item.category}</Text><Text style={styles.productPrice}>₦{(Number(item.final_price_minor)/100).toLocaleString()}</Text><Text style={styles.priceNote}>Delivery included · {String(item.delivery_mode).replaceAll("_"," ")}</Text><Text style={styles.muted}>Seller: {item.seller_name}</Text>
+          {Array.isArray(item.media) && item.media.length > 0 ? <Image source={{ uri: String(item.media[0].url).startsWith("http") ? String(item.media[0].url) : API_URL + String(item.media[0].url) }} style={styles.listingImage} resizeMode="cover" /> : <Text style={styles.productEmoji}>🛍️</Text>}<Text style={styles.productName}>{item.title}</Text><Text style={styles.muted}>{item.category}</Text><Text style={styles.productPrice}>₦{(Number(item.final_price_minor)/100).toLocaleString()}</Text><Text style={styles.priceNote}>Delivery included · {String(item.delivery_mode).replaceAll("_"," ")}</Text><Text style={styles.muted}>Seller: {item.seller_name}</Text>
         </Pressable>)}
       </View>}
       <Pressable style={styles.secondary} onPress={() => setHomeSection("HOME")}><Text style={styles.secondaryText}>Back to home</Text></Pressable>
@@ -1125,6 +1121,8 @@ const styles = StyleSheet.create({
   shopGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   locationCard: { borderWidth: 1, borderColor: "#E3DDD7", backgroundColor: "#FFFFFF", borderRadius: 20, padding: 17, gap: 8 },
   listingCard: { width: "48%", borderWidth: 1, borderColor: "#E0E5E1", borderRadius: 18, padding: 14, backgroundColor: "#FFFFFF", minHeight: 205 },
+  listingImage: { width: "100%", height: 150, borderRadius: 14, marginBottom: 8 },
+  productDetailImage: { width: 280, height: 220, borderRadius: 16, marginRight: 10 },
   bottomNav: { flexDirection: "row", justifyContent: "space-around", paddingTop: 14, paddingBottom: 8, borderTopWidth: 1, borderTopColor: "#DDDCD6", backgroundColor: "#FCF8F2", borderRadius: 18 },
   navItem: { alignItems: "center", gap: 3, color: "#777178" },
   navActive: { alignItems: "center", gap: 3, color: "#2B2630", fontWeight: "900" },
