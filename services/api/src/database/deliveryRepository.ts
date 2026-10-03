@@ -912,6 +912,8 @@ export async function updatePayoutProviderStatus(
   providerCurrency?: string
 ): Promise<PayoutRecord | null> {
   if (!pool) return null;
+
+  const providerStatus = status === "RELEASED" ? "success" : status === "CANCELLED" ? "reversed" : "failed";
   const result = await pool.query(
     `UPDATE payouts
      SET status=$2,
@@ -925,9 +927,36 @@ export async function updatePayoutProviderStatus(
        AND ($5::bigint IS NULL OR amount_minor=$5)
        AND ($6::text IS NULL OR currency=$6)
      RETURNING *`,
-    [providerReference, status, status === "RELEASED" ? "success" : status === "CANCELLED" ? "reversed" : "failed", failureReason ?? null, providerAmountMinor ?? null, providerCurrency ?? null]
+    [providerReference, status, providerStatus, failureReason ?? null, providerAmountMinor ?? null, providerCurrency ?? null]
   );
-  return result.rows[0] ? rowToPayout(result.rows[0]) : null;
+
+  if (result.rows[0]) return rowToPayout(result.rows[0]);
+
+  // A successful provider callback with the wrong amount/currency must not
+  // leave an in-flight payout stuck in PROCESSING. Duplicate callbacks for
+  // an already released payout remain idempotent.
+  if (status === "RELEASED" && (providerAmountMinor != null || providerCurrency)) {
+    const mismatch = await pool.query(
+      `UPDATE payouts
+          SET status='FAILED',
+              provider='paystack',
+              provider_status='amount_mismatch',
+              failure_reason=COALESCE($2, 'Paystack transfer amount or currency mismatch'),
+              processed_at=COALESCE(processed_at, now()),
+              updated_at=now()
+        WHERE provider_reference=$1
+          AND status IN ('PROCESSING','ELIGIBLE')
+          AND (
+            ($3::bigint IS NOT NULL AND amount_minor<>$3)
+            OR ($4::text IS NOT NULL AND currency<>$4)
+          )
+        RETURNING *`,
+      [providerReference, failureReason ?? null, providerAmountMinor ?? null, providerCurrency ?? null]
+    );
+    return mismatch.rows[0] ? rowToPayout(mismatch.rows[0]) : null;
+  }
+
+  return null;
 }
 
 export async function setPayoutProviderReference(deliveryId: string, providerReference: string): Promise<PayoutRecord | null> {
