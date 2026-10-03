@@ -40,7 +40,8 @@ const migrations = [
   { id: "041_fixed_drop_off_partner_source", file: "041_fixed_drop_off_partner_source.sql" },
   { id: "042_marketplace_listing_disclosure", file: "042_marketplace_listing_disclosure.sql" },
   { id: "043_marketplace_delivery_scheduling", file: "043_marketplace_delivery_scheduling.sql" },
-  { id: "044_marketplace_checkout_idempotency", file: "044_marketplace_checkout_idempotency.sql" }
+  { id: "044_marketplace_checkout_idempotency", file: "044_marketplace_checkout_idempotency.sql" },
+  { id: "045_marketplace_order_history_index", file: "045_marketplace_order_history_index.sql" }
 ];
 
 export async function runMigrations(): Promise<void> {
