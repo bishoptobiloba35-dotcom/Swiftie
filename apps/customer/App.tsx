@@ -21,6 +21,7 @@ export default function App() {
   const [marketplaceDeliveryAt, setMarketplaceDeliveryAt] = React.useState("");
   const [marketplaceSearch, setMarketplaceSearch] = React.useState("");
   const [marketplaceLoading, setMarketplaceLoading] = React.useState(false);
+  const [marketplaceOrders, setMarketplaceOrders] = React.useState<any[]>([]);
   const [showSellerForm, setShowSellerForm] = React.useState(false);
   const [sellerTitle, setSellerTitle] = React.useState("");
   const [sellerDescription, setSellerDescription] = React.useState("");
@@ -161,12 +162,20 @@ export default function App() {
     } catch (error) { Alert.alert("Drop-off locations", error instanceof Error ? error.message : "Unable to load nearby locations"); }
   }
 
+  async function loadMarketplaceOrders() {
+    try { setMarketplaceOrders(await api.marketplaceOrders()); } catch {}
+  }
+
   async function loadMarketplace(query = "") {
     setMarketplaceLoading(true);
     try { setMarketplaceListings(await api.marketplaceListings(query)); }
     catch (error) { Alert.alert("Shop", error instanceof Error ? error.message : "Unable to load SwiftDrop Shop"); }
     finally { setMarketplaceLoading(false); }
   }
+
+  React.useEffect(() => {
+    if (homeSection === "SHOP" && signedIn) void loadMarketplaceOrders();
+  }, [homeSection, signedIn]);
 
   async function openMarketplaceListing(id: string) {
     try {
@@ -676,6 +685,19 @@ export default function App() {
       <TextInput style={styles.input} placeholder="Search products, categories or sellers" value={marketplaceSearch} onChangeText={setMarketplaceSearch} onSubmitEditing={() => void loadMarketplace(marketplaceSearch)} />
       <Pressable style={styles.primary} onPress={() => void loadMarketplace(marketplaceSearch)}><Text style={styles.primaryText}>{marketplaceLoading ? "Loading…" : "Search SwiftDrop Shop"}</Text></Pressable>
       <Pressable style={styles.secondary} onPress={() => setShowSellerForm(v => !v)}><Text style={styles.secondaryText}>{showSellerForm ? "Close selling form" : "Sell an item"}</Text></Pressable>
+      <View style={styles.productDetail}>
+        <View style={styles.rowBetween}><Text style={styles.homeHeading}>My marketplace orders</Text><Pressable onPress={() => void loadMarketplaceOrders()}><Text style={styles.link}>Refresh</Text></Pressable></View>
+        {marketplaceOrders.length === 0 ? <Text style={styles.muted}>No marketplace orders yet.</Text> : marketplaceOrders.slice(0, 5).map(order =>
+          <View key={order.id} style={styles.sellerCard}>
+            <Text style={styles.homeHeading}>{order.title}</Text>
+            <Text style={styles.muted}>Status: {String(order.status).replaceAll("_"," ")} · Payment: {String(order.payment_status ?? "NOT_STARTED").replaceAll("_"," ")}</Text>
+            <Text>₦{(Number(order.total_minor) / 100).toLocaleString()} · Qty {order.quantity}</Text>
+            {order.requested_delivery_at ? <Text style={styles.muted}>Requested delivery: {new Date(order.requested_delivery_at).toLocaleString()}</Text> : null}
+            <Text style={styles.muted}>Seller: {order.seller_name}</Text>
+          </View>
+        )}
+      </View>
+
       {showSellerForm && <View style={styles.productDetail}>
         <Text style={styles.homeHeading}>Sell your item</Text>
         <Text style={styles.muted}>Ordinary everyday goods are welcome. Categories help discovery but do not restrict what you can list. Regulated or prohibited goods remain subject to SwiftDrop rules.</Text>
@@ -872,6 +894,7 @@ const styles = StyleSheet.create({
   container: { padding: 20, paddingBottom: 42, gap: 14 },
   homeContainer: { padding: 18, paddingBottom: 40, gap: 14 },
   row: { flexDirection: "row", gap: 10 },
+  rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   third: { flex: 1 },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   headerActions: { flexDirection: "row", gap: 14, alignItems: "center" },
