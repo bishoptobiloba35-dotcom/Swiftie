@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "./database/db.js";
 import { requireAuth } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
+import { deletePrivateObject, getPrivateObject, putPrivateObject } from "./storage.js";
 
 const router = Router();
 
@@ -19,7 +21,8 @@ const listingSchema = z.object({
   priceMinor: z.number().int().positive().max(100000000000),
   deliveryFeeMinor: z.number().int().nonnegative().max(10000000000),
   deliveryMode: z.enum(["SAME_STATE","INTER_STATE","EXPRESS","PICKUP"]),
-  stockQuantity: z.number().int().min(0).max(100000)
+  stockQuantity: z.number().int().min(0).max(100000),
+  media: z.array(z.string()).max(8).optional()
 });
 
 router.get("/marketplace/listings", async (req, res) => {
@@ -34,7 +37,7 @@ router.get("/marketplace/listings", async (req, res) => {
     `SELECT l.id,l.title,l.description,l.condition,l.use_description,l.usage_instructions,l.category,l.delivery_fee_minor,l.final_price_minor,
             l.currency,l.delivery_mode,l.stock_quantity,l.created_at,
             s.id AS seller_id,s.display_name AS seller_name,s.bio AS seller_bio,s.location_label AS seller_location,
-            COALESCE((SELECT json_agg(json_build_object('storageKey',m.storage_key,'sortOrder',m.sort_order) ORDER BY m.sort_order)
+            COALESCE((SELECT json_agg(json_build_object('id',m.id,'url','/api/marketplace/listings/' || m.listing_id || '/media/' || m.id,'sortOrder',m.sort_order) ORDER BY m.sort_order)
                       FROM marketplace_listing_media m WHERE m.listing_id=l.id),'[]'::json) AS media
        FROM marketplace_listings l
        JOIN marketplace_seller_profiles s ON s.id=l.seller_profile_id
@@ -46,13 +49,36 @@ router.get("/marketplace/listings", async (req, res) => {
   return res.json({ listings: result.rows });
 });
 
+router.get("/marketplace/listings/:id/media/:mediaId", async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool.query(
+    `SELECT m.storage_key
+       FROM marketplace_listing_media m
+       JOIN marketplace_listings l ON l.id=m.listing_id
+       JOIN marketplace_seller_profiles s ON s.id=l.seller_profile_id
+      WHERE m.id=$1 AND m.listing_id=$2 AND l.status='PUBLISHED' AND s.status='ACTIVE'`,
+    [String(req.params.mediaId), String(req.params.id)]
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: "Listing image not found" });
+  try {
+    const stored = await getPrivateObject(result.rows[0].storage_key);
+    res.setHeader("content-type", stored.contentType ?? "image/jpeg");
+    res.setHeader("cache-control", "public, max-age=300");
+    return res.send(stored.body);
+  } catch {
+    return res.status(404).json({ error: "Listing image is unavailable" });
+  }
+});
+
 router.get("/marketplace/listings/:id", async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const id = String(req.params.id);
   const result = await pool.query(
     `SELECT l.id,l.title,l.description,l.condition,l.use_description,l.usage_instructions,l.category,l.delivery_fee_minor,l.final_price_minor,
             l.currency,l.delivery_mode,l.stock_quantity,l.created_at,
-            s.id AS seller_id,s.user_id AS seller_user_id,s.display_name AS seller_name,s.bio AS seller_bio,s.location_label AS seller_location
+            s.id AS seller_id,s.user_id AS seller_user_id,s.display_name AS seller_name,s.bio AS seller_bio,s.location_label AS seller_location,
+            COALESCE((SELECT json_agg(json_build_object('id',m.id,'url','/api/marketplace/listings/' || m.listing_id || '/media/' || m.id,'sortOrder',m.sort_order) ORDER BY m.sort_order)
+                      FROM marketplace_listing_media m WHERE m.listing_id=l.id),'[]'::json) AS media
        FROM marketplace_listings l
        JOIN marketplace_seller_profiles s ON s.id=l.seller_profile_id
       WHERE l.id=$1 AND l.status='PUBLISHED' AND s.status='ACTIVE'`,
@@ -96,8 +122,33 @@ router.post("/marketplace/listings", requireAuth(), async (req, res) => {
        RETURNING *`,
       [userId,seller.rows[0].id,p.title,p.description,p.condition,p.useDescription,p.usageInstructions ?? null,p.category,p.priceMinor,p.deliveryFeeMinor,finalPriceMinor,p.deliveryMode,p.stockQuantity]
     );
+
+    const uploadedKeys: string[] = [];
+    try {
+      for (const [index, media] of (p.media ?? []).entries()) {
+        const match = media.match(/^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/i);
+        if (!match) throw new Error("Each marketplace image must be a JPEG, PNG or WebP data URL");
+        const bytes = Buffer.from(match[2], "base64");
+        if (!bytes.length || bytes.length > 8 * 1024 * 1024) throw new Error("Each marketplace image must not exceed 8MB");
+        const extension = match[1].toLowerCase() === "webp" ? "webp" : match[1].toLowerCase() === "png" ? "png" : "jpg";
+        const contentType = extension === "webp" ? "image/webp" : extension === "png" ? "image/png" : "image/jpeg";
+        const key = "marketplace/listings/" + listing.rows[0].id + "/" + String(index).padStart(2, "0") + "-" + randomUUID() + "." + extension;
+        await putPrivateObject(key, bytes, contentType);
+        uploadedKeys.push(key);
+        await client.query(
+          "INSERT INTO marketplace_listing_media(listing_id,storage_key,sort_order) VALUES($1,$2,$3)",
+          [listing.rows[0].id, key, index]
+        );
+      }
+    } catch (mediaError) {
+      for (const key of uploadedKeys) {
+        try { await deletePrivateObject(key); } catch {}
+      }
+      throw mediaError;
+    }
+
     await client.query("COMMIT");
-    return res.status(201).json({ listing: listing.rows[0], seller: seller.rows[0] });
+    return res.status(201).json({ listing: listing.rows[0], seller: seller.rows[0], mediaCount: uploadedKeys.length });
   } catch (error) {
     await client.query("ROLLBACK"); throw error;
   } finally { client.release(); }
