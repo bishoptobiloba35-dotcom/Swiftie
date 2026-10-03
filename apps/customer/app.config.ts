@@ -26,7 +26,8 @@ const config: ExpoConfig = {
         isIosBackgroundLocationEnabled: false
       }
     ],
-    "expo-notifications"
+    "expo-notifications",
+    ["expo-image-picker", { photosPermission: "SwiftDrop uses your photos so you can add product images to marketplace listings.", cameraPermission: "SwiftDrop uses your camera so you can photograph products for marketplace listings.", microphonePermission: false }]
   ]
 };
 
