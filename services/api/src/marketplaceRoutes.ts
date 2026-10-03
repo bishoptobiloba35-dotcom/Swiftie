@@ -12,6 +12,9 @@ const listingSchema = z.object({
   locationLabel: z.string().trim().max(200).optional(),
   title: z.string().trim().min(2).max(160),
   description: z.string().trim().min(10).max(5000),
+  condition: z.enum(["NEW","LIKE_NEW","GOOD","FAIR","USED","FOR_PARTS"]),
+  useDescription: z.string().trim().min(5).max(2000),
+  usageInstructions: z.string().trim().max(5000).optional(),
   category: z.string().trim().min(2).max(80),
   priceMinor: z.number().int().positive().max(100000000000),
   deliveryFeeMinor: z.number().int().nonnegative().max(10000000000),
@@ -28,7 +31,7 @@ router.get("/marketplace/listings", async (req, res) => {
   if (q) { params.push("%"+q+"%"); where.push("(l.title ILIKE $"+params.length+" OR l.description ILIKE $"+params.length+" OR l.category ILIKE $"+params.length+")"); }
   if (category) { params.push(category); where.push("l.category=$"+params.length); }
   const result = await pool.query(
-    `SELECT l.id,l.title,l.description,l.category,l.price_minor,l.delivery_fee_minor,l.final_price_minor,
+    `SELECT l.id,l.title,l.description,l.condition,l.use_description,l.usage_instructions,l.category,l.delivery_fee_minor,l.final_price_minor,
             l.currency,l.delivery_mode,l.stock_quantity,l.created_at,
             s.id AS seller_id,s.display_name AS seller_name,s.bio AS seller_bio,s.location_label AS seller_location,
             COALESCE((SELECT json_agg(json_build_object('storageKey',m.storage_key,'sortOrder',m.sort_order) ORDER BY m.sort_order)
@@ -47,7 +50,7 @@ router.get("/marketplace/listings/:id", async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const id = String(req.params.id);
   const result = await pool.query(
-    `SELECT l.id,l.title,l.description,l.category,l.price_minor,l.delivery_fee_minor,l.final_price_minor,
+    `SELECT l.id,l.title,l.description,l.condition,l.use_description,l.usage_instructions,l.category,l.delivery_fee_minor,l.final_price_minor,
             l.currency,l.delivery_mode,l.stock_quantity,l.created_at,
             s.id AS seller_id,s.user_id AS seller_user_id,s.display_name AS seller_name,s.bio AS seller_bio,s.location_label AS seller_location
        FROM marketplace_listings l
@@ -88,10 +91,10 @@ router.post("/marketplace/listings", requireAuth("AGENT"), async (req, res) => {
     );
     const listing = await client.query(
       `INSERT INTO marketplace_listings
-       (seller_user_id,seller_profile_id,title,description,category,price_minor,delivery_fee_minor,final_price_minor,currency,delivery_mode,stock_quantity)
+       (seller_user_id,seller_profile_id,title,description,condition,use_description,usage_instructions,category,price_minor,delivery_fee_minor,final_price_minor,currency,delivery_mode,stock_quantity)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,'NGN',$9,$10)
        RETURNING *`,
-      [userId,seller.rows[0].id,p.title,p.description,p.category,p.priceMinor,p.deliveryFeeMinor,finalPriceMinor,p.deliveryMode,p.stockQuantity]
+      [userId,seller.rows[0].id,p.title,p.description,p.condition,p.useDescription,p.usageInstructions ?? null,p.category,p.priceMinor,p.deliveryFeeMinor,finalPriceMinor,p.deliveryMode,p.stockQuantity]
     );
     await client.query("COMMIT");
     return res.status(201).json({ listing: listing.rows[0], seller: seller.rows[0] });
