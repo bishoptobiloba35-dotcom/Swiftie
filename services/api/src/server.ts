@@ -7,7 +7,7 @@ import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
-import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, confirmReceiverOnDeliveryPaymentDue, settleReceiverPaymentAndReleasePayout, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout, flagPayoutReconciliationMismatch } from "./database/deliveryRepository.js";
+import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, confirmReceiverOnDeliveryPaymentDue, settleReceiverPaymentAndReleasePayout, reservePaymentInitialization, savePaymentCheckoutSession, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout, flagPayoutReconciliationMismatch } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
 import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, listSupportTicketMessages, recordAdminSupportReply, prepareRefund, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
@@ -627,6 +627,11 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
   }
 
   const reference = "SD-" + delivery.trackingCode + "-" + Date.now();
+  const reservation = await reservePaymentInitialization(delivery.id, reference);
+  if (!reservation.reserved) {
+    if (reservation.payment?.authorizationUrl) return res.status(200).json({ paymentId: reservation.payment.id, reference: reservation.payment.providerReference, authorizationUrl: reservation.payment.authorizationUrl, accessCode: reservation.payment.accessCode, amountMinor: reservation.payment.amountMinor });
+    return res.status(409).json({ error: "Payment initialization is already in progress. Retry shortly." });
+  }
   const response = await fetch("https://api.paystack.co/transaction/initialize", {
     method: "POST",
     headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
@@ -643,13 +648,13 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
     return res.status(502).json({ error: "Payment provider initialization failed" });
   }
 
-  const payment = await createPayment({ deliveryId: delivery.id, provider: "paystack", amountMinor, currency: "NGN", collectionMode: "SENDER_ESCROW" });
-  await updatePaymentStatus(delivery.id, "PENDING", payload.data.reference ?? reference);
+  const saved = await savePaymentCheckoutSession(delivery.id, payload.data.reference ?? reference, payload.data.authorization_url, payload.data.access_code);
+  if (!saved) return res.status(409).json({ error: "Payment checkout could not be saved. Retry shortly." });
   await recordDeliveryEvent({
     deliveryId: delivery.id,
     eventType: "PAYMENT_INITIALIZED",
     actorUserId: userId,
-    metadata: { paymentId: payment.id, reference: payload.data.reference ?? reference, amountMinor }
+    metadata: { paymentId: saved.id, reference: payload.data.reference ?? reference, amountMinor }
   });
   res.status(201).json({
     paymentId: payment.id,
