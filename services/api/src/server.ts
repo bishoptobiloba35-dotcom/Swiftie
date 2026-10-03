@@ -98,7 +98,7 @@ type MemoryDelivery = {
   id: string; trackingCode: string; senderId: string; receiverName: string; receiverPhone: string;
   pickup: { label: string; formattedAddress: string; location: DeliveryLocation };
   dropoff: { label: string; formattedAddress: string; location: DeliveryLocation };
-  status: Status; driverId?: string; pickupPhotoUrl?: string; receiverPin: string;
+  status: Status; paymentMode: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY"; driverId?: string; pickupPhotoUrl?: string; receiverPin: string;
   quote?: DeliveryQuote; createdAt: string; updatedAt: string;
 };
 const deliveries = new Map<string, MemoryDelivery>();
@@ -564,6 +564,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
 
       const created = await createPersistentDelivery({
         senderId: input.senderId,
+        paymentMode: input.paymentMode,
         receiverName: input.receiverName,
         receiverPhone: input.receiverPhone,
         pickup: { label: input.pickup.label, formattedAddress: input.pickup.formattedAddress, location: { latitude: input.pickup.latitude, longitude: input.pickup.longitude } },
@@ -573,6 +574,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
         dimensionsCm: input.dimensionsCm,
         isPerishable: input.isPerishable,
         declaredValueMinor: input.declaredValueMinor,
+        paymentMode: input.paymentMode,
         quote: input.quote
       });
       if (input.pickupDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'PICKUP',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.pickupDropOffLocationId]);
@@ -586,6 +588,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
       senderId: input.senderId,
       receiverName: input.receiverName,
       receiverPhone: input.receiverPhone,
+      paymentMode: input.paymentMode,
       pickup: { label: input.pickup.label, formattedAddress: input.pickup.formattedAddress, location: { latitude: input.pickup.latitude, longitude: input.pickup.longitude } },
       dropoff: { label: input.dropoff.label, formattedAddress: input.dropoff.formattedAddress, location: { latitude: input.dropoff.latitude, longitude: input.dropoff.longitude } },
       quote,
