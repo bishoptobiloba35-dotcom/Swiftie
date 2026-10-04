@@ -228,8 +228,14 @@ export async function authorizeRecurringBuyOrder(input: {
 
       if (row.payment_status === "PENDING") {
         if (!row.provider_reference || !row.payment_id) {
-          await client.query("ROLLBACK");
-          return { status: "FAILED", orderId: input.orderId, reason: "PENDING_PAYMENT_RECORD_INVALID" };
+          if (row.payment_id) {
+            await client.query(
+              "UPDATE buy_order_payments SET provider_status='reconciliation_required',updated_at=now() WHERE id=$1 AND status='PENDING'",
+              [row.payment_id]
+            );
+          }
+          await client.query("COMMIT");
+          return { status: "WAITING", orderId: input.orderId, reason: "PENDING_PAYMENT_RECORD_INVALID_REQUIRES_RECONCILIATION" };
         }
         await client.query("COMMIT");
         const verified = await verify(String(row.provider_reference), secret);
