@@ -149,7 +149,7 @@ async function reconcileVerifiedPayment(
       [orderId]
     );
     await releaseBusinessSpendReservation(orderId);
-    return null;
+    return { status: "FAILED", orderId, reason: `PAYMENT_PROVIDER_TERMINAL:${providerStatus || "unknown"}` };
   }
 
   await pool.query(
