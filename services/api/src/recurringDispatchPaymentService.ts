@@ -215,7 +215,7 @@ export async function authorizeRecurringBuyOrder(input: {
     const client: PoolClient = await pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`swiftdrop:recurring-buy-payment:${input.orderId}`]);
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`swiftdrop:recurring-buy-payment:${input.orderId}`]);
 
       const row = (await client.query(
         `SELECT bo.id,bo.business_id,bo.customer_user_id,bo.purchase_budget_minor,bo.currency,bo.status,
