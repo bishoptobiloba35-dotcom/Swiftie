@@ -26,7 +26,9 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
     );
 
     for (const rule of due.rows) {
-      const template = rule.template ?? {};
+      await client.query("SAVEPOINT recurring_rule");
+      try {
+        const template = rule.template ?? {};
       const deliveryIds = Array.isArray(template.deliveryIds)
         ? template.deliveryIds.filter((v: unknown) => typeof v === "string")
         : [];
@@ -180,7 +182,30 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
           WHERE id=$1`,
         [rule.id, plan.rows[0].id, nextRunAt]
       );
-      processed += 1;
+        processed += 1;
+        await client.query("RELEASE SAVEPOINT recurring_rule");
+      } catch (error) {
+        await client.query("ROLLBACK TO SAVEPOINT recurring_rule");
+        const nextRetryAt = nextFutureRun(new Date(rule.next_run_at), Math.max(1, Number(rule.cadence_minutes)));
+        await client.query(
+          `UPDATE business_recurring_dispatches
+              SET last_run_at=now(),
+                  next_run_at=$2,
+                  updated_at=now()
+            WHERE id=$1`,
+          [rule.id, nextRetryAt]
+        );
+        await client.query(
+          `INSERT INTO ai_audit_log
+            (user_id, plan, capability, action, allowed, reason, metadata)
+           VALUES ($1,(SELECT ai_plan FROM users WHERE id=$1),'ACTION','RECURRING_DISPATCH_WORKER',false,'Recurring dispatch execution failed',$2::jsonb)`,
+          [rule.created_by_user_id, JSON.stringify({
+            recurringDispatchId: rule.id,
+            error: error instanceof Error ? error.message : "Unknown recurring dispatch error",
+            retryAt: nextRetryAt.toISOString()
+          })]
+        );
+      }
     }
     await client.query("COMMIT");
     return processed;
