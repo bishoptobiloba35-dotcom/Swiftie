@@ -1,0 +1,1 @@
+{"previewPort":3000,"healthPath":"/","startCommand":"docker compose -f docker-compose.base44.yml up -d","secrets":[{"name":"PAYSTACK_SECRET_KEY","description":"Paystack secret key (optional; only for real payments)","requiredAtBoot":false}]}

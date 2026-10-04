@@ -1,0 +1,72 @@
+services:
+  db:
+    image: postgres:16
+    restart: on-failure
+    environment:
+      POSTGRES_USER: swiftdrop
+      POSTGRES_PASSWORD: swiftdrop_dev
+      POSTGRES_DB: swiftdrop
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+      - ./services/api/src/database/schema.sql:/docker-entrypoint-initdb.d/00_schema.sql:ro
+      - ./services/api/src/database/001_dev_seed.sql:/docker-entrypoint-initdb.d/01_seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U swiftdrop -d swiftdrop"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  install:
+    image: node:22
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: ["sh", "-ec", "npm install --no-audit --no-fund --workspace=@swiftdrop/api --workspace=@swiftdrop/admin --workspace=@swiftdrop/shared"]
+
+  api:
+    image: node:22
+    working_dir: /app/services/api
+    restart: on-failure
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      install:
+        condition: service_completed_successfully
+    environment:
+      - API_PORT=4000
+      - DATABASE_URL=postgres://swiftdrop:swiftdrop_dev@db:5432/swiftdrop
+      - CORS_ORIGINS=https://3000-${BASE44_PUBLIC_HOST_SUFFIX}
+    ports: ["4000:4000"]
+    command: ["sh", "-ec", "exec npx tsx watch src/server.ts"]
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  admin:
+    image: node:22
+    working_dir: /app/apps/admin
+    restart: on-failure
+    volumes:
+      - .:/app
+    depends_on:
+      install:
+        condition: service_completed_successfully
+    environment:
+      - __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+      - VITE_API_URL=https://4000-${BASE44_PUBLIC_HOST_SUFFIX}
+    ports: ["3000:3000"]
+    command: ["sh", "-ec", "exec npx vite --host 0.0.0.0 --port 3000"]
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  dbdata:
