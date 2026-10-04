@@ -957,7 +957,7 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   const buyReference = String(event?.data?.reference ?? "");
   if (buyReference && databaseEnabled() && (event?.event === "charge.success" || event?.event === "charge.failed")) {
     const buyPaymentResult = await pool!.query(
-      "SELECT bop.*, bo.customer_user_id, bo.payment_status AS order_payment_status FROM buy_order_payments bop JOIN buy_orders bo ON bo.id=bop.buy_order_id WHERE bop.provider_reference=$1",
+      "SELECT bop.*, bo.customer_user_id, bo.business_id, u.email AS customer_email, bo.payment_status AS order_payment_status FROM buy_order_payments bop JOIN buy_orders bo ON bo.id=bop.buy_order_id JOIN users u ON u.id=bo.customer_user_id WHERE bop.provider_reference=$1",
       [buyReference]
     );
     const buyPayment = buyPaymentResult.rows[0];
@@ -971,6 +971,44 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
         await pool!.query("UPDATE buy_order_payments SET status='FAILED', updated_at=now() WHERE id=$1", [buyPayment.id]);
         await pool!.query("UPDATE buy_orders SET payment_status='FAILED', updated_at=now() WHERE id=$1", [buyPayment.buy_order_id]);
         return res.status(200).json({ received: true, duplicate: duplicateWebhook });
+      }
+
+      const authorization = event?.data?.authorization;
+      if (
+        buyPayment.business_id &&
+        buyPayment.customer_email &&
+        authorization?.reusable === true &&
+        typeof authorization.authorization_code === "string" &&
+        authorization.authorization_code.trim()
+      ) {
+        await pool!.query(
+          `INSERT INTO business_payment_authorizations
+             (business_id,user_id,provider,authorization_code,email,status,last_used_at,updated_at)
+           VALUES ($1,$2,'paystack',$3,$4,'ACTIVE',now(),now())
+           ON CONFLICT (business_id,user_id,provider)
+           DO UPDATE SET
+             authorization_code=EXCLUDED.authorization_code,
+             email=EXCLUDED.email,
+             status='ACTIVE',
+             last_used_at=now(),
+             updated_at=now()`,
+          [
+            buyPayment.business_id,
+            buyPayment.customer_user_id,
+            authorization.authorization_code.trim(),
+            buyPayment.customer_email
+          ]
+        );
+        await pool!.query(
+          `INSERT INTO buy_order_events
+             (buy_order_id,actor_user_id,event_type,metadata)
+           VALUES ($1,$2,'RECURRING_PAYMENT_AUTHORIZATION_SAVED',$3::jsonb)`,
+          [
+            buyPayment.buy_order_id,
+            buyPayment.customer_user_id,
+            JSON.stringify({ businessId: buyPayment.business_id, provider: "paystack" })
+          ]
+        );
       }
       await pool!.query("UPDATE buy_order_payments SET status='HELD', updated_at=now() WHERE id=$1 AND status NOT IN ('RELEASED','REFUNDED')", [buyPayment.id]);
       await pool!.query("UPDATE buy_orders SET payment_status='HELD', updated_at=now() WHERE id=$1 AND payment_status NOT IN ('REFUNDED')", [buyPayment.buy_order_id]);
