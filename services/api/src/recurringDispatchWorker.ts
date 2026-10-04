@@ -18,7 +18,7 @@ async function executeAutonomousDispatchPlan(planId: string): Promise<void> {
   const lockClient = await pool.connect();
   const lockKey = `swiftdrop:autonomous-dispatch-plan:${planId}`;
   try {
-    const lockResult = await lockClient.query("SELECT pg_try_advisory_lock(hashtext($1)) AS locked", [lockKey]);
+    const lockResult = await lockClient.query("SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS locked", [lockKey]);
     if (!lockResult.rows[0]?.locked) return;
 
     const plan = (await pool.query("SELECT id,business_id,status,approval_required,plan,created_by_user_id FROM business_dispatch_plans WHERE id=$1",[planId])).rows[0];
@@ -136,7 +136,7 @@ async function executeAutonomousDispatchPlan(planId: string): Promise<void> {
     );
   } finally { client.release(); }
   } finally {
-    try { await lockClient.query("SELECT pg_advisory_unlock(hashtext($1))", [lockKey]); } catch {}
+    try { await lockClient.query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [lockKey]); } catch {}
     lockClient.release();
   }
 }
