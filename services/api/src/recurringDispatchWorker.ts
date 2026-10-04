@@ -115,7 +115,10 @@ async function executeAutonomousDispatchPlan(planId: string): Promise<void> {
         return;
       }
     }
-    const updated = await client.query("UPDATE business_dispatch_plans SET status='EXECUTED',executed_at=now(),updated_at=now() WHERE id=$1 AND status='PREPARED' AND approval_required=false RETURNING id",[locked.id]);
+    const updated = await client.query(
+      "UPDATE business_dispatch_plans SET status='EXECUTED',executed_at=now(),updated_at=now(),plan=plan - 'autonomousRecoveryState' - 'autonomousRecoveryReason' - 'autonomousRetryAt' - 'autonomousRetryCount' - 'autonomousPaymentResults' - 'autonomousBlockedReason' WHERE id=$1 AND status='PREPARED' AND approval_required=false RETURNING id",
+      [locked.id]
+    );
     if (!updated.rows[0]) { await client.query("ROLLBACK"); return; }
     if (linkedDeliveryIds.length) {
       await client.query(
