@@ -54,9 +54,25 @@ async function executeAutonomousDispatchPlan(planId: string): Promise<void> {
     const lockedPlan = locked.plan ?? {};
     const lockedBuyOrderIds = Array.isArray(lockedPlan.buyOrderIds) ? lockedPlan.buyOrderIds.filter((v: unknown) => typeof v === "string") : [];
     const lockedDeliveries = Array.isArray(lockedPlan.deliveryIds) ? lockedPlan.deliveryIds.filter((v: unknown) => typeof v === "string") : [];
+    if (lockedDeliveries.length) {
+      const deliveries = await client.query(
+        "SELECT id,status FROM deliveries WHERE id=ANY($1::uuid[]) AND status IN ('PAYMENT_AUTHORIZED','DRIVER_ASSIGNED') FOR UPDATE",
+        [lockedDeliveries]
+      );
+      if (deliveries.rows.length !== lockedDeliveries.length) { await client.query("ROLLBACK"); return; }
+    }
     if (lockedBuyOrderIds.length) {
-      const payments = await client.query("SELECT id,payment_status FROM buy_orders WHERE id=ANY($1::uuid[]) AND business_id=$2 FOR UPDATE",[lockedBuyOrderIds,locked.business_id]);
-      if (payments.rows.length !== lockedBuyOrderIds.length || payments.rows.some((row: any) => !["HELD","AUTHORIZED"].includes(String(row.payment_status)))) { await client.query("ROLLBACK"); return; }
+      const payments = await client.query(
+        "SELECT id,status,payment_status FROM buy_orders WHERE id=ANY($1::uuid[]) AND business_id=$2 FOR UPDATE",
+        [lockedBuyOrderIds,locked.business_id]
+      );
+      if (
+        payments.rows.length !== lockedBuyOrderIds.length ||
+        payments.rows.some((row: any) =>
+          ["CANCELLED","DELIVERED","DISPUTED"].includes(String(row.status)) ||
+          !["HELD","AUTHORIZED"].includes(String(row.payment_status))
+        )
+      ) { await client.query("ROLLBACK"); return; }
     }
     const updated = await client.query("UPDATE business_dispatch_plans SET status='EXECUTED',executed_at=now(),updated_at=now() WHERE id=$1 AND status='PREPARED' AND approval_required=false RETURNING id",[locked.id]);
     if (!updated.rows[0]) { await client.query("ROLLBACK"); return; }
