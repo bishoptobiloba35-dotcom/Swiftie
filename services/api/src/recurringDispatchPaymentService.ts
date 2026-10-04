@@ -100,7 +100,9 @@ async function reconcileVerifiedPayment(
   reference: string,
   amountMinor: number,
   currency: string,
-  payload: any
+  payload: any,
+  authorizationId: string,
+  actorUserId: string
 ): Promise<RecurringPaymentResult | null> {
   if (!pool) return { status: "FAILED", orderId, reason: "DATABASE_NOT_CONFIGURED" };
   const providerStatus = String(payload?.data?.status ?? "").toLowerCase();
@@ -135,6 +137,14 @@ async function reconcileVerifiedPayment(
     await pool.query(
       "UPDATE buy_orders SET payment_reference=$2,payment_status='HELD',updated_at=now() WHERE id=$1 AND payment_status NOT IN ('REFUNDED')",
       [orderId, reference]
+    );
+    await pool.query(
+      "UPDATE business_payment_authorizations SET last_used_at=now(),updated_at=now() WHERE id=$1 AND status='ACTIVE'",
+      [authorizationId]
+    );
+    await pool.query(
+      "INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'PAYMENT_HELD_RECONCILED',$3::jsonb)",
+      [orderId, actorUserId, JSON.stringify({ provider: "paystack", reference, source: "AUTONOMOUS_RECURRING_DISPATCH_RECONCILIATION" })]
     );
     return { status: "HELD", orderId, reference };
   }
@@ -240,7 +250,16 @@ export async function authorizeRecurringBuyOrder(input: {
         await client.query("COMMIT");
         const verified = await verify(String(row.provider_reference), secret);
         if (!verified) return { status: "WAITING", orderId: input.orderId, reason: "PAYMENT_VERIFICATION_UNAVAILABLE" };
-        const reconciled = await reconcileVerifiedPayment(input.orderId, String(row.payment_id), String(row.provider_reference), amountMinor, currency, verified);
+        const reconciled = await reconcileVerifiedPayment(
+          input.orderId,
+          String(row.payment_id),
+          String(row.provider_reference),
+          amountMinor,
+          currency,
+          verified,
+          String(authorization.id),
+          String(row.customer_user_id)
+        );
         if (reconciled) return reconciled;
         attempt = Math.max(attempt, nextAttempt(String(row.provider_reference), input.planId, input.orderId) - 1);
         continue;
