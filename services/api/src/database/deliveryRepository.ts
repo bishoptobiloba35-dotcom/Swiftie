@@ -1309,6 +1309,12 @@ export async function confirmReceiverOnDeliveryPaymentDue(id: string, receiverPh
        VALUES ($1,'RECEIVER_CONFIRMED_PACKAGE_PAYMENT_DUE',$2::jsonb)`,
       [id, JSON.stringify({ collectionMode: "RECEIVER_ON_DELIVERY", amountMinor: Number(row.amount_minor), currency: row.payment_currency ?? "NGN" })]
     );
+    await client.query(
+      `UPDATE marketplace_orders
+          SET status='IN_TRANSIT', fulfillment_status='IN_PROGRESS', updated_at=now()
+        WHERE delivery_id=$1 AND status IN ('PROCESSING','IN_TRANSIT')`,
+      [id]
+    );
     await client.query("COMMIT");
     return rowToDelivery(updated.rows[0]);
   } catch (error) {
