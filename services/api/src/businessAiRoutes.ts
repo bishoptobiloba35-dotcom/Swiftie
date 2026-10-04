@@ -493,7 +493,7 @@ router.get("/admin/recurring-dispatch-recovery", requireAuth("ADMIN"), async (_r
        JOIN business_accounts b ON b.id=p.business_id
       WHERE p.status='PREPARED'
         AND p.plan->>'autonomousRecoveryState' IS NOT NULL
-      ORDER BY COALESCE((p.plan->>'autonomousRetryAt')::timestamptz, p.updated_at) ASC
+      ORDER BY p.updated_at ASC
       LIMIT 200`
   );
   return res.json({ recoveries: result.rows.map((row: any) => ({
