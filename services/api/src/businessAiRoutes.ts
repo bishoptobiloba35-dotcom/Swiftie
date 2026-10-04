@@ -731,7 +731,7 @@ const dropOffApplicationSchema = z.object({
   registrationNumber: z.string().trim().max(100).optional(), name: z.string().trim().min(2).max(160), address: z.string().trim().min(5).max(500),
   latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180), phone: z.string().trim().min(7).max(30),
   operatingHours: z.record(z.string(), z.string()).default({}), capacity: z.number().int().min(1).max(10000).default(50),
-  commissionMinor: z.number().int().nonnegative().max(100000000).default(50000)
+  commissionMinor: z.literal(50000).default(50000)
 });
 async function managesDropOff(userId: string, locationId: string): Promise<boolean> {
   if (!pool) return false;
@@ -751,7 +751,7 @@ router.post("/drop-off/applications", requireAuth("CUSTOMER","AGENT","ADMIN"), a
       const b=await client.query("INSERT INTO business_accounts(owner_user_id,legal_name,display_name,registration_number,status) VALUES($1,$2,$3,$4,'PENDING') RETURNING id",[userId,d.legalName??d.displayName??d.name,d.displayName??d.name,d.registrationNumber??null]);
       businessId=b.rows[0].id; await client.query("INSERT INTO business_members(business_id,user_id,member_role) VALUES($1,$2,'OWNER')",[businessId,userId]);
     }
-    const location=await client.query("INSERT INTO drop_off_locations(business_id,name,address,latitude,longitude,phone,operating_hours,capacity,commission_minor) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) RETURNING *",[businessId,d.name,d.address,d.latitude,d.longitude,d.phone,JSON.stringify(d.operatingHours),d.capacity,d.commissionMinor]);
+    const location=await client.query("INSERT INTO drop_off_locations(business_id,name,address,latitude,longitude,phone,operating_hours,capacity,commission_minor) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) RETURNING *",[businessId,d.name,d.address,d.latitude,d.longitude,d.phone,JSON.stringify(d.operatingHours),d.capacity,50000]);
     await client.query("INSERT INTO drop_off_application_audit(location_id,actor_user_id,new_status,note) VALUES($1,$2,'PENDING','Application submitted')",[location.rows[0].id,userId]);
     await client.query("COMMIT"); res.status(201).json({location:location.rows[0]});
   } catch(e){await client.query("ROLLBACK");res.status(400).json({error:e instanceof Error?e.message:"Unable to submit application"});} finally{client.release();}
