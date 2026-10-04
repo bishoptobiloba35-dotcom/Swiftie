@@ -61,6 +61,12 @@ router.post("/business/recurring-dispatches", requireAuth("CUSTOMER", "ADMIN"), 
   if (!m || m.status !== "ACTIVE" || !canDispatchBusiness(m.member_role as any)) {
     return res.status(403).json({ error: "Business dispatch authorization required" });
   }
+  if (!parsed.data.approvalRequired && !["OWNER", "ADMIN"].includes(m.member_role)) {
+    return res.status(403).json({
+      error: "Only a business owner or admin can create approval-free autonomous recurring dispatches",
+      code: "AUTONOMOUS_DISPATCH_AUTHORITY_REQUIRED"
+    });
+  }
   const result = await pool.query(
     `INSERT INTO business_recurring_dispatches
       (business_id, created_by_user_id, name, cadence_minutes, next_run_at, approval_required, template)
