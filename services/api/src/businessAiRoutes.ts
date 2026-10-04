@@ -691,21 +691,6 @@ router.post("/business/dispatch-plans/:id/authorize-buy-orders", requireAuth("CU
     });
   }
 
-  const authorization = (await pool.query(
-    `SELECT id,user_id,authorization_code,email,status
-       FROM business_payment_authorizations
-      WHERE business_id=$1 AND status='ACTIVE'
-      ORDER BY updated_at DESC
-      LIMIT 1`,
-    [plan.business_id]
-  )).rows[0];
-  if (!authorization) {
-    return res.status(409).json({
-      error: "No reusable Paystack authorization is available for this business",
-      code: "PAYMENT_AUTHORIZATION_REQUIRED"
-    });
-  }
-
   const buyOrderIds = Array.isArray(plan.plan?.buyOrderIds)
     ? plan.plan.buyOrderIds.filter((v: unknown) => typeof v === "string")
     : [];
@@ -722,14 +707,34 @@ router.post("/business/dispatch-plans/:id/authorize-buy-orders", requireAuth("CU
   const secret = process.env.PAYSTACK_SECRET_KEY;
   if (!secret) return res.status(503).json({ error: "Paystack payment configuration is not ready" });
 
+  // A business may have multiple members with separate reusable Paystack
+  // authorizations. Resolve the authorization by order owner, not by whichever
+  // authorization happens to be most recently updated for the business.
+  const authorizationByUser = new Map<string, any>();
+  for (const order of orders.rows) {
+    const ownerId = String(order.customer_user_id ?? "");
+    if (!ownerId || authorizationByUser.has(ownerId)) continue;
+    const authorization = (await pool.query(
+      `SELECT id,user_id,authorization_code,email,status
+         FROM business_payment_authorizations
+        WHERE business_id=$1 AND user_id=$2 AND status='ACTIVE'
+        ORDER BY updated_at DESC
+        LIMIT 1`,
+      [plan.business_id, ownerId]
+    )).rows[0];
+    authorizationByUser.set(ownerId, authorization ?? null);
+  }
+
   const authorizedBuyOrderIds: string[] = [];
   const failedBuyOrders: Array<{ id: string; reason: string }> = [];
   const paymentAuthorizationRequired: Array<{ id: string; authorizationUrl: string | null; accessCode: string | null }> = [];
 
   for (const order of orders.rows) {
-    // A reusable Paystack authorization is owned by the customer whose email/code
-    // was originally authorized. Never apply one business member's authorization
-    // to a Buy & Deliver order owned by a different customer.
+    const authorization = authorizationByUser.get(String(order.customer_user_id ?? ""));
+    if (!authorization) {
+      failedBuyOrders.push({ id: order.id, reason: "PAYMENT_AUTHORIZATION_REQUIRED" });
+      continue;
+    }
     if (String(order.customer_user_id ?? "") !== String(authorization.user_id ?? "")) {
       failedBuyOrders.push({ id: order.id, reason: "PAYMENT_AUTHORIZATION_OWNER_MISMATCH" });
       continue;
