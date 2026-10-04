@@ -767,7 +767,26 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
         if(!Number.isSafeInteger(amountMinor)||amountMinor<0) return res.status(200).json({received:true});
         if(refundStatus==="processed"){
           await pool!.query(
-            "UPDATE marketplace_order_payments SET refund_status='PROCESSED',refund_reference=COALESCE(refund_reference,$2),refund_amount_minor=$3,total_refunded_minor=total_refunded_minor+$3,status=CASE WHEN total_refunded_minor+$3>=amount_minor THEN 'REFUNDED' ELSE status END,refund_updated_at=now(),updated_at=now() WHERE id=$1",
+            `UPDATE marketplace_order_payments
+                SET refund_status='PROCESSED',
+                    refund_reference=COALESCE($2,refund_reference),
+                    refund_amount_minor=$3,
+                    total_refunded_minor=CASE
+                      WHEN refund_status='PROCESSED' AND refund_reference IS NOT DISTINCT FROM $2
+                        THEN total_refunded_minor
+                      ELSE total_refunded_minor+$3
+                    END,
+                    status=CASE
+                      WHEN (
+                        CASE
+                          WHEN refund_status='PROCESSED' AND refund_reference IS NOT DISTINCT FROM $2
+                            THEN total_refunded_minor
+                          ELSE total_refunded_minor+$3
+                        END
+                      )>=amount_minor THEN 'REFUNDED' ELSE status
+                    END,
+                    refund_updated_at=now(),updated_at=now()
+              WHERE id=$1`,
             [marketplacePayment.id,refundReference||null,amountMinor]
           );
           await pool!.query(
