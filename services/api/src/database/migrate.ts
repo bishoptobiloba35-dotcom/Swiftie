@@ -46,6 +46,7 @@ const migrations = [
   { id: "047_marketplace_delivery_fulfillment_hardening", file: "047_marketplace_delivery_fulfillment_hardening.sql" },
   { id: "048_marketplace_payment_refunds", file: "048_marketplace_payment_refunds.sql" },
   { id: "049_business_payment_authorizations", file: "049_business_payment_authorizations.sql" },
+  { id: "050_business_payment_authorization_metadata", file: "050_business_payment_authorization_metadata.sql" },
 ];
 export async function runMigrations(): Promise<void> {
   if (!pool) return;
