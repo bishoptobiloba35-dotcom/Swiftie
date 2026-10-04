@@ -1393,6 +1393,12 @@ export async function settleReceiverPaymentAndReleasePayout(
        VALUES ($1,'RECEIVER_PAYMENT_CAPTURED',$2::jsonb)`,
       [id, JSON.stringify({ provider: "paystack", providerReference, amountMinor: Number(row.amount_minor), currency: row.payment_currency ?? "NGN", escrowUsed: false, payoutEligible: payoutAmountMinor > 0 })]
     );
+    await client.query(
+      `UPDATE marketplace_orders
+          SET status='DELIVERED', fulfillment_status='FULFILLED', updated_at=now()
+        WHERE delivery_id=$1 AND status IN ('PROCESSING','IN_TRANSIT')`,
+      [id]
+    );
     await client.query("COMMIT");
     return { delivery: rowToDelivery(delivered.rows[0]), payoutAmountMinor };
   } catch (error) {
