@@ -156,6 +156,8 @@ export async function authorizeRecurringBuyOrder(input: {
       let reference = String(row.provider_reference ?? "");
       if (!reference || reference.startsWith("sd_recurring_")) {
         reference = recurringPaymentReference(input.planId, input.orderId, 1);
+      } else if (row.payment_status === "FAILED") {
+        reference = recurringPaymentReference(input.planId, input.orderId, nextAttempt(reference, input.planId, input.orderId));
       } else if (!reference.startsWith("sd-recurring-")) {
         reference = recurringPaymentReference(input.planId, input.orderId, 1);
       }
