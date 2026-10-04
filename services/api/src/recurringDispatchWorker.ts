@@ -26,6 +26,18 @@ async function executeAutonomousDispatchPlan(planId: string): Promise<void> {
   const payload = plan.plan ?? {};
   const buyOrderIds = Array.isArray(payload.buyOrderIds) ? payload.buyOrderIds.filter((v: unknown) => typeof v === "string") : [];
   const deliveryIds = Array.isArray(payload.deliveryIds) ? payload.deliveryIds.filter((v: unknown) => typeof v === "string") : [];
+  if (buyOrderIds.length === 0 && deliveryIds.length === 0) {
+    await pool.query(
+      "UPDATE business_dispatch_plans SET status='CANCELLED',updated_at=now(),plan=plan || $2::jsonb WHERE id=$1 AND status='PREPARED'",
+      [plan.id, JSON.stringify({ autonomousBlockedReason: "NO_DISPATCHABLE_TARGETS" })]
+    );
+    await pool.query(
+      "INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,(SELECT ai_plan FROM users WHERE id=$1),'ACTION','RECURRING_DISPATCH_AUTONOMOUS_EXECUTE',false,'Recurring dispatch plan contains no dispatchable targets',$2::jsonb)",
+      [plan.created_by_user_id, JSON.stringify({ dispatchPlanId: plan.id })]
+    );
+    return;
+  }
+
   const results: any[] = [];
   for (const orderId of buyOrderIds) {
     const result = await authorizeRecurringBuyOrder({ planId: plan.id, businessId: plan.business_id, orderId });
@@ -239,15 +251,18 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
         buyOrders.rows.reduce((sum: number, row: any) => sum + Number(row.purchase_budget_minor ?? 0), 0) +
         createdBuyOrderBudgetMinor;
 
+      const hasDispatchableTargets = resolvedDeliveryIds.length > 0 || resolvedBuyOrderIds.length > 0;
       const nextRunAt = nextFutureRun(new Date(rule.next_run_at), Number(rule.cadence_minutes));
+      const planStatus = hasDispatchableTargets ? "PREPARED" : "CANCELLED";
       const plan = await client.query(
         `INSERT INTO business_dispatch_plans
           (business_id, created_by_user_id, status, approval_required, estimated_total_minor, plan)
-         VALUES ($1,$2,'PREPARED',$3,$4,$5::jsonb)
+         VALUES ($1,$2,$3,$4,$5,$6::jsonb)
          RETURNING id`,
         [
           rule.business_id,
           rule.created_by_user_id,
+          planStatus,
           Boolean(rule.approval_required),
           estimatedTotalMinor,
           JSON.stringify({
