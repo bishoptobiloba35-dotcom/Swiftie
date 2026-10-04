@@ -18,6 +18,7 @@ export default function App() {
   const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "TRACK" | "SHOP" | "LOCATIONS">("HOME");
   const [marketplaceListings, setMarketplaceListings] = React.useState<any[]>([]);
   const [marketplaceSales, setMarketplaceSales] = React.useState<any[]>([]);
+  const [marketplaceMyListings, setMarketplaceMyListings] = React.useState<any[]>([]);
   const [selectedListing, setSelectedListing] = React.useState<any | null>(null);
   const [recommendedListings, setRecommendedListings] = React.useState<any[]>([]);
   const [marketplaceDeliveryAt, setMarketplaceDeliveryAt] = React.useState("");
@@ -188,6 +189,22 @@ export default function App() {
     catch (error) { Alert.alert("Marketplace sales", error instanceof Error ? error.message : "Unable to load your sales"); }
   }
 
+  async function loadMarketplaceMyListings() {
+    try { setMarketplaceMyListings(await api.marketplaceMyListings()); }
+    catch (error) { Alert.alert("My listings", error instanceof Error ? error.message : "Unable to load your listings"); }
+  }
+
+  async function updateMarketplaceListingState(listing: any, patch: any) {
+    try {
+      await api.updateMarketplaceListing(String(listing.id), patch);
+      await loadMarketplaceMyListings();
+      await loadMarketplace(marketplaceSearch);
+      Alert.alert("Listing updated", "Your marketplace listing has been updated.");
+    } catch (error) {
+      Alert.alert("Listing update failed", error instanceof Error ? error.message : "Unable to update listing");
+    }
+  }
+
   async function loadMarketplace(query = "") {
     setMarketplaceLoading(true);
     try { setMarketplaceListings(await api.marketplaceListings(query)); }
@@ -196,7 +213,11 @@ export default function App() {
   }
 
   React.useEffect(() => {
-    if (homeSection === "SHOP" && signedIn) void loadMarketplaceOrders();
+    if (homeSection === "SHOP" && signedIn) {
+      void loadMarketplaceOrders();
+      void loadMarketplaceSales();
+      void loadMarketplaceMyListings();
+    }
   }, [homeSection, signedIn]);
 
   async function openMarketplaceListing(id: string) {
@@ -497,8 +518,7 @@ export default function App() {
 
   async function loadNearbyDropOffs(target: "pickup" | "dropoff") {
     try {
-      const lat = Number(target === "pickup" ? pickupLat : dropoffLat);
-      const lng = Number(target === "pickup" ? pickupLng : dropoffLng);
+      const lat = Number(target === "pickup" ? pickupLat : dropoffLat);      const lng = Number(target === "pickup" ? pickupLng : dropoffLng);
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error("Select or enter a valid location first.");
       const locations = await api.nearbyDropOffLocations(lat, lng, 25);
       target === "pickup" ? setPickupDropOffLocations(locations) : setDropoffDropOffLocations(locations);
@@ -807,6 +827,23 @@ export default function App() {
           {sale.tracking_code && <Text style={styles.code}>Tracking: {sale.tracking_code}</Text>}
         </View>)}
       </View>}
+      {signedIn && <View style={styles.card}>
+        <View style={styles.rowBetween}><Text style={styles.homeHeading}>My listings</Text><Pressable onPress={() => void loadMarketplaceMyListings()}><Text style={styles.link}>Refresh</Text></Pressable></View>
+        <Text style={styles.muted}>Manage stock and whether your everyday goods are visible to new buyers.</Text>
+        {marketplaceMyListings.length === 0 ? <Text style={styles.muted}>No listings yet. Use “Sell an item” to publish your first product.</Text> : marketplaceMyListings.map((listing:any) =>
+          <View key={listing.id} style={styles.notification}>
+            <Text style={styles.notificationTitle}>{listing.title}</Text>
+            <Text>₦{(Number(listing.price_minor) / 100).toLocaleString()} · Stock {listing.stock_quantity} · {listing.order_count ?? 0} orders</Text>
+            <Text style={styles.muted}>{listing.is_active ? "Visible in SwiftDrop Shop" : "Hidden from new buyers"} · {String(listing.delivery_mode).replaceAll("_"," ")}</Text>
+            <View style={styles.row}>
+              <Pressable style={styles.secondary} onPress={() => void updateMarketplaceListingState(listing, { stockQuantity: Math.max(0, Number(listing.stock_quantity) - 1) })}><Text style={styles.secondaryText}>− Stock</Text></Pressable>
+              <Pressable style={styles.secondary} onPress={() => void updateMarketplaceListingState(listing, { stockQuantity: Number(listing.stock_quantity) + 1 })}><Text style={styles.secondaryText}>+ Stock</Text></Pressable>
+              <Pressable style={styles.secondary} onPress={() => void updateMarketplaceListingState(listing, { isActive: !listing.is_active })}><Text style={styles.secondaryText}>{listing.is_active ? "Hide" : "Publish"}</Text></Pressable>
+            </View>
+          </View>
+        )}
+      </View>}
+
       <TextInput style={styles.input} placeholder="Search products, categories or sellers" value={marketplaceSearch} onChangeText={setMarketplaceSearch} onSubmitEditing={() => void loadMarketplace(marketplaceSearch)} />
       <Pressable style={styles.primary} onPress={() => void loadMarketplace(marketplaceSearch)}><Text style={styles.primaryText}>{marketplaceLoading ? "Loading…" : "Search SwiftDrop Shop"}</Text></Pressable>
       <Pressable style={styles.secondary} onPress={() => setShowSellerForm(v => !v)}><Text style={styles.secondaryText}>{showSellerForm ? "Close selling form" : "Sell an item"}</Text></Pressable>
@@ -997,8 +1034,7 @@ export default function App() {
       <Text>Size/handling: ₦{(quote.sizeFareMinor / 100).toLocaleString()}</Text>
       {quote.perishableSurchargeMinor > 0 && <Text>Perishable/food surcharge: ₦{(quote.perishableSurchargeMinor / 100).toLocaleString()}</Text>}
       <Text>Fuel reference: ₦{(quote.fuelReferenceMinor / 100).toLocaleString()} (2 litres)</Text><Text>Refundable protection reserve: ₦{(quote.protectionReserveMinor / 100).toLocaleString()}</Text><Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
-      <Text style={styles.code}>Total: ₦{(quote.totalMinor / 100).toLocaleString()}</Text>
-    </View>}
+      <Text style={styles.code}>Total: ₦{(quote.totalMinor / 100).toLocaleString()}</Text>    </View>}
     <Text style={styles.heading}>Who pays for this order?</Text>
     <View style={styles.row}>
       <Pressable style={[styles.choice, paymentMode === "SENDER_ESCROW" && styles.choiceActive]} onPress={() => setPaymentMode("SENDER_ESCROW")}>
