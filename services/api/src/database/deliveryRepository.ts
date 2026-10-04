@@ -1411,15 +1411,36 @@ export async function settleReceiverPaymentAndReleasePayout(
 
 export async function confirmReceiverDelivery(id: string, receiverPhone: string, pin: string): Promise<StoredDelivery | null> {
   if (!pool) return null;
-  const delivery = await findDelivery(id);
-  if (!delivery || delivery.receiverPhone !== receiverPhone || !verifyPin(pin, delivery.receiverPinHash)) return null;
+  // Legacy compatibility guard: this helper must not perform receiver PIN
+  // confirmation by itself or bypass payment settlement/payout eligibility.
+  // Primary flows are confirmReceiverAndReleaseEscrow() and
+  // confirmReceiverOnDeliveryPaymentDue()/settleReceiverPaymentAndReleasePayout().
   const result = await pool.query(
-    `UPDATE deliveries SET status='DELIVERED', receiver_confirmed_at=now(), updated_at=now()
-     WHERE id=$1 AND receiver_phone=$2 AND status='ARRIVED'
-     RETURNING *`,
+    `SELECT d.*, p.status AS payment_status
+       FROM deliveries d
+       JOIN payments p ON p.delivery_id=d.id
+      WHERE d.id=$1 AND d.receiver_phone=$2
+        AND d.status='ARRIVED'
+        AND d.receiver_confirmed_at IS NOT NULL
+        AND p.status='RELEASED'`,
     [id, receiverPhone]
   );
-  return result.rows[0] ? rowToDelivery(result.rows[0]) : null;
+  const row = result.rows[0];
+  if (!row || !verifyPin(pin, row.receiver_pin_hash)) return null;
+  const updated = await pool.query(
+    `UPDATE deliveries
+        SET status='DELIVERED', updated_at=now()
+      WHERE id=$1 AND receiver_phone=$2 AND status='ARRIVED'
+        AND receiver_confirmed_at IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM payments p
+           WHERE p.delivery_id=deliveries.id
+             AND p.status='RELEASED'
+        )
+      RETURNING *`,
+    [id, receiverPhone]
+  );
+  return updated.rows[0] ? rowToDelivery(updated.rows[0]) : null;
 }
 
 export async function completeDelivery(id: string, driverId: string): Promise<StoredDelivery | null> {
