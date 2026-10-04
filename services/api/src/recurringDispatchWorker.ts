@@ -139,13 +139,21 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
       }
 
       const existingSpend = await client.query(
-        "SELECT COALESCE(SUM(amount_minor),0) AS current_spend FROM business_spend_ledger WHERE business_id=$1 AND created_at >= date_trunc('month', now())",
+        "SELECT COALESCE(SUM(CASE
+          WHEN reference_type='BUY_ORDER_RESERVATION' THEN amount_minor
+          WHEN reference_type='BUY_ORDER_RESERVATION_RELEASE' THEN amount_minor
+          ELSE 0
+        END),0) AS current_spend FROM business_spend_ledger WHERE business_id=$1 AND created_at >= date_trunc('month', now())",
         [rule.business_id]
       );
       let projectedSpend = Number(existingSpend.rows[0]?.current_spend ?? 0);
 
       const existingMemberSpend = await client.query(
-        "SELECT COALESCE(SUM(amount_minor),0) AS current_spend FROM business_spend_ledger WHERE business_id=$1 AND user_id=$2 AND created_at >= date_trunc('month', now())",
+        "SELECT COALESCE(SUM(CASE
+          WHEN reference_type='BUY_ORDER_RESERVATION' THEN amount_minor
+          WHEN reference_type='BUY_ORDER_RESERVATION_RELEASE' THEN amount_minor
+          ELSE 0
+        END),0) AS current_spend FROM business_spend_ledger WHERE business_id=$1 AND user_id=$2 AND created_at >= date_trunc('month', now())",
         [rule.business_id, rule.created_by_user_id]
       );
       let projectedMemberSpend = Number(existingMemberSpend.rows[0]?.current_spend ?? 0);
