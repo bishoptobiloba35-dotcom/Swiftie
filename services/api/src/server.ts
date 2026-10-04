@@ -27,6 +27,7 @@ import { processRecurringDispatches } from "./recurringDispatchWorker.js";
 import { getActivePricingConfig } from "./pricing.js";
 import { reconcileProcessingBuyOrderSettlements } from "./buyOrderSettlementWorker.js";
 import { reconcileProcessingDropOffCommissions } from "./dropOffCommissionWorker.js";
+import { reconcileCancelledMarketplacePayments } from "./marketplacePaymentWorker.js";
 
 const app = express();
 
@@ -754,6 +755,36 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
         return res.status(200).json({received:true});
       }
     }
+    if (transactionReference && databaseEnabled()) {
+      const marketplacePayment=(await pool!.query(
+        "SELECT mop.id,mop.marketplace_order_id,mop.buyer_user_id,mop.amount_minor,mop.total_refunded_minor,mo.delivery_id FROM marketplace_order_payments mop JOIN marketplace_orders mo ON mo.id=mop.marketplace_order_id WHERE mop.provider_reference=$1",
+        [transactionReference]
+      )).rows[0];
+      if (marketplacePayment) {
+        const refundStatus=String(event.event).replace("refund.","");
+        const refundReference=String(event?.data?.refund_reference??event?.data?.id??"");
+        const amountMinor=Number(event?.data?.amount??0);
+        if(!Number.isSafeInteger(amountMinor)||amountMinor<0) return res.status(200).json({received:true});
+        if(refundStatus==="processed"){
+          await pool!.query(
+            "UPDATE marketplace_order_payments SET refund_status='PROCESSED',refund_reference=COALESCE(refund_reference,$2),refund_amount_minor=$3,total_refunded_minor=total_refunded_minor+$3,status=CASE WHEN total_refunded_minor+$3>=amount_minor THEN 'REFUNDED' ELSE status END,refund_updated_at=now(),updated_at=now() WHERE id=$1",
+            [marketplacePayment.id,refundReference||null,amountMinor]
+          );
+          await pool!.query(
+            "UPDATE marketplace_orders SET status='CANCELLED',fulfillment_status='CANCELLED',updated_at=now() WHERE id=$1 AND status='DISPUTED'",
+            [marketplacePayment.marketplace_order_id]
+          );
+        }else if(refundStatus==="failed"){
+          await pool!.query("UPDATE marketplace_order_payments SET refund_status='FAILED',refund_updated_at=now(),updated_at=now() WHERE id=$1",[marketplacePayment.id]);
+        }else{
+          await pool!.query("UPDATE marketplace_order_payments SET refund_status=$2,refund_updated_at=now(),updated_at=now() WHERE id=$1",[marketplacePayment.id,refundStatus.toUpperCase()]);
+        }
+        if(marketplacePayment.delivery_id){
+          await recordDeliveryEvent({deliveryId:marketplacePayment.delivery_id,eventType:"MARKETPLACE_REFUND_"+refundStatus.toUpperCase(),metadata:{transactionReference,refundReference,amountMinor}});
+        }
+        return res.status(200).json({received:true});
+      }
+    }
     const refundReference = String(event?.data?.refund_reference ?? event?.data?.id ?? "");
     if (transactionReference && databaseEnabled()) {
       const result = await pool!.query("SELECT delivery_id FROM payments WHERE provider_reference=$1", [transactionReference]);
@@ -838,18 +869,29 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
             providerCurrency === String(payment.currency).trim();
 
           if (event.event === "charge.success" && amountMatches) {
-            await client.query(
-              `UPDATE marketplace_order_payments
-                  SET status='AUTHORIZED', provider_status='success', updated_at=now()
-                WHERE id=$1 AND status='PENDING'`,
-              [payment.id]
-            );
-            await client.query(
-              `UPDATE marketplace_orders
-                  SET status='PAID', updated_at=now()
-                WHERE id=$1 AND status='PENDING_PAYMENT'`,
-              [payment.marketplace_order_id]
-            );
+            if (payment.order_status === "CANCELLED") {
+              // Keep it pending so the durable reconciliation worker can refund
+              // the late successful charge without blocking this webhook response.
+              await client.query(
+                `UPDATE marketplace_order_payments
+                    SET provider_status='success_after_cancellation', updated_at=now()
+                  WHERE id=$1 AND status='PENDING'`,
+                [payment.id]
+              );
+            } else {
+              await client.query(
+                `UPDATE marketplace_order_payments
+                    SET status='AUTHORIZED', provider_status='success', updated_at=now()
+                  WHERE id=$1 AND status='PENDING'`,
+                [payment.id]
+              );
+              await client.query(
+                `UPDATE marketplace_orders
+                    SET status='PAID', updated_at=now()
+                  WHERE id=$1 AND status='PENDING_PAYMENT'`,
+                [payment.marketplace_order_id]
+              );
+            }
           } else if (event.event === "charge.failed" || !amountMatches) {
             await client.query(
               `UPDATE marketplace_order_payments
@@ -865,7 +907,7 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
                       status=CASE WHEN l.status='SOLD_OUT' THEN 'PUBLISHED' ELSE l.status END,
                       updated_at=now()
                  FROM marketplace_orders mo
-                WHERE mo.id=$1 AND l.id=mo.listing_id
+                WHERE mo.id=$1 AND l.id=mo.listing_id AND mo.status='PENDING_PAYMENT'
                 RETURNING l.stock_quantity,l.status`,
               [payment.marketplace_order_id, payment.quantity]
             );
@@ -1540,6 +1582,156 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
 
   if (status === "RESOLVED_REFUND") {
     if (!databaseEnabled()) return res.status(503).json({ error: "Refunds require the production database and Paystack" });
+
+    // Marketplace checkout charges item price + delivery fee in one Paystack
+    // transaction. The delivery payment row is only an internal allocation,
+    // so refunding it would not return the customer's marketplace purchase.
+    const marketplace = (await pool!.query(
+      `SELECT mo.id AS marketplace_order_id, mo.status AS order_status, mo.delivery_id,
+              mop.id AS payment_id, mop.provider_reference, mop.amount_minor,
+              mop.currency, mop.status AS payment_status,
+              mop.total_refunded_minor, mop.refund_status,
+              p.status AS payout_status
+         FROM marketplace_orders mo
+         JOIN marketplace_order_payments mop ON mop.marketplace_order_id=mo.id
+         LEFT JOIN payouts p ON p.delivery_id=mo.delivery_id
+        WHERE mo.delivery_id=$1
+        FOR UPDATE OF mo,mop`,
+      [routeParam(req.params.id, "id")]
+    )).rows[0];
+
+    if (marketplace) {
+      const dispute = await findDispute(routeParam(req.params.id, "id"));
+      if (!dispute || !["OPEN","UNDER_REVIEW"].includes(dispute.status)) {
+        return res.status(409).json({ error: "Marketplace delivery has no open dispute to refund" });
+      }
+      if (marketplace.payment_status !== "AUTHORIZED" || !marketplace.provider_reference) {
+        return res.status(409).json({ error: "Marketplace payment is not in a refundable authorized state" });
+      }
+      if (["PROCESSING","RELEASED"].includes(String(marketplace.payout_status ?? ""))) {
+        return res.status(409).json({ error: "Courier payout is already processing or released; stop and investigate before refunding" });
+      }
+
+      const requestedAmount = Number(req.body?.refundAmountMinor);
+      const refundAmountMinor = Number.isInteger(requestedAmount) && requestedAmount > 0
+        ? requestedAmount
+        : Number(marketplace.amount_minor);
+      const verifiedLossRaw = req.body?.verifiedLossMinor;
+      const verifiedLossMinor = Number.isInteger(verifiedLossRaw) && verifiedLossRaw >= 0 ? verifiedLossRaw : undefined;
+      if (refundAmountMinor < 1 || refundAmountMinor > Number(marketplace.amount_minor)) {
+        return res.status(400).json({ error: "Refund amount must be a positive whole amount not greater than the marketplace payment" });
+      }
+      if (verifiedLossMinor != null && refundAmountMinor > verifiedLossMinor) {
+        return res.status(400).json({ error: "Refund amount exceeds the verified loss amount" });
+      }
+      const alreadyRefunded = Number(marketplace.total_refunded_minor ?? 0);
+      if (alreadyRefunded + refundAmountMinor > Number(marketplace.amount_minor)) {
+        return res.status(400).json({ error: "Refund amount exceeds the remaining marketplace payment balance" });
+      }
+      if (["PENDING","PROCESSING","PROCESSED"].includes(String(marketplace.refund_status ?? "").toUpperCase())) {
+        return res.status(409).json({ error: "A marketplace refund is already in progress or has been processed" });
+      }
+
+      const refundReferenceReservation = "pending-" + randomUUID().replaceAll("-", "");
+      const client = await pool!.connect();
+      try {
+        await client.query("BEGIN");
+        const payoutLock = marketplace.delivery_id
+          ? (await client.query("SELECT status FROM payouts WHERE delivery_id=$1 FOR UPDATE", [marketplace.delivery_id])).rows[0]
+          : null;
+        if (payoutLock && ["PROCESSING","RELEASED"].includes(String(payoutLock.status))) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({ error: "Courier payout changed to processing/released; stop and investigate before refunding" });
+        }
+        const reserved = await client.query(
+          `UPDATE marketplace_order_payments
+              SET refund_reference=$2, refund_status='PENDING', refund_amount_minor=$3,
+                  refund_updated_at=now(), updated_at=now()
+            WHERE id=$1 AND status='AUTHORIZED'
+              AND COALESCE(total_refunded_minor,0)+$3 <= amount_minor
+              AND (refund_status IS NULL OR refund_status IN ('FAILED','RETRY_REQUIRED'))`,
+          [marketplace.payment_id, refundReferenceReservation, refundAmountMinor]
+        );
+        if (!reserved.rowCount) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({ error: "Marketplace payment is already being refunded or is no longer refundable" });
+        }
+        await client.query(
+          `UPDATE marketplace_orders SET status='DISPUTED', updated_at=now()
+             WHERE id=$1 AND status IN ('PAID','PROCESSING','IN_TRANSIT','DELIVERED','DISPUTED')`,
+          [marketplace.marketplace_order_id]
+        );
+        if (marketplace.delivery_id) {
+          await client.query(
+            `UPDATE payouts SET status='CANCELLED', updated_at=now()
+               WHERE delivery_id=$1 AND status IN ('PENDING','ELIGIBLE')`,
+            [marketplace.delivery_id]
+          );
+        }
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+
+      const secret = process.env.PAYSTACK_SECRET_KEY;
+      if (!secret) return res.status(503).json({ error: "Paystack refund configuration is not ready" });
+      const response = await fetch("https://api.paystack.co/refund", {
+        method: "POST",
+        headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
+        body: JSON.stringify({
+          transaction: marketplace.provider_reference,
+          amount: refundAmountMinor,
+          currency: String(marketplace.currency).trim(),
+          customer_note: "SwiftDrop marketplace dispute refund",
+          merchant_note: note
+        }),
+        signal: AbortSignal.timeout(15_000)
+      });
+      const payload = await response.json() as any;
+      if (!response.ok || !payload.status) {
+        await pool!.query(
+          "UPDATE marketplace_order_payments SET refund_status='FAILED',refund_updated_at=now(),updated_at=now() WHERE id=$1",
+          [marketplace.payment_id]
+        );
+        await recordAdminCaseAudit({
+          deliveryId: routeParam(req.params.id, "id"),
+          disputeId: dispute.id,
+          adminUserId: identity(req),
+          action: "MARKETPLACE_REFUND_INITIATION_FAILED",
+          note,
+          metadata: { provider: "paystack", transactionReference: marketplace.provider_reference, amountMinor: refundAmountMinor, error: payload.message ?? "Paystack refund failed" }
+        });
+        return res.status(502).json({ error: payload.message ?? "Paystack could not initiate the marketplace refund" });
+      }
+
+      const providerRefundReference = String(payload.data?.refund_reference ?? payload.data?.id ?? "");
+      const refundStatus = String(payload.data?.status ?? "pending").toUpperCase();
+      await pool!.query(
+        "UPDATE marketplace_order_payments SET refund_reference=COALESCE($2,refund_reference),refund_status=$3,refund_amount_minor=$4,refund_updated_at=now(),updated_at=now() WHERE id=$1",
+        [marketplace.payment_id, providerRefundReference || null, refundStatus, refundAmountMinor]
+      );
+      const resolved = await resolveDispute(routeParam(req.params.id, "id"), status, note);
+      if (!resolved) return res.status(409).json({ error: "The marketplace dispute could not be resolved after refund initiation. Review the audit trail before retrying." });
+      await recordAdminCaseAudit({
+        deliveryId: routeParam(req.params.id, "id"),
+        disputeId: resolved.id,
+        adminUserId: identity(req),
+        action: "MARKETPLACE_REFUND_INITIATED",
+        note,
+        metadata: { provider: "paystack", transactionReference: marketplace.provider_reference, refundReference: providerRefundReference, refundStatus, amountMinor: refundAmountMinor, payoutCancelled: true }
+      });
+      await recordDeliveryEvent({
+        deliveryId: routeParam(req.params.id, "id"),
+        eventType: "MARKETPLACE_REFUND_INITIATED",
+        actorUserId: identity(req),
+        metadata: { provider: "paystack", transactionReference: marketplace.provider_reference, refundReference: providerRefundReference, refundStatus, amountMinor: refundAmountMinor }
+      });
+      return res.json({ dispute: resolved, refund: { status: refundStatus, reference: providerRefundReference, amountMinor: refundAmountMinor, paymentType: "MARKETPLACE_ORDER" } });
+    }
+
     const paymentBefore = await findPayment(routeParam(req.params.id, "id"));
     if (!paymentBefore) return res.status(409).json({ error: "No payment was found for this delivery" });
     const requestedAmount = Number(req.body?.refundAmountMinor);
@@ -2228,10 +2420,14 @@ async function startServer() {
     const payoutReconciliationWorker = setInterval(() => {
       void reconcileProcessingPaystackPayouts().catch(() => {});
     }, 60_000);
+    const marketplacePaymentReconciliationWorker = setInterval(() => {
+      void reconcileCancelledMarketplacePayments().catch(() => {});
+    }, 30_000);
     supportAiWorker.unref();
     notificationWorker.unref();
     notificationReceiptWorker.unref();
     payoutReconciliationWorker.unref();
+    marketplacePaymentReconciliationWorker.unref();
     dropOffCommissionReconciliationWorker.unref();
     buyOrderSettlementReconciliationWorker.unref();
     recurringDispatchWorker.unref();
