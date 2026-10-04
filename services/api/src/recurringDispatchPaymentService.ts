@@ -32,6 +32,36 @@ async function verify(reference: string, secret: string): Promise<any | null> {
   return await response.json().catch(() => null) as any;
 }
 
+async function releaseBusinessSpendReservation(orderId: string): Promise<void> {
+  if (!pool) return;
+  await pool.query(
+    `INSERT INTO business_spend_ledger
+      (business_id, user_id, reference_type, reference_id, amount_minor, currency)
+     SELECT bo.business_id, bo.customer_user_id, 'BUY_ORDER_RESERVATION_RELEASE', bo.id,
+            -r.amount_minor, r.currency
+       FROM buy_orders bo
+       JOIN LATERAL (
+         SELECT amount_minor, currency
+           FROM business_spend_ledger
+          WHERE business_id=bo.business_id
+            AND reference_id=bo.id
+            AND reference_type='BUY_ORDER_RESERVATION'
+          ORDER BY created_at ASC
+          LIMIT 1
+       ) r ON true
+      WHERE bo.id=$1
+        AND bo.business_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM business_spend_ledger release
+           WHERE release.business_id=bo.business_id
+             AND release.reference_id=bo.id
+             AND release.reference_type='BUY_ORDER_RESERVATION_RELEASE'
+        )`,
+    [orderId]
+  );
+}
+
 async function reconcileVerifiedPayment(
   orderId: string,
   paymentId: string,
@@ -58,6 +88,7 @@ async function reconcileVerifiedPayment(
         "UPDATE buy_orders SET payment_status='FAILED',updated_at=now() WHERE id=$1 AND payment_status NOT IN ('HELD','AUTHORIZED','REFUNDED')",
         [orderId]
       );
+      await releaseBusinessSpendReservation(orderId);
       return { status: "FAILED", orderId, reason: "PAYMENT_AMOUNT_OR_CURRENCY_MISMATCH" };
     }
     const claimed = await pool.query(
@@ -85,6 +116,7 @@ async function reconcileVerifiedPayment(
       "UPDATE buy_orders SET payment_status='FAILED',updated_at=now() WHERE id=$1 AND payment_status NOT IN ('HELD','AUTHORIZED','REFUNDED')",
       [orderId]
     );
+    await releaseBusinessSpendReservation(orderId);
     return null;
   }
 
@@ -232,6 +264,7 @@ export async function authorizeRecurringBuyOrder(input: {
             "UPDATE buy_order_payments SET status='FAILED',provider_status='amount_mismatch',updated_at=now() WHERE id=$1 AND status='PENDING'",
             [payment.rows[0].id]
           );
+          await releaseBusinessSpendReservation(input.orderId);
           return { status: "FAILED", orderId: input.orderId, reason: "PAYMENT_AMOUNT_OR_CURRENCY_MISMATCH" };
         }
         await pool.query(
@@ -268,6 +301,7 @@ export async function authorizeRecurringBuyOrder(input: {
         "UPDATE buy_orders SET payment_status='FAILED',updated_at=now() WHERE id=$1 AND payment_status NOT IN ('HELD','AUTHORIZED','REFUNDED')",
         [input.orderId]
       );
+      await releaseBusinessSpendReservation(input.orderId);
       return { status: "FAILED", orderId: input.orderId, reason: providerStatus || "PAYMENT_FAILED" };
     } catch (error) {
       try { await client.query("ROLLBACK"); } catch {}
