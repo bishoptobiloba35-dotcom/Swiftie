@@ -338,38 +338,22 @@ export async function authorizeRecurringBuyOrder(input: {
       }
 
       const payload = await response.json().catch(() => null) as any;
-      const providerStatus = String(payload?.data?.status ?? "").toLowerCase();
-      const successful = response.ok && payload?.status === true && providerStatus === "success";
-      const challenged = Boolean(payload?.data?.paused) || Boolean(payload?.data?.authorization_url);
-      const authorizationUrl = typeof payload?.data?.authorization_url === "string" ? payload.data.authorization_url : null;
-      const accessCode = typeof payload?.data?.access_code === "string" ? payload.data.access_code : null;
-
-      if (challenged) {
+      const decision = evaluateRecurringChargeResponse(response.ok, payload, reference, amountMinor, currency);
+      if (decision.kind === "CHALLENGE") {
         await pool.query(
           "UPDATE buy_order_payments SET status='PENDING',provider_reference=$2,provider_status='authorization_required',authorization_url=$3,access_code=$4,updated_at=now() WHERE id=$1",
-          [payment.rows[0].id, String(payload?.data?.reference ?? reference), authorizationUrl, accessCode]
+          [payment.rows[0].id, String(payload?.data?.reference ?? reference), decision.authorizationUrl, decision.accessCode]
         );
-        return { status: "WAITING", orderId: input.orderId, reason: "PAYMENT_AUTHORIZATION_REQUIRED", authorizationUrl, accessCode };
+        return { status: "WAITING", orderId: input.orderId, reason: "PAYMENT_AUTHORIZATION_REQUIRED", authorizationUrl: decision.authorizationUrl, accessCode: decision.accessCode };
       }
-
-      if (successful) {
-        const providerAmount = Number(payload?.data?.amount);
-        const providerCurrency = String(payload?.data?.currency ?? "").trim().toUpperCase();
-        if (!Number.isSafeInteger(providerAmount) || providerAmount !== amountMinor || providerCurrency !== currency.toUpperCase()) {
-          await pool.query(
-            "UPDATE buy_order_payments SET status='FAILED',provider_status='amount_mismatch',updated_at=now() WHERE id=$1 AND status='PENDING'",
-            [payment.rows[0].id]
-          );
-          await releaseBusinessSpendReservation(input.orderId);
-          return { status: "FAILED", orderId: input.orderId, reason: "PAYMENT_AMOUNT_OR_CURRENCY_MISMATCH" };
-        }
+      if (decision.kind === "SUCCESS") {
         await pool.query(
           "UPDATE buy_order_payments SET status='HELD',provider_reference=$2,provider_status='success',updated_at=now() WHERE id=$1 AND status='PENDING'",
-          [payment.rows[0].id, String(payload?.data?.reference ?? reference)]
+          [payment.rows[0].id, decision.providerReference]
         );
         await pool.query(
           "UPDATE buy_orders SET payment_reference=$2,payment_status='HELD',updated_at=now() WHERE id=$1 AND payment_status NOT IN ('REFUNDED')",
-          [input.orderId, String(payload?.data?.reference ?? reference)]
+          [input.orderId, decision.providerReference]
         );
         await pool.query(
           "UPDATE business_payment_authorizations SET last_used_at=now(),updated_at=now() WHERE id=$1 AND status='ACTIVE'",
@@ -377,12 +361,18 @@ export async function authorizeRecurringBuyOrder(input: {
         );
         await pool.query(
           "INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'PAYMENT_HELD',$3::jsonb)",
-          [input.orderId, row.customer_user_id, JSON.stringify({ provider: "paystack", reference: String(payload?.data?.reference ?? reference), source: "AUTONOMOUS_RECURRING_DISPATCH", dispatchPlanId: input.planId })]
+          [input.orderId, row.customer_user_id, JSON.stringify({ provider: "paystack", reference: decision.providerReference, source: "AUTONOMOUS_RECURRING_DISPATCH", dispatchPlanId: input.planId })]
         );
-        return { status: "HELD", orderId: input.orderId, reference: String(payload?.data?.reference ?? reference) };
+        return { status: "HELD", orderId: input.orderId, reference: decision.providerReference };
       }
-
-      const invalidAuthorization = ["invalid_authorization","authorization_invalid","expired_authorization"].includes(providerStatus);
+      if (decision.kind === "WAITING") {
+        await pool.query(
+          "UPDATE buy_order_payments SET provider_status=$2,updated_at=now() WHERE id=$1 AND status='PENDING'",
+          [payment.rows[0].id, decision.providerStatus]
+        );
+        return { status: "WAITING", orderId: input.orderId, reason: decision.providerStatus };
+      }
+      const invalidAuthorization = ["invalid_authorization","authorization_invalid","expired_authorization"].includes(decision.providerStatus);
       if (invalidAuthorization) {
         await pool.query(
           "UPDATE business_payment_authorizations SET status='REVOKED',updated_at=now() WHERE id=$1 AND status='ACTIVE'",
@@ -391,14 +381,14 @@ export async function authorizeRecurringBuyOrder(input: {
       }
       await pool.query(
         "UPDATE buy_order_payments SET status='FAILED',provider_status=$2,updated_at=now() WHERE id=$1 AND status='PENDING'",
-        [payment.rows[0].id, providerStatus || "provider_rejected"]
+        [payment.rows[0].id, decision.providerStatus || "provider_rejected"]
       );
       await pool.query(
         "UPDATE buy_orders SET payment_status='FAILED',updated_at=now() WHERE id=$1 AND payment_status NOT IN ('HELD','AUTHORIZED','REFUNDED')",
         [input.orderId]
       );
       await releaseBusinessSpendReservation(input.orderId);
-      return { status: "FAILED", orderId: input.orderId, reason: providerStatus || "PAYMENT_FAILED" };
+      return { status: "FAILED", orderId: input.orderId, reason: decision.providerStatus || "PAYMENT_FAILED" };
     } catch (error) {
       try { await client.query("ROLLBACK"); } catch {}
       return { status: "FAILED", orderId: input.orderId, reason: error instanceof Error ? error.message : "RECURRING_PAYMENT_ERROR" };
