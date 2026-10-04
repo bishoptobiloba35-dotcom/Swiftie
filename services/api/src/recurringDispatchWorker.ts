@@ -275,12 +275,7 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
       [Math.min(Math.max(limit * 2, 10), 50)]
     );
     for (const row of autonomousPlans.rows) {
-      await client.query("SELECT pg_advisory_lock(hashtext($1))", [`swiftdrop:autonomous-dispatch-plan:${row.id}`]);
-      try {
-        await executeAutonomousDispatchPlan(String(row.id));
-      } finally {
-        await client.query("SELECT pg_advisory_unlock(hashtext($1))", [`swiftdrop:autonomous-dispatch-plan:${row.id}`]);
-      }
+      await executeAutonomousDispatchPlan(String(row.id));
     }
     return processed;
   } catch (error) {
