@@ -107,10 +107,11 @@ async function reconcileVerifiedPayment(
   if (!pool) return { status: "FAILED", orderId, reason: "DATABASE_NOT_CONFIGURED" };
   const providerStatus = String(payload?.data?.status ?? "").toLowerCase();
   const providerAmount = Number(payload?.data?.amount);
-  const providerCurrency = String(payload?.data?.currency ?? "").trim();
+  const providerCurrency = String(payload?.data?.currency ?? "").trim().toUpperCase();
+  const expectedCurrency = currency.trim().toUpperCase();
   const amountMatches = Number.isSafeInteger(providerAmount) &&
     providerAmount === amountMinor &&
-    providerCurrency === currency.trim();
+    providerCurrency === expectedCurrency;
 
   if (providerStatus === "success") {
     if (!amountMatches) {
@@ -321,8 +322,8 @@ export async function authorizeRecurringBuyOrder(input: {
 
       if (successful) {
         const providerAmount = Number(payload?.data?.amount);
-        const providerCurrency = String(payload?.data?.currency ?? "").trim();
-        if (!Number.isSafeInteger(providerAmount) || providerAmount !== amountMinor || providerCurrency !== currency) {
+        const providerCurrency = String(payload?.data?.currency ?? "").trim().toUpperCase();
+        if (!Number.isSafeInteger(providerAmount) || providerAmount !== amountMinor || providerCurrency !== currency.toUpperCase()) {
           await pool.query(
             "UPDATE buy_order_payments SET status='FAILED',provider_status='amount_mismatch',updated_at=now() WHERE id=$1 AND status='PENDING'",
             [payment.rows[0].id]
