@@ -754,6 +754,36 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
         return res.status(200).json({received:true});
       }
     }
+    if (transactionReference && databaseEnabled()) {
+      const marketplacePayment=(await pool!.query(
+        "SELECT mop.id,mop.marketplace_order_id,mop.buyer_user_id,mop.amount_minor,mop.total_refunded_minor,mo.delivery_id FROM marketplace_order_payments mop JOIN marketplace_orders mo ON mo.id=mop.marketplace_order_id WHERE mop.provider_reference=$1",
+        [transactionReference]
+      )).rows[0];
+      if (marketplacePayment) {
+        const refundStatus=String(event.event).replace("refund.","");
+        const refundReference=String(event?.data?.refund_reference??event?.data?.id??"");
+        const amountMinor=Number(event?.data?.amount??0);
+        if(!Number.isSafeInteger(amountMinor)||amountMinor<0) return res.status(200).json({received:true});
+        if(refundStatus==="processed"){
+          await pool!.query(
+            "UPDATE marketplace_order_payments SET refund_status='PROCESSED',refund_reference=COALESCE(refund_reference,$2),refund_amount_minor=$3,total_refunded_minor=total_refunded_minor+$3,status=CASE WHEN total_refunded_minor+$3>=amount_minor THEN 'REFUNDED' ELSE status END,refund_updated_at=now(),updated_at=now() WHERE id=$1",
+            [marketplacePayment.id,refundReference||null,amountMinor]
+          );
+          await pool!.query(
+            "UPDATE marketplace_orders SET status='CANCELLED',fulfillment_status='CANCELLED',updated_at=now() WHERE id=$1 AND status='DISPUTED'",
+            [marketplacePayment.marketplace_order_id]
+          );
+        }else if(refundStatus==="failed"){
+          await pool!.query("UPDATE marketplace_order_payments SET refund_status='FAILED',refund_updated_at=now(),updated_at=now() WHERE id=$1",[marketplacePayment.id]);
+        }else{
+          await pool!.query("UPDATE marketplace_order_payments SET refund_status=$2,refund_updated_at=now(),updated_at=now() WHERE id=$1",[marketplacePayment.id,refundStatus.toUpperCase()]);
+        }
+        if(marketplacePayment.delivery_id){
+          await recordDeliveryEvent({deliveryId:marketplacePayment.delivery_id,eventType:"MARKETPLACE_REFUND_"+refundStatus.toUpperCase(),metadata:{transactionReference,refundReference,amountMinor}});
+        }
+        return res.status(200).json({received:true});
+      }
+    }
     const refundReference = String(event?.data?.refund_reference ?? event?.data?.id ?? "");
     if (transactionReference && databaseEnabled()) {
       const result = await pool!.query("SELECT delivery_id FROM payments WHERE provider_reference=$1", [transactionReference]);
