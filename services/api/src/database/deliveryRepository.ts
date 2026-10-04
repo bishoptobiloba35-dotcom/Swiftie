@@ -1309,12 +1309,6 @@ export async function confirmReceiverOnDeliveryPaymentDue(id: string, receiverPh
        VALUES ($1,'RECEIVER_CONFIRMED_PACKAGE_PAYMENT_DUE',$2::jsonb)`,
       [id, JSON.stringify({ collectionMode: "RECEIVER_ON_DELIVERY", amountMinor: Number(row.amount_minor), currency: row.payment_currency ?? "NGN" })]
     );
-    await client.query(
-      `UPDATE marketplace_orders
-          SET status='IN_TRANSIT', fulfillment_status='IN_PROGRESS', updated_at=now()
-        WHERE delivery_id=$1 AND status IN ('PROCESSING','IN_TRANSIT')`,
-      [id]
-    );
     await client.query("COMMIT");
     return rowToDelivery(updated.rows[0]);
   } catch (error) {
@@ -1398,6 +1392,12 @@ export async function settleReceiverPaymentAndReleasePayout(
       `INSERT INTO delivery_events (delivery_id,event_type,metadata)
        VALUES ($1,'RECEIVER_PAYMENT_CAPTURED',$2::jsonb)`,
       [id, JSON.stringify({ provider: "paystack", providerReference, amountMinor: Number(row.amount_minor), currency: row.payment_currency ?? "NGN", escrowUsed: false, payoutEligible: payoutAmountMinor > 0 })]
+    );
+    await client.query(
+      `UPDATE marketplace_orders
+          SET status='DELIVERED', fulfillment_status='FULFILLED', updated_at=now()
+        WHERE delivery_id=$1 AND status IN ('PROCESSING','IN_TRANSIT')`,
+      [id]
     );
     await client.query("COMMIT");
     return { delivery: rowToDelivery(delivered.rows[0]), payoutAmountMinor };
