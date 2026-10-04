@@ -666,6 +666,177 @@ router.post("/buy-orders/:id/payment/initialize", requireAuth("CUSTOMER"), async
   return res.status(201).json({ payment: paymentResult.rows[0], authorizationUrl: payload.data.authorization_url, accessCode: payload.data.access_code ?? null });
 });
 
+
+router.post("/business/dispatch-plans/:id/authorize-buy-orders", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Business payment authorization requires the production database" });
+  const planId = String(req.params.id ?? "").trim();
+  const userId = identity(req);
+  const plan = (await pool.query(
+    "SELECT id,business_id,status,approval_required,plan FROM business_dispatch_plans WHERE id=$1",
+    [planId]
+  )).rows[0];
+  if (!plan) return res.status(404).json({ error: "Dispatch plan not found" });
+
+  const member = await businessMember(userId, plan.business_id);
+  if ((req as any).user?.role !== "ADMIN" && (!member || !["OWNER","ADMIN"].includes(member.memberRole))) {
+    return res.status(403).json({ error: "Business payment authorization authority required" });
+  }
+  if (plan.status === "CANCELLED" || plan.status === "EXECUTED") {
+    return res.status(409).json({ error: "This dispatch plan can no longer be financially authorized" });
+  }
+
+  const authorization = (await pool.query(
+    `SELECT id,authorization_code,email,status
+       FROM business_payment_authorizations
+      WHERE business_id=$1 AND status='ACTIVE'
+      ORDER BY updated_at DESC
+      LIMIT 1`,
+    [plan.business_id]
+  )).rows[0];
+  if (!authorization) {
+    return res.status(409).json({
+      error: "No reusable Paystack authorization is available for this business",
+      code: "PAYMENT_AUTHORIZATION_REQUIRED"
+    });
+  }
+
+  const buyOrderIds = Array.isArray(plan.plan?.buyOrderIds)
+    ? plan.plan.buyOrderIds.filter((v: unknown) => typeof v === "string")
+    : [];
+  if (!buyOrderIds.length) return res.json({ dispatchPlanId: planId, authorizedBuyOrderIds: [], failedBuyOrders: [] });
+
+  const orders = await pool.query(
+    `SELECT id,purchase_budget_minor,currency,status,payment_status
+       FROM buy_orders
+      WHERE id=ANY($1::uuid[]) AND business_id=$2
+      ORDER BY created_at ASC`,
+    [buyOrderIds, plan.business_id]
+  );
+
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  if (!secret) return res.status(503).json({ error: "Paystack payment configuration is not ready" });
+
+  const authorizedBuyOrderIds: string[] = [];
+  const failedBuyOrders: Array<{ id: string; reason: string }> = [];
+
+  for (const order of orders.rows) {
+    if (["HELD", "AUTHORIZED"].includes(String(order.payment_status))) {
+      authorizedBuyOrderIds.push(order.id);
+      continue;
+    }
+
+    const amountMinor = Number(order.purchase_budget_minor);
+    if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+      failedBuyOrders.push({ id: order.id, reason: "INVALID_PURCHASE_BUDGET" });
+      continue;
+    }
+
+    const reference = "sd_recurring_" + order.id.replaceAll("-", "") + "_" + randomUUID().replaceAll("-", "");
+    const payment = await pool.query(
+      `INSERT INTO buy_order_payments
+         (buy_order_id,provider,provider_reference,amount_minor,currency,status)
+       VALUES ($1,'paystack',$2,$3,$4,'PENDING')
+       ON CONFLICT (buy_order_id)
+       DO UPDATE SET
+         provider='paystack',
+         provider_reference=EXCLUDED.provider_reference,
+         amount_minor=EXCLUDED.amount_minor,
+         currency=EXCLUDED.currency,
+         status='PENDING',
+         updated_at=now()
+       RETURNING id`,
+      [order.id, reference, amountMinor, String(order.currency ?? "NGN")]
+    );
+
+    try {
+      const response = await fetch("https://api.paystack.co/transaction/charge_authorization", {
+        method: "POST",
+        headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
+        body: JSON.stringify({
+          email: authorization.email,
+          amount: String(amountMinor),
+          authorization_code: authorization.authorization_code,
+          reference,
+          currency: String(order.currency ?? "NGN"),
+          metadata: {
+            buyOrderId: order.id,
+            dispatchPlanId: planId,
+            businessId: plan.business_id,
+            paymentScope: "RECURRING_BUY_AND_DELIVER"
+          }
+        }),
+        signal: AbortSignal.timeout(20_000)
+      });
+      const payload = await response.json() as {
+        status?: boolean;
+        message?: string;
+        data?: { status?: string; reference?: string; amount?: number; currency?: string };
+      };
+
+      const providerReference = String(payload.data?.reference ?? reference);
+      const providerAmount = Number(payload.data?.amount ?? amountMinor);
+      const providerCurrency = String(payload.data?.currency ?? order.currency ?? "NGN");
+      const successful = response.ok &&
+        payload.status === true &&
+        String(payload.data?.status ?? "").toLowerCase() === "success" &&
+        providerAmount === amountMinor &&
+        providerCurrency.trim() === String(order.currency ?? "NGN").trim();
+
+      if (!successful) {
+        await pool.query(
+          "UPDATE buy_order_payments SET status='FAILED',provider_reference=$2,updated_at=now() WHERE id=$1",
+          [payment.rows[0].id, providerReference]
+        );
+        failedBuyOrders.push({ id: order.id, reason: payload.message ?? "Paystack recurring charge failed" });
+        continue;
+      }
+
+      await pool.query(
+        "UPDATE buy_order_payments SET status='HELD',provider_reference=$2,updated_at=now() WHERE id=$1",
+        [payment.rows[0].id, providerReference]
+      );
+      await pool.query(
+        "UPDATE buy_orders SET payment_reference=$2,payment_status='HELD',updated_at=now() WHERE id=$1 AND payment_status NOT IN ('REFUNDED')",
+        [order.id, providerReference]
+      );
+      await pool.query(
+        "UPDATE business_payment_authorizations SET last_used_at=now(),updated_at=now() WHERE id=$1 AND status='ACTIVE'",
+        [authorization.id]
+      );
+      await pool.query(
+        "INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'RECURRING_PAYMENT_CHARGED',$3::jsonb)",
+        [order.id, userId, JSON.stringify({ dispatchPlanId: planId, provider: "paystack", reference: providerReference, amountMinor })]
+      );
+      authorizedBuyOrderIds.push(order.id);
+    } catch (error) {
+      await pool.query(
+        "UPDATE buy_order_payments SET status='PENDING',updated_at=now() WHERE id=$1",
+        [payment.rows[0].id]
+      );
+      failedBuyOrders.push({ id: order.id, reason: error instanceof Error ? error.message : "Paystack recurring charge request failed" });
+    }
+  }
+
+  if (failedBuyOrders.length) {
+    return res.status(409).json({
+      error: "One or more Buy & Deliver payments could not be authorized",
+      code: "PAYMENT_AUTHORIZATION_INCOMPLETE",
+      dispatchPlanId: planId,
+      authorizedBuyOrderIds,
+      failedBuyOrders
+    });
+  }
+  await audit({
+    userId,
+    plan: await currentPlan(userId),
+    capability: "ACTION",
+    action: "AUTHORIZE_RECURRING_BUY_ORDERS",
+    allowed: true,
+    metadata: { dispatchPlanId: planId, authorizedBuyOrderIds }
+  });
+  return res.json({ dispatchPlanId: planId, authorizedBuyOrderIds, failedBuyOrders: [] });
+});
+
 router.get("/buy-orders/:id/payment/status", requireAuth("CUSTOMER", "AGENT", "ADMIN"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Buy & Deliver payments require the production database" });
   const id = String(req.params.id ?? "").trim();
