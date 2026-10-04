@@ -111,7 +111,7 @@ export async function authorizeRecurringBuyOrder(input: {
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`swiftdrop:recurring-buy-payment:${input.orderId}`]);
 
       const row = (await client.query(
-        `SELECT bo.id,bo.business_id,bo.customer_user_id,bo.purchase_budget_minor,bo.currency,
+        `SELECT bo.id,bo.business_id,bo.customer_user_id,bo.purchase_budget_minor,bo.currency,bo.status,
                 u.email,
                 bop.id AS payment_id,bop.provider_reference,bop.status AS payment_status
            FROM buy_orders bo
