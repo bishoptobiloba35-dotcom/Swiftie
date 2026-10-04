@@ -23,6 +23,38 @@ function terminalProviderStatus(status: string): boolean {
   return ["failed", "abandoned", "reversed", "reversal"].includes(status);
 }
 
+export type RecurringChargeDecision =
+  | { kind: "SUCCESS"; providerReference: string }
+  | { kind: "CHALLENGE"; authorizationUrl: string | null; accessCode: string | null }
+  | { kind: "TERMINAL_FAILURE"; providerStatus: string }
+  | { kind: "WAITING"; providerStatus: string };
+
+export function evaluateRecurringChargeResponse(responseOk: boolean, payload: any, fallbackReference: string, expectedAmountMinor: number, expectedCurrency: string): RecurringChargeDecision {
+  const providerStatus = String(payload?.data?.status ?? "").toLowerCase();
+  const challenged = Boolean(payload?.data?.paused) || Boolean(payload?.data?.authorization_url);
+  if (challenged) {
+    return {
+      kind: "CHALLENGE",
+      authorizationUrl: typeof payload?.data?.authorization_url === "string" ? payload.data.authorization_url : null,
+      accessCode: typeof payload?.data?.access_code === "string" ? payload.data.access_code : null
+    };
+  }
+  const successful = responseOk && payload?.status === true && providerStatus === "success";
+  if (successful) {
+    const providerAmount = Number(payload?.data?.amount);
+    const providerCurrency = String(payload?.data?.currency ?? "").trim().toUpperCase();
+    const currency = expectedCurrency.trim().toUpperCase();
+    if (Number.isSafeInteger(providerAmount) && providerAmount === expectedAmountMinor && providerCurrency === currency) {
+      return { kind: "SUCCESS", providerReference: String(payload?.data?.reference ?? fallbackReference) };
+    }
+    return { kind: "TERMINAL_FAILURE", providerStatus: "amount_mismatch" };
+  }
+  if (terminalProviderStatus(providerStatus)) {
+    return { kind: "TERMINAL_FAILURE", providerStatus: providerStatus || "provider_rejected" };
+  }
+  return { kind: "WAITING", providerStatus: providerStatus || "pending" };
+}
+
 async function verify(reference: string, secret: string): Promise<any | null> {
   const response = await fetch(
     "https://api.paystack.co/transaction/verify/" + encodeURIComponent(reference),
