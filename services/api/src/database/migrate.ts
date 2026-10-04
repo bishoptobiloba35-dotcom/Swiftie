@@ -63,18 +63,21 @@ export async function runMigrations(): Promise<void> {
     // Multiple API workers/tests can bootstrap the same database concurrently.
     // Serialize migration check + execution so two processes cannot both insert
     // the same migration id or partially advance the schema at the same time.
-    await pool.query("BEGIN");
+    const client = await pool.connect();
     try {
-      await pool.query("SELECT pg_advisory_xact_lock(hashtext('swiftdrop:schema-migrations'))");
-      const exists = await pool.query("SELECT 1 FROM schema_migrations WHERE id=$1", [migration.id]);
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('swiftdrop:schema-migrations'))");
+      const exists = await client.query("SELECT 1 FROM schema_migrations WHERE id=$1", [migration.id]);
       if (!exists.rowCount) {
-        await pool.query(sql);
-        await pool.query("INSERT INTO schema_migrations (id) VALUES ($1)", [migration.id]);
+        await client.query(sql);
+        await client.query("INSERT INTO schema_migrations (id) VALUES ($1)", [migration.id]);
       }
-      await pool.query("COMMIT");
+      await client.query("COMMIT");
     } catch (error) {
-      await pool.query("ROLLBACK");
+      await client.query("ROLLBACK");
       throw error;
+    } finally {
+      client.release();
     }
   }
 }
