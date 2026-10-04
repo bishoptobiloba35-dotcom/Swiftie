@@ -483,6 +483,36 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
   return res.status(400).json({ error: "Unsupported AI action", code: "UNKNOWN_AI_ACTION" });
 });
 
+router.get("/admin/recurring-dispatch-recovery", requireAuth("ADMIN"), async (_req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool.query(
+    `SELECT p.id, p.business_id, p.created_by_user_id, p.status, p.approval_required,
+            p.estimated_total_minor, p.created_at, p.updated_at, p.plan,
+            b.display_name AS business_display_name
+       FROM business_dispatch_plans p
+       JOIN business_accounts b ON b.id=p.business_id
+      WHERE p.status='PREPARED'
+        AND p.plan->>'autonomousRecoveryState' IS NOT NULL
+      ORDER BY COALESCE((p.plan->>'autonomousRetryAt')::timestamptz, p.updated_at) ASC
+      LIMIT 200`
+  );
+  return res.json({ recoveries: result.rows.map((row: any) => ({
+    dispatchPlanId: row.id,
+    businessId: row.business_id,
+    businessDisplayName: row.business_display_name,
+    createdByUserId: row.created_by_user_id,
+    status: row.status,
+    approvalRequired: row.approval_required,
+    estimatedTotalMinor: Number(row.estimated_total_minor),
+    recoveryState: row.plan?.autonomousRecoveryState ?? null,
+    recoveryReason: row.plan?.autonomousRecoveryReason ?? null,
+    retryAt: row.plan?.autonomousRetryAt ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    plan: row.plan
+  })) });
+});
+
 router.get("/business/dispatch-plans", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const businessId = String(req.query.businessId ?? "");
