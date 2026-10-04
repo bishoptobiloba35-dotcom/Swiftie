@@ -80,20 +80,59 @@ router.patch("/marketplace/listings/:id", requireAuth(), async (req, res) => {
     isActive: z.boolean().optional()
   }).strict().safeParse(req.body);
   if (!parsed.success || Object.keys(parsed.data).length === 0) return res.status(400).json({ error: parsed.success ? "No listing changes supplied" : parsed.error.flatten() });
-  const keys = Object.keys(parsed.data);
-  const cols: Record<string,string> = { title:"title",description:"description",condition:"condition",priceMinor:"price_minor",deliveryFeeMinor:"delivery_fee_minor",stockQuantity:"stock_quantity",isActive:"is_active" };
-  const sets:string[]=[]; const values:any[]=[];
-  for (const key of keys) { sets.push(`${cols[key]}=${values.length+1}`); values.push((parsed.data as any)[key]); }
-  values.push(String(req.params.id), identity(req));
-  const result = await pool.query(
-    `UPDATE marketplace_listings l SET ${sets.join(",")},updated_at=now()
-       FROM marketplace_seller_profiles s
-      WHERE l.id=${values.length-1} AND l.seller_profile_id=s.id AND l.seller_user_id=${values.length}
-      RETURNING l.id,l.title,l.description,l.condition,l.price_minor,l.delivery_fee_minor,l.stock_quantity,l.is_active,l.updated_at`,
-    values
-  );
-  if (!result.rows[0]) return res.status(404).json({ error: "Listing not found" });
-  return res.json({ listing: result.rows[0] });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const current = (await client.query(
+      `SELECT l.id,l.stock_quantity,l.is_active
+         FROM marketplace_listings l
+         JOIN marketplace_seller_profiles s ON s.id=l.seller_profile_id
+        WHERE l.id=$1 AND l.seller_user_id=$2
+        FOR UPDATE`,
+      [String(req.params.id), identity(req)]
+    )).rows[0];
+    if (!current) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Listing not found" });
+    }
+
+    if (parsed.data.stockQuantity !== undefined && parsed.data.stockQuantity < Number(current.stock_quantity)) {
+      const reserved = Number((await client.query(
+        `SELECT COALESCE(SUM(quantity),0) AS quantity
+           FROM marketplace_orders
+          WHERE listing_id=$1
+            AND status IN ('PENDING_PAYMENT','PAID','PROCESSING','IN_TRANSIT')`,
+        [current.id]
+      )).rows[0]?.quantity ?? 0);
+      const requested = Number(parsed.data.stockQuantity);
+      const minimumSafeStock = Math.max(0, Number(current.stock_quantity) - reserved);
+      if (requested < minimumSafeStock) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          error: "Stock cannot be reduced below quantities already reserved or committed to active orders",
+          currentStock: Number(current.stock_quantity),
+          reservedQuantity: reserved,
+          minimumSafeStock
+        });
+      }
+    }
+
+    const keys = Object.keys(parsed.data);
+    const cols: Record<string,string> = { title:"title",description:"description",condition:"condition",priceMinor:"price_minor",deliveryFeeMinor:"delivery_fee_minor",stockQuantity:"stock_quantity",isActive:"is_active" };
+    const sets:string[]=[]; const values:any[]=[];
+    for (const key of keys) { sets.push(`${cols[key]}=$${values.length+1}`); values.push((parsed.data as any)[key]); }
+    values.push(current.id);
+    const result = await client.query(
+      `UPDATE marketplace_listings SET ${sets.join(",")},updated_at=now() WHERE id=$${values.length} RETURNING id,title,description,condition,price_minor,delivery_fee_minor,stock_quantity,is_active,updated_at`,
+      values
+    );
+    await client.query("COMMIT");
+    return res.json({ listing: result.rows[0] });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to update listing" });
+  } finally { client.release(); }
 });
 
 router.get("/marketplace/listings", async (req, res) => {
