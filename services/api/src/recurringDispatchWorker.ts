@@ -1,4 +1,5 @@
 import { pool } from "./database/db.js";
+import { authorizeRecurringBuyOrder } from "./recurringDispatchPaymentService.js";
 
 function nextFutureRun(nextRunAt: Date, cadenceMinutes: number): Date {
   const cadenceMs = cadenceMinutes * 60_000;
@@ -6,6 +7,62 @@ function nextFutureRun(nextRunAt: Date, cadenceMinutes: number): Date {
   const now = Date.now();
   while (next <= now) next += cadenceMs;
   return new Date(next);
+}
+
+async function executeAutonomousDispatchPlan(planId: string): Promise<void> {
+  if (!pool) return;
+  const plan = (await pool.query("SELECT id,business_id,status,approval_required,plan,created_by_user_id FROM business_dispatch_plans WHERE id=$1",[planId])).rows[0];
+  if (!plan || plan.approval_required || plan.status !== "PREPARED") return;
+  const payload = plan.plan ?? {};
+  const buyOrderIds = Array.isArray(payload.buyOrderIds) ? payload.buyOrderIds.filter((v: unknown) => typeof v === "string") : [];
+  const deliveryIds = Array.isArray(payload.deliveryIds) ? payload.deliveryIds.filter((v: unknown) => typeof v === "string") : [];
+  const results: any[] = [];
+  for (const orderId of buyOrderIds) {
+    const result = await authorizeRecurringBuyOrder({ planId: plan.id, businessId: plan.business_id, orderId });
+    results.push(result);
+    if (result.status !== "HELD") break;
+  }
+  const blocked = results.find((result) => result.status !== "HELD");
+  if (blocked) {
+    await pool.query("UPDATE business_dispatch_plans SET plan=jsonb_set(plan,'{autonomousPaymentResults}',$2::jsonb,true),updated_at=now() WHERE id=$1 AND status='PREPARED'",[plan.id,JSON.stringify(results)]);
+    await pool.query(
+      "INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,(SELECT ai_plan FROM users WHERE id=$1),'ACTION','RECURRING_DISPATCH_AUTONOMOUS_PAYMENT',false,$2,$3::jsonb)",
+      [plan.created_by_user_id, blocked.reason, JSON.stringify({dispatchPlanId:plan.id,results})]
+    );
+    return;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const locked = (await client.query("SELECT id,business_id,status,approval_required,plan,created_by_user_id FROM business_dispatch_plans WHERE id=$1 FOR UPDATE",[plan.id])).rows[0];
+    if (!locked || locked.status !== "PREPARED" || locked.approval_required) { await client.query("ROLLBACK"); return; }
+    const lockedPlan = locked.plan ?? {};
+    const lockedBuyOrderIds = Array.isArray(lockedPlan.buyOrderIds) ? lockedPlan.buyOrderIds.filter((v: unknown) => typeof v === "string") : [];
+    const lockedDeliveries = Array.isArray(lockedPlan.deliveryIds) ? lockedPlan.deliveryIds.filter((v: unknown) => typeof v === "string") : [];
+    if (lockedBuyOrderIds.length) {
+      const payments = await client.query("SELECT id,payment_status FROM buy_orders WHERE id=ANY($1::uuid[]) AND business_id=$2 FOR UPDATE",[lockedBuyOrderIds,locked.business_id]);
+      if (payments.rows.length !== lockedBuyOrderIds.length || payments.rows.some((row: any) => !["HELD","AUTHORIZED"].includes(String(row.payment_status)))) { await client.query("ROLLBACK"); return; }
+    }
+    const updated = await client.query("UPDATE business_dispatch_plans SET status='EXECUTED',executed_at=now(),updated_at=now() WHERE id=$1 AND status='PREPARED' AND approval_required=false RETURNING id",[locked.id]);
+    if (!updated.rows[0]) { await client.query("ROLLBACK"); return; }
+    if (lockedDeliveries.length) {
+      await client.query(
+        "INSERT INTO delivery_events (delivery_id,event_type,actor_user_id,metadata) SELECT unnest($1::uuid[]),'BUSINESS_DISPATCH_RELEASED',$2,$3::jsonb",
+        [lockedDeliveries,locked.created_by_user_id,JSON.stringify({dispatchPlanId:locked.id,businessId:locked.business_id,source:"AUTONOMOUS_RECURRING_DISPATCH"})]
+      );
+    }
+    await client.query(
+      "INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,(SELECT ai_plan FROM users WHERE id=$1),'ACTION','RECURRING_DISPATCH_AUTONOMOUS_EXECUTE',true,'Recurring dispatch executed after all required payments were held',$2::jsonb)",
+      [locked.created_by_user_id,JSON.stringify({dispatchPlanId:locked.id,buyOrderIds:lockedBuyOrderIds,deliveryIds:lockedDeliveries})]
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch {}
+    await pool.query(
+      "INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,(SELECT ai_plan FROM users WHERE id=$1),'ACTION','RECURRING_DISPATCH_AUTONOMOUS_EXECUTE',false,'Autonomous recurring dispatch execution failed',$2::jsonb)",
+      [plan.created_by_user_id,JSON.stringify({dispatchPlanId:plan.id,error:error instanceof Error?error.message:"Unknown error"})]
+    );
+  } finally { client.release(); }
 }
 
 export async function processRecurringDispatches(limit = 10): Promise<number> {
@@ -208,6 +265,10 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
       }
     }
     await client.query("COMMIT");
+    const autonomousPlans = await pool.query(
+      "SELECT last_dispatch_plan_id AS id FROM business_recurring_dispatches WHERE last_dispatch_plan_id IS NOT NULL AND last_run_at >= now() - interval '2 minutes' AND active=true"
+    );
+    for (const row of autonomousPlans.rows) await executeAutonomousDispatchPlan(String(row.id));
     return processed;
   } catch (error) {
     await client.query("ROLLBACK");

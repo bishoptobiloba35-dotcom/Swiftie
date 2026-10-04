@@ -757,7 +757,7 @@ router.post("/business/dispatch-plans/:id/authorize-buy-orders", requireAuth("CU
       continue;
     }
 
-    const reference = "sd_recurring_" + planId.replaceAll("-", "") + "_" + order.id.replaceAll("-", "");
+    const reference = "sd-recurring-" + planId.replaceAll("-", "") + "-" + order.id.replaceAll("-", "");
     const payment = await pool.query(
       `INSERT INTO buy_order_payments
          (buy_order_id,provider,provider_reference,amount_minor,currency,status)
