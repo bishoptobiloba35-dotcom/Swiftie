@@ -80,15 +80,22 @@ export async function reconcilePendingBuyOrderPayments(): Promise<void> {
           if (customer?.email) {
             await pool.query(
               `INSERT INTO business_payment_authorizations
-                 (business_id,user_id,provider,authorization_code,email,status,last_used_at,updated_at)
-               VALUES ($1,$2,'paystack',$3,$4,'ACTIVE',now(),now())
+                 (business_id,user_id,provider,authorization_code,email,status,last_used_at,updated_at,signature,card_type,card_last4,card_exp_month,card_exp_year,bank,brand)
+               VALUES ($1,$2,'paystack',$3,$4,'ACTIVE',now(),now(),$5,$6,$7,$8,$9,$10,$11)
                ON CONFLICT (business_id,user_id,provider)
-               DO UPDATE SET authorization_code=EXCLUDED.authorization_code,email=EXCLUDED.email,status='ACTIVE',last_used_at=now(),updated_at=now()`,
+               DO UPDATE SET authorization_code=EXCLUDED.authorization_code,email=EXCLUDED.email,status='ACTIVE',last_used_at=now(),updated_at=now(),signature=EXCLUDED.signature,card_type=EXCLUDED.card_type,card_last4=EXCLUDED.card_last4,card_exp_month=EXCLUDED.card_exp_month,card_exp_year=EXCLUDED.card_exp_year,bank=EXCLUDED.bank,brand=EXCLUDED.brand`,
               [
                 payment.business_id,
                 payment.customer_user_id,
                 authorization.authorization_code.trim(),
-                customer.email
+                customer.email,
+                typeof authorization.signature === "string" ? authorization.signature.trim() : null,
+                typeof authorization.card_type === "string" ? authorization.card_type : null,
+                typeof authorization.last4 === "string" ? authorization.last4 : null,
+                typeof authorization.exp_month === "string" ? authorization.exp_month : null,
+                typeof authorization.exp_year === "string" ? authorization.exp_year : null,
+                typeof authorization.bank === "string" ? authorization.bank : null,
+                typeof authorization.brand === "string" ? authorization.brand : null
               ]
             );
           }
