@@ -1633,31 +1633,47 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
       }
 
       const refundReferenceReservation = "pending-" + randomUUID().replaceAll("-", "");
-      await pool!.query("BEGIN");
+      const client = await pool!.connect();
       try {
-        await pool!.query(
+        await client.query("BEGIN");
+        const payoutLock = marketplace.delivery_id
+          ? (await client.query("SELECT status FROM payouts WHERE delivery_id=$1 FOR UPDATE", [marketplace.delivery_id])).rows[0]
+          : null;
+        if (payoutLock && ["PROCESSING","RELEASED"].includes(String(payoutLock.status))) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({ error: "Courier payout changed to processing/released; stop and investigate before refunding" });
+        }
+        const reserved = await client.query(
           `UPDATE marketplace_order_payments
               SET refund_reference=$2, refund_status='PENDING', refund_amount_minor=$3,
                   refund_updated_at=now(), updated_at=now()
-            WHERE id=$1 AND status='AUTHORIZED'`,
+            WHERE id=$1 AND status='AUTHORIZED'
+              AND COALESCE(total_refunded_minor,0)+$3 <= amount_minor
+              AND (refund_status IS NULL OR refund_status IN ('FAILED','RETRY_REQUIRED'))`,
           [marketplace.payment_id, refundReferenceReservation, refundAmountMinor]
         );
-        await pool!.query(
+        if (!reserved.rowCount) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({ error: "Marketplace payment is already being refunded or is no longer refundable" });
+        }
+        await client.query(
           `UPDATE marketplace_orders SET status='DISPUTED', updated_at=now()
              WHERE id=$1 AND status IN ('PAID','PROCESSING','IN_TRANSIT','DELIVERED','DISPUTED')`,
           [marketplace.marketplace_order_id]
         );
         if (marketplace.delivery_id) {
-          await pool!.query(
+          await client.query(
             `UPDATE payouts SET status='CANCELLED', updated_at=now()
                WHERE delivery_id=$1 AND status IN ('PENDING','ELIGIBLE')`,
             [marketplace.delivery_id]
           );
         }
-        await pool!.query("COMMIT");
+        await client.query("COMMIT");
       } catch (error) {
-        await pool!.query("ROLLBACK");
+        await client.query("ROLLBACK");
         throw error;
+      } finally {
+        client.release();
       }
 
       const secret = process.env.PAYSTACK_SECRET_KEY;
