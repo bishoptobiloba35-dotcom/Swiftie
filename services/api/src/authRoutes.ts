@@ -90,6 +90,19 @@ router.post("/login", rateLimitAuth(10), async (req, res) => {
     return res.status(401).json({ error: "Invalid phone or password" });
   }
   const accessToken = signAccessToken({ userId: user.id, role: user.role });
+  if (user.role === "DRIVER") {
+    await pool.query(
+      `UPDATE drivers d
+          SET online=true, updated_at=now()
+        WHERE d.user_id=$1
+          AND d.status='APPROVED'
+          AND EXISTS (
+            SELECT 1 FROM driver_documents dd
+            WHERE dd.driver_id=d.id AND dd.status='APPROVED'
+          )`,
+      [user.id]
+    );
+  }
   res.json({
     accessToken,
     user: { id: user.id, role: user.role, full_name: user.full_name, phone: user.phone, email: user.email }
