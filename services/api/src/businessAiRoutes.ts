@@ -692,7 +692,7 @@ router.post("/business/dispatch-plans/:id/authorize-buy-orders", requireAuth("CU
   }
 
   const authorization = (await pool.query(
-    `SELECT id,authorization_code,email,status
+    `SELECT id,user_id,authorization_code,email,status
        FROM business_payment_authorizations
       WHERE business_id=$1 AND status='ACTIVE'
       ORDER BY updated_at DESC
@@ -712,7 +712,7 @@ router.post("/business/dispatch-plans/:id/authorize-buy-orders", requireAuth("CU
   if (!buyOrderIds.length) return res.json({ dispatchPlanId: planId, authorizedBuyOrderIds: [], failedBuyOrders: [] });
 
   const orders = await pool.query(
-    `SELECT id,purchase_budget_minor,currency,status,payment_status
+    `SELECT id,customer_user_id,purchase_budget_minor,currency,status,payment_status
        FROM buy_orders
       WHERE id=ANY($1::uuid[]) AND business_id=$2
       ORDER BY created_at ASC`,
@@ -727,6 +727,13 @@ router.post("/business/dispatch-plans/:id/authorize-buy-orders", requireAuth("CU
   const paymentAuthorizationRequired: Array<{ id: string; authorizationUrl: string | null; accessCode: string | null }> = [];
 
   for (const order of orders.rows) {
+    // A reusable Paystack authorization is owned by the customer whose email/code
+    // was originally authorized. Never apply one business member's authorization
+    // to a Buy & Deliver order owned by a different customer.
+    if (String(order.customer_user_id ?? "") !== String(authorization.user_id ?? "")) {
+      failedBuyOrders.push({ id: order.id, reason: "PAYMENT_AUTHORIZATION_OWNER_MISMATCH" });
+      continue;
+    }
     if (["HELD", "AUTHORIZED"].includes(String(order.payment_status))) {
       authorizedBuyOrderIds.push(order.id);
       continue;
