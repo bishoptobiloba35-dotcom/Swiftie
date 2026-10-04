@@ -28,6 +28,7 @@ import { getActivePricingConfig } from "./pricing.js";
 import { reconcileProcessingBuyOrderSettlements } from "./buyOrderSettlementWorker.js";
 import { reconcileProcessingDropOffCommissions } from "./dropOffCommissionWorker.js";
 import { reconcileCancelledMarketplacePayments } from "./marketplacePaymentWorker.js";
+import { reconcilePendingBuyOrderPayments } from "./buyOrderPaymentWorker.js";
 
 const app = express();
 
@@ -2480,6 +2481,10 @@ async function startServer() {
     const marketplacePaymentReconciliationWorker = setInterval(() => {
       void reconcileCancelledMarketplacePayments().catch(() => {});
     }, 30_000);
+    const buyOrderPaymentReconciliationWorker = setInterval(() => {
+      void reconcilePendingBuyOrderPayments().catch(() => {});
+    }, 30_000);
+    buyOrderPaymentReconciliationWorker.unref();
     supportAiWorker.unref();
     notificationWorker.unref();
     notificationReceiptWorker.unref();
