@@ -869,18 +869,29 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
             providerCurrency === String(payment.currency).trim();
 
           if (event.event === "charge.success" && amountMatches) {
-            await client.query(
-              `UPDATE marketplace_order_payments
-                  SET status='AUTHORIZED', provider_status='success', updated_at=now()
-                WHERE id=$1 AND status='PENDING'`,
-              [payment.id]
-            );
-            await client.query(
-              `UPDATE marketplace_orders
-                  SET status='PAID', updated_at=now()
-                WHERE id=$1 AND status='PENDING_PAYMENT'`,
-              [payment.marketplace_order_id]
-            );
+            if (payment.order_status === "CANCELLED") {
+              // Keep it pending so the durable reconciliation worker can refund
+              // the late successful charge without blocking this webhook response.
+              await client.query(
+                `UPDATE marketplace_order_payments
+                    SET provider_status='success_after_cancellation', updated_at=now()
+                  WHERE id=$1 AND status='PENDING'`,
+                [payment.id]
+              );
+            } else {
+              await client.query(
+                `UPDATE marketplace_order_payments
+                    SET status='AUTHORIZED', provider_status='success', updated_at=now()
+                  WHERE id=$1 AND status='PENDING'`,
+                [payment.id]
+              );
+              await client.query(
+                `UPDATE marketplace_orders
+                    SET status='PAID', updated_at=now()
+                  WHERE id=$1 AND status='PENDING_PAYMENT'`,
+                [payment.marketplace_order_id]
+              );
+            }
           } else if (event.event === "charge.failed" || !amountMatches) {
             await client.query(
               `UPDATE marketplace_order_payments
@@ -896,7 +907,7 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
                       status=CASE WHEN l.status='SOLD_OUT' THEN 'PUBLISHED' ELSE l.status END,
                       updated_at=now()
                  FROM marketplace_orders mo
-                WHERE mo.id=$1 AND l.id=mo.listing_id
+                WHERE mo.id=$1 AND l.id=mo.listing_id AND mo.status='PENDING_PAYMENT'
                 RETURNING l.stock_quantity,l.status`,
               [payment.marketplace_order_id, payment.quantity]
             );
