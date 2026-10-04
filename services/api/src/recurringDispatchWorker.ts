@@ -76,21 +76,43 @@ async function executeAutonomousDispatchPlan(planId: string): Promise<void> {
     const lockedPlan = locked.plan ?? {};
     const lockedBuyOrderIds = Array.isArray(lockedPlan.buyOrderIds) ? lockedPlan.buyOrderIds.filter((v: unknown) => typeof v === "string") : [];
     const lockedDeliveries = Array.isArray(lockedPlan.deliveryIds) ? lockedPlan.deliveryIds.filter((v: unknown) => typeof v === "string") : [];
+    let linkedDeliveryIds = [...lockedDeliveries];
     if (lockedBuyOrderIds.length) {
-      const payments = await client.query("SELECT id,payment_status FROM buy_orders WHERE id=ANY($1::uuid[]) AND business_id=$2 FOR UPDATE",[lockedBuyOrderIds,locked.business_id]);
-      if (payments.rows.length !== lockedBuyOrderIds.length || payments.rows.some((row: any) => !["HELD","AUTHORIZED"].includes(String(row.payment_status)))) { await client.query("ROLLBACK"); return; }
+      const payments = await client.query(
+        "SELECT id,payment_status,delivery_id FROM buy_orders WHERE id=ANY($1::uuid[]) AND business_id=$2 FOR UPDATE",
+        [lockedBuyOrderIds,locked.business_id]
+      );
+      if (payments.rows.length !== lockedBuyOrderIds.length || payments.rows.some((row: any) => !["HELD","AUTHORIZED"].includes(String(row.payment_status)))) {
+        await client.query("ROLLBACK");
+        return;
+      }
+      if (payments.rows.some((row: any) => !row.delivery_id)) {
+        await client.query("ROLLBACK");
+        return;
+      }
+      linkedDeliveryIds = [...new Set([...linkedDeliveryIds, ...payments.rows.map((row: any) => String(row.delivery_id))])];
+    }
+    if (linkedDeliveryIds.length) {
+      const dispatchable = await client.query(
+        "SELECT id FROM deliveries WHERE id=ANY($1::uuid[]) AND status IN ('PAYMENT_AUTHORIZED','DRIVER_ASSIGNED')",
+        [linkedDeliveryIds]
+      );
+      if (dispatchable.rows.length !== linkedDeliveryIds.length) {
+        await client.query("ROLLBACK");
+        return;
+      }
     }
     const updated = await client.query("UPDATE business_dispatch_plans SET status='EXECUTED',executed_at=now(),updated_at=now() WHERE id=$1 AND status='PREPARED' AND approval_required=false RETURNING id",[locked.id]);
     if (!updated.rows[0]) { await client.query("ROLLBACK"); return; }
     if (lockedDeliveries.length) {
       await client.query(
         "INSERT INTO delivery_events (delivery_id,event_type,actor_user_id,metadata) SELECT unnest($1::uuid[]),'BUSINESS_DISPATCH_RELEASED',$2,$3::jsonb",
-        [lockedDeliveries,locked.created_by_user_id,JSON.stringify({dispatchPlanId:locked.id,businessId:locked.business_id,source:"AUTONOMOUS_RECURRING_DISPATCH"})]
+        [linkedDeliveryIds,locked.created_by_user_id,JSON.stringify({dispatchPlanId:locked.id,businessId:locked.business_id,source:"AUTONOMOUS_RECURRING_DISPATCH"})]
       );
     }
     await client.query(
       "INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,(SELECT ai_plan FROM users WHERE id=$1),'ACTION','RECURRING_DISPATCH_AUTONOMOUS_EXECUTE',true,'Recurring dispatch executed after all required payments were held',$2::jsonb)",
-      [locked.created_by_user_id,JSON.stringify({dispatchPlanId:locked.id,buyOrderIds:lockedBuyOrderIds,deliveryIds:lockedDeliveries})]
+      [locked.created_by_user_id,JSON.stringify({dispatchPlanId:locked.id,buyOrderIds:lockedBuyOrderIds,deliveryIds:linkedDeliveryIds})]
     );
     await client.query("COMMIT");
   } catch (error) {
