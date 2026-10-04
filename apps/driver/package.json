@@ -2,12 +2,13 @@
   "name": "@swiftdrop/driver",
   "version": "0.1.0",
   "private": true,
-  "main": "expo-router/entry",
+  "main": "index.js",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "build": "tsc --noEmit"
+    "build": "tsc --noEmit",
+    "web": "expo start --web"
   },
   "dependencies": {
     "expo": "~54.0.0",
@@ -19,7 +20,10 @@
     "react-native": "0.81.4",
     "expo-document-picker": "~13.0.3",
     "expo-file-system": "~19.0.24",
-    "expo-notifications": "~0.32.0"
+    "expo-notifications": "~0.32.0",
+    "react-dom": "19.1.0",
+    "react-native-web": "~0.21.0",
+    "@expo/metro-runtime": "~6.1.2"
   },
   "devDependencies": {
     "typescript": "~5.9.2",

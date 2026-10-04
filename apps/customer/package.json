@@ -2,12 +2,13 @@
   "name": "@swiftdrop/customer",
   "version": "0.1.0",
   "private": true,
-  "main": "expo-router/entry",
+  "main": "index.js",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "build": "tsc --noEmit"
+    "build": "tsc --noEmit",
+    "web": "expo start --web"
   },
   "dependencies": {
     "expo": "~54.0.0",
@@ -19,7 +20,10 @@
     "expo-location": "~19.0.0",
     "expo-notifications": "~0.32.0",
     "react-native-maps": "1.20.1",
-    "expo-image-picker": "~17.0.11"
+    "expo-image-picker": "~17.0.11",
+    "react-dom": "19.1.0",
+    "react-native-web": "~0.21.0",
+    "@expo/metro-runtime": "~6.1.2"
   },
   "devDependencies": {
     "typescript": "~5.9.2",
