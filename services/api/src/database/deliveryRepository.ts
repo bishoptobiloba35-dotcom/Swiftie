@@ -1252,6 +1252,16 @@ export async function confirmReceiverAndReleaseEscrow(id: string, receiverPhone:
     if (payoutAmountMinor > 0) {
       await client.query(`INSERT INTO payouts (delivery_id, driver_id, amount_minor, currency, status) VALUES ($1,$2,$3,$4,'ELIGIBLE') ON CONFLICT (delivery_id) DO UPDATE SET amount_minor=EXCLUDED.amount_minor, currency=EXCLUDED.currency, status=CASE WHEN payouts.status IN ('PENDING','ELIGIBLE') THEN 'ELIGIBLE' ELSE payouts.status END, updated_at=now()`, [id, row.driver_id, payoutAmountMinor, row.payment_currency ?? 'NGN']);
     }
+
+    // Marketplace deliveries use the same sender-escrow payout lifecycle.
+    // Keep the marketplace order in sync in this transaction so a successful
+    // receiver PIN confirmation cannot leave it stuck in PROCESSING/IN_TRANSIT.
+    await client.query(
+      `UPDATE marketplace_orders
+          SET status='DELIVERED', fulfillment_status='FULFILLED', updated_at=now()
+        WHERE delivery_id=$1 AND status IN ('PROCESSING','IN_TRANSIT')`,
+      [id]
+    );
     await client.query('COMMIT');
     return { delivery: rowToDelivery(deliveryResult.rows[0]), payoutAmountMinor };
   } catch (error) {
