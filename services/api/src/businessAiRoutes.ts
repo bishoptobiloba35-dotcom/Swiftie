@@ -708,21 +708,28 @@ router.post("/business/dispatch-plans/:id/authorize-buy-orders", requireAuth("CU
   if (!secret) return res.status(503).json({ error: "Paystack payment configuration is not ready" });
 
   // A business may have multiple members with separate reusable Paystack
-  // authorizations. Resolve the authorization by order owner, not by whichever
-  // authorization happens to be most recently updated for the business.
+  // authorizations. Resolve the latest active authorization for every order owner
+  // in one query so large recurring batches do not create an N+1 query pattern.
+  const ownerIds = [...new Set(
+    orders.rows
+      .map((order: any) => String(order.customer_user_id ?? ""))
+      .filter(Boolean)
+  )];
   const authorizationByUser = new Map<string, any>();
-  for (const order of orders.rows) {
-    const ownerId = String(order.customer_user_id ?? "");
-    if (!ownerId || authorizationByUser.has(ownerId)) continue;
-    const authorization = (await pool.query(
-      `SELECT id,user_id,authorization_code,email,status
+  if (ownerIds.length) {
+    const authorizations = await pool.query(
+      `SELECT DISTINCT ON (user_id)
+          id,user_id,authorization_code,email,status
          FROM business_payment_authorizations
-        WHERE business_id=$1 AND user_id=$2 AND status='ACTIVE'
-        ORDER BY updated_at DESC
-        LIMIT 1`,
-      [plan.business_id, ownerId]
-    )).rows[0];
-    authorizationByUser.set(ownerId, authorization ?? null);
+        WHERE business_id=$1
+          AND user_id=ANY($2::uuid[])
+          AND status='ACTIVE'
+        ORDER BY user_id,updated_at DESC`,
+      [plan.business_id, ownerIds]
+    );
+    for (const authorization of authorizations.rows) {
+      authorizationByUser.set(String(authorization.user_id), authorization);
+    }
   }
 
   const authorizedBuyOrderIds: string[] = [];
