@@ -11,7 +11,17 @@ function nextFutureRun(nextRunAt: Date, cadenceMinutes: number): Date {
 
 async function executeAutonomousDispatchPlan(planId: string): Promise<void> {
   if (!pool) return;
-  const plan = (await pool.query("SELECT id,business_id,status,approval_required,plan,created_by_user_id FROM business_dispatch_plans WHERE id=$1",[planId])).rows[0];
+
+  // Hold a dedicated session-level advisory lock for the whole autonomous
+  // plan attempt. This prevents two worker ticks from charging the same plan
+  // concurrently while keeping the primary worker transaction free.
+  const lockClient = await pool.connect();
+  const lockKey = `swiftdrop:autonomous-dispatch-plan:${planId}`;
+  try {
+    const lockResult = await lockClient.query("SELECT pg_try_advisory_lock(hashtext($1)) AS locked", [lockKey]);
+    if (!lockResult.rows[0]?.locked) return;
+
+    const plan = (await pool.query("SELECT id,business_id,status,approval_required,plan,created_by_user_id FROM business_dispatch_plans WHERE id=$1",[planId])).rows[0];
   if (!plan || plan.approval_required || plan.status !== "PREPARED") return;
   const payload = plan.plan ?? {};
   const buyOrderIds = Array.isArray(payload.buyOrderIds) ? payload.buyOrderIds.filter((v: unknown) => typeof v === "string") : [];
@@ -78,6 +88,10 @@ async function executeAutonomousDispatchPlan(planId: string): Promise<void> {
       [plan.created_by_user_id,JSON.stringify({dispatchPlanId:plan.id,error:error instanceof Error?error.message:"Unknown error"})]
     );
   } finally { client.release(); }
+  } finally {
+    try { await lockClient.query("SELECT pg_advisory_unlock(hashtext($1))", [lockKey]); } catch {}
+    lockClient.release();
+  }
 }
 
 export async function processRecurringDispatches(limit = 10): Promise<number> {
