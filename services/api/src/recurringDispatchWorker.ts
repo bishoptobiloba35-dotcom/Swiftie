@@ -266,9 +266,17 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
     }
     await client.query("COMMIT");
     const autonomousPlans = await pool.query(
-      "SELECT last_dispatch_plan_id AS id FROM business_recurring_dispatches WHERE last_dispatch_plan_id IS NOT NULL AND last_run_at >= now() - interval '2 minutes' AND active=true"
+      `SELECT id
+         FROM business_dispatch_plans
+        WHERE status='PREPARED'
+          AND approval_required=false
+        ORDER BY created_at ASC
+        LIMIT $1`,
+      [Math.min(Math.max(limit * 2, 10), 50)]
     );
-    for (const row of autonomousPlans.rows) await executeAutonomousDispatchPlan(String(row.id));
+    for (const row of autonomousPlans.rows) {
+      await executeAutonomousDispatchPlan(String(row.id));
+    }
     return processed;
   } catch (error) {
     await client.query("ROLLBACK");
