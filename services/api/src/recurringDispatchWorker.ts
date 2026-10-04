@@ -163,7 +163,7 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
             deliveryIds: resolvedDeliveryIds,
             buyOrderIds: resolvedBuyOrderIds,
             createdBuyOrderIds,
-            requiresPaymentAuthorization: createdBuyOrderIds.length > 0,
+            requiresPaymentAuthorization: resolvedBuyOrderIds.length > 0,
             skippedDeliveryIds,
             skippedBuyOrderIds,
             skippedBuyOrderTemplates,
