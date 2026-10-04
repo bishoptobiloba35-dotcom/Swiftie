@@ -724,6 +724,7 @@ router.post("/business/dispatch-plans/:id/authorize-buy-orders", requireAuth("CU
 
   const authorizedBuyOrderIds: string[] = [];
   const failedBuyOrders: Array<{ id: string; reason: string }> = [];
+  const paymentAuthorizationRequired: Array<{ id: string; authorizationUrl: string | null; accessCode: string | null }> = [];
 
   for (const order of orders.rows) {
     if (["HELD", "AUTHORIZED"].includes(String(order.payment_status))) {
@@ -833,7 +834,7 @@ router.post("/business/dispatch-plans/:id/authorize-buy-orders", requireAuth("CU
       const payload = await response.json() as {
         status?: boolean;
         message?: string;
-        data?: { status?: string; reference?: string; amount?: number; currency?: string };
+        data?: { status?: string; reference?: string; amount?: number; currency?: string; authorization_url?: string; access_code?: string; } ;
       };
 
       const providerReference = String(payload.data?.reference ?? reference);
@@ -846,10 +847,31 @@ router.post("/business/dispatch-plans/:id/authorize-buy-orders", requireAuth("CU
         providerCurrency.trim() === String(order.currency ?? "NGN").trim();
 
       if (!successful) {
+        const providerStatus = String(payload.data?.status ?? "").toLowerCase();
+        const challenged = providerStatus === "paused" || Boolean(payload.data?.authorization_url);
+        const authorizationUrl = typeof payload.data?.authorization_url === "string" ? payload.data.authorization_url : null;
+        const accessCode = typeof payload.data?.access_code === "string" ? payload.data.access_code : null;
+
+        if (challenged) {
+          await pool.query(
+            "UPDATE buy_order_payments SET status='PENDING',provider_reference=$2,provider_status='authorization_required',authorization_url=$3,access_code=$4,updated_at=now() WHERE id=$1",
+            [paymentRow.id, providerReference, authorizationUrl, accessCode]
+          );
+          paymentAuthorizationRequired.push({ id: order.id, authorizationUrl, accessCode });
+          failedBuyOrders.push({ id: order.id, reason: "PAYMENT_AUTHORIZATION_REQUIRED" });
+          continue;
+        }
+
         await pool.query(
-          "UPDATE buy_order_payments SET status='FAILED',provider_reference=$2,updated_at=now() WHERE id=$1",
-          [paymentRow.id, providerReference]
+          "UPDATE buy_order_payments SET status='FAILED',provider_reference=$2,provider_status=$3,updated_at=now() WHERE id=$1",
+          [paymentRow.id, providerReference, providerStatus || "charge_failed"]
         );
+        if (["invalid_authorization","authorization_invalid","expired_authorization"].includes(providerStatus)) {
+          await pool.query(
+            "UPDATE business_payment_authorizations SET status='REVOKED',updated_at=now() WHERE id=$1 AND status='ACTIVE'",
+            [authorization.id]
+          );
+        }
         failedBuyOrders.push({ id: order.id, reason: payload.message ?? "Paystack recurring charge failed" });
         continue;
       }
@@ -886,7 +908,8 @@ router.post("/business/dispatch-plans/:id/authorize-buy-orders", requireAuth("CU
       code: "PAYMENT_AUTHORIZATION_INCOMPLETE",
       dispatchPlanId: planId,
       authorizedBuyOrderIds,
-      failedBuyOrders
+      failedBuyOrders,
+      paymentAuthorizationRequired
     });
   }
   await audit({
@@ -897,7 +920,7 @@ router.post("/business/dispatch-plans/:id/authorize-buy-orders", requireAuth("CU
     allowed: true,
     metadata: { dispatchPlanId: planId, authorizedBuyOrderIds }
   });
-  return res.json({ dispatchPlanId: planId, authorizedBuyOrderIds, failedBuyOrders: [] });
+  return res.json({ dispatchPlanId: planId, authorizedBuyOrderIds, failedBuyOrders: [], paymentAuthorizationRequired: [] });
 });
 
 router.get("/buy-orders/:id/payment/status", requireAuth("CUSTOMER", "AGENT", "ADMIN"), async (req, res) => {
