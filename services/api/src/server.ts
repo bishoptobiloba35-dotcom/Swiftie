@@ -27,6 +27,7 @@ import { processRecurringDispatches } from "./recurringDispatchWorker.js";
 import { getActivePricingConfig } from "./pricing.js";
 import { reconcileProcessingBuyOrderSettlements } from "./buyOrderSettlementWorker.js";
 import { reconcileProcessingDropOffCommissions } from "./dropOffCommissionWorker.js";
+import { reconcileCancelledMarketplacePayments } from "./marketplacePaymentWorker.js";
 
 const app = express();
 
@@ -2392,10 +2393,14 @@ async function startServer() {
     const payoutReconciliationWorker = setInterval(() => {
       void reconcileProcessingPaystackPayouts().catch(() => {});
     }, 60_000);
+    const marketplacePaymentReconciliationWorker = setInterval(() => {
+      void reconcileCancelledMarketplacePayments().catch(() => {});
+    }, 30_000);
     supportAiWorker.unref();
     notificationWorker.unref();
     notificationReceiptWorker.unref();
     payoutReconciliationWorker.unref();
+    marketplacePaymentReconciliationWorker.unref();
     dropOffCommissionReconciliationWorker.unref();
     buyOrderSettlementReconciliationWorker.unref();
     recurringDispatchWorker.unref();
