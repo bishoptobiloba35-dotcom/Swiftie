@@ -104,7 +104,7 @@ async function executeAutonomousDispatchPlan(planId: string): Promise<void> {
     }
     const updated = await client.query("UPDATE business_dispatch_plans SET status='EXECUTED',executed_at=now(),updated_at=now() WHERE id=$1 AND status='PREPARED' AND approval_required=false RETURNING id",[locked.id]);
     if (!updated.rows[0]) { await client.query("ROLLBACK"); return; }
-    if (lockedDeliveries.length) {
+    if (linkedDeliveryIds.length) {
       await client.query(
         "INSERT INTO delivery_events (delivery_id,event_type,actor_user_id,metadata) SELECT unnest($1::uuid[]),'BUSINESS_DISPATCH_RELEASED',$2,$3::jsonb",
         [linkedDeliveryIds,locked.created_by_user_id,JSON.stringify({dispatchPlanId:locked.id,businessId:locked.business_id,source:"AUTONOMOUS_RECURRING_DISPATCH"})]
