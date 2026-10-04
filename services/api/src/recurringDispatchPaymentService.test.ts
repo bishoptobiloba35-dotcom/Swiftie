@@ -15,3 +15,20 @@ test("recurring references are deterministic by plan, order and attempt", () => 
   assert.notEqual(first, retry);
   assert.equal(retry, "sd-recurring-planid-orderid-r2");
 });
+
+test("successful Paystack response requires exact amount and currency", async () => {
+  const { evaluateRecurringChargeResponse } = await import("./recurringDispatchPaymentService.js");
+  assert.deepEqual(evaluateRecurringChargeResponse(true, { status: true, data: { status: "success", amount: 150000, currency: "NGN", reference: "pay_ref" } }, "fallback", 150000, "ngn"), { kind: "SUCCESS", providerReference: "pay_ref" });
+  assert.equal(evaluateRecurringChargeResponse(true, { status: true, data: { status: "success", amount: 149999, currency: "NGN" } }, "fallback", 150000, "NGN").kind, "TERMINAL_FAILURE");
+});
+
+test("authorization challenge is waiting and preserves recovery data", async () => {
+  const { evaluateRecurringChargeResponse } = await import("./recurringDispatchPaymentService.js");
+  assert.deepEqual(evaluateRecurringChargeResponse(true, { status: true, data: { status: "pending", paused: true, authorization_url: "https://example.test/auth", access_code: "access" } }, "fallback", 100, "NGN"), { kind: "CHALLENGE", authorizationUrl: "https://example.test/auth", accessCode: "access" });
+});
+
+test("terminal and pending provider states are classified without charging decisions", async () => {
+  const { evaluateRecurringChargeResponse } = await import("./recurringDispatchPaymentService.js");
+  assert.deepEqual(evaluateRecurringChargeResponse(true, { status: false, data: { status: "failed" } }, "fallback", 100, "NGN"), { kind: "TERMINAL_FAILURE", providerStatus: "failed" });
+  assert.deepEqual(evaluateRecurringChargeResponse(true, { status: true, data: { status: "pending" } }, "fallback", 100, "NGN"), { kind: "WAITING", providerStatus: "pending" });
+});
