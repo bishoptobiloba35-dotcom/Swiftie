@@ -226,7 +226,11 @@ export async function authorizeRecurringBuyOrder(input: {
         reference = recurringPaymentReference(input.planId, input.orderId, 1);
       }
 
-      if (row.payment_status === "PENDING" && row.provider_reference) {
+      if (row.payment_status === "PENDING") {
+        if (!row.provider_reference || !row.payment_id) {
+          await client.query("ROLLBACK");
+          return { status: "FAILED", orderId: input.orderId, reason: "PENDING_PAYMENT_RECORD_INVALID" };
+        }
         await client.query("COMMIT");
         const verified = await verify(String(row.provider_reference), secret);
         if (!verified) return { status: "WAITING", orderId: input.orderId, reason: "PAYMENT_VERIFICATION_UNAVAILABLE" };
