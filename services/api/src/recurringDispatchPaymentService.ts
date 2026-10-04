@@ -32,6 +32,38 @@ async function verify(reference: string, secret: string): Promise<any | null> {
   return await response.json().catch(() => null) as any;
 }
 
+async function ensureBusinessSpendReservation(orderId: string): Promise<void> {
+  if (!pool) return;
+  await pool.query(
+    `INSERT INTO business_spend_ledger
+      (business_id, user_id, reference_type, reference_id, amount_minor, currency)
+     SELECT bo.business_id, bo.customer_user_id, 'BUY_ORDER_RESERVATION', bo.id,
+            bo.purchase_budget_minor, bo.currency
+       FROM buy_orders bo
+      WHERE bo.id=$1
+        AND bo.business_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+            FROM business_spend_ledger r
+           WHERE r.business_id=bo.business_id
+             AND r.reference_id=bo.id
+             AND r.reference_type='BUY_ORDER_RESERVATION'
+        )
+        AND (
+          SELECT COALESCE(SUM(
+            CASE WHEN ledger.reference_type='BUY_ORDER_RESERVATION' THEN ledger.amount_minor
+                 WHEN ledger.reference_type='BUY_ORDER_RESERVATION_RELEASE' THEN ledger.amount_minor
+                 ELSE 0 END
+          ),0)
+            FROM business_spend_ledger ledger
+           WHERE ledger.business_id=bo.business_id
+             AND ledger.reference_id=bo.id
+             AND ledger.reference_type IN ('BUY_ORDER_RESERVATION','BUY_ORDER_RESERVATION_RELEASE')
+        ) <= 0`,
+    [orderId]
+  );
+}
+
 async function releaseBusinessSpendReservation(orderId: string): Promise<void> {
   if (!pool) return;
   await pool.query(
@@ -203,6 +235,8 @@ export async function authorizeRecurringBuyOrder(input: {
         attempt = Math.max(attempt, nextAttempt(String(row.provider_reference), input.planId, input.orderId) - 1);
         continue;
       }
+
+      await ensureBusinessSpendReservation(input.orderId);
 
       const payment = await client.query(
         `INSERT INTO buy_order_payments
