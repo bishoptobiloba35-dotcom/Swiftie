@@ -24,7 +24,22 @@ async function executeAutonomousDispatchPlan(planId: string): Promise<void> {
   }
   const blocked = results.find((result) => result.status !== "HELD");
   if (blocked) {
-    await pool.query("UPDATE business_dispatch_plans SET plan=jsonb_set(plan,'{autonomousPaymentResults}',$2::jsonb,true),updated_at=now() WHERE id=$1 AND status='PREPARED'",[plan.id,JSON.stringify(results)]);
+    const retryCount = Math.max(0, Number(payload.autonomousRetryCount ?? 0)) + 1;
+    const statusDelayMinutes = blocked.status === "FAILED"
+      ? Math.min(60 * (2 ** Math.min(retryCount - 1, 5)), 24 * 60)
+      : blocked.status === "MISSING_AUTHORIZATION"
+        ? 15
+        : 5;
+    const retryAt = new Date(Date.now() + statusDelayMinutes * 60_000).toISOString();
+    const recovery = {
+      autonomousPaymentResults: results,
+      autonomousRetryCount: retryCount,
+      autonomousRetryAt: retryAt
+    };
+    await pool.query(
+      "UPDATE business_dispatch_plans SET plan=plan || $2::jsonb,updated_at=now() WHERE id=$1 AND status='PREPARED'",
+      [plan.id, JSON.stringify(recovery)]
+    );
     await pool.query(
       "INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,(SELECT ai_plan FROM users WHERE id=$1),'ACTION','RECURRING_DISPATCH_AUTONOMOUS_PAYMENT',false,$2,$3::jsonb)",
       [plan.created_by_user_id, blocked.reason, JSON.stringify({dispatchPlanId:plan.id,results})]
@@ -270,6 +285,10 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
          FROM business_dispatch_plans
         WHERE status='PREPARED'
           AND approval_required=false
+          AND (
+            plan->>'autonomousRetryAt' IS NULL
+            OR (plan->>'autonomousRetryAt')::timestamptz <= now()
+          )
         ORDER BY created_at ASC
         LIMIT $1`,
       [Math.min(Math.max(limit * 2, 10), 50)]
