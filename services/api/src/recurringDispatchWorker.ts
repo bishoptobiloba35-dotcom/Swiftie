@@ -87,7 +87,20 @@ async function executeAutonomousDispatchPlan(planId: string): Promise<void> {
         return;
       }
       if (payments.rows.some((row: any) => !row.delivery_id)) {
-        await client.query("ROLLBACK");
+        const retryAt = new Date(Date.now() + 5 * 60_000).toISOString();
+        await client.query(
+          "UPDATE business_dispatch_plans SET plan=plan || $2::jsonb,updated_at=now() WHERE id=$1 AND status='PREPARED'",
+          [locked.id, JSON.stringify({
+            autonomousRecoveryState: "WAITING_FOR_DELIVERY",
+            autonomousRecoveryReason: "BUY_AND_DELIVER_PAYMENT_HELD_BEFORE_DELIVERY_CREATION",
+            autonomousRetryAt: retryAt
+          })]
+        );
+        await client.query(
+          "INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,(SELECT ai_plan FROM users WHERE id=$1),'ACTION','RECURRING_DISPATCH_AUTONOMOUS_RECOVERY',false,'Buy & Deliver payment is held but delivery has not been created',$2::jsonb)",
+          [locked.created_by_user_id, JSON.stringify({dispatchPlanId: locked.id, buyOrderIds: lockedBuyOrderIds, retryAt})]
+        );
+        await client.query("COMMIT");
         return;
       }
       linkedDeliveryIds = [...new Set([...linkedDeliveryIds, ...payments.rows.map((row: any) => String(row.delivery_id))])];
