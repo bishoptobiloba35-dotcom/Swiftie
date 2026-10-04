@@ -1424,13 +1424,34 @@ export async function confirmReceiverDelivery(id: string, receiverPhone: string,
 
 export async function completeDelivery(id: string, driverId: string): Promise<StoredDelivery | null> {
   if (!pool) return null;
+  // A driver must never be able to bypass receiver confirmation, PIN checks,
+  // payment settlement, escrow release, and payout eligibility by calling the
+  // legacy completion helper directly.
   const result = await pool.query(
-    `UPDATE deliveries SET status='DELIVERED', updated_at=now()
-     WHERE id=$1 AND driver_id=$2 AND status IN ('IN_TRANSIT','ARRIVED')
-     RETURNING *`,
+    `SELECT d.*, p.status AS payment_status, p.collection_mode
+       FROM deliveries d
+       LEFT JOIN payments p ON p.delivery_id=d.id
+      WHERE d.id=$1 AND d.driver_id=$2`,
     [id, driverId]
   );
-  return result.rows[0] ? rowToDelivery(result.rows[0]) : null;
+  const row = result.rows[0];
+  if (!row || row.collection_mode !== "RECEIVER_ON_DELIVERY" || row.payment_status !== "RELEASED" || row.receiver_confirmed_at == null) {
+    return null;
+  }
+  const updated = await pool.query(
+    `UPDATE deliveries
+        SET status='DELIVERED', updated_at=now()
+      WHERE id=$1 AND driver_id=$2 AND status='ARRIVED' AND receiver_confirmed_at IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM payments p
+           WHERE p.delivery_id=deliveries.id
+             AND p.collection_mode='RECEIVER_ON_DELIVERY'
+             AND p.status='RELEASED'
+        )
+      RETURNING *`,
+    [id, driverId]
+  );
+  return updated.rows[0] ? rowToDelivery(updated.rows[0]) : null;
 }
 
 export async function recordPersistentLocation(event: {
