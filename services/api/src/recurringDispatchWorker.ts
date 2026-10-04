@@ -144,6 +144,12 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
       );
       let projectedSpend = Number(existingSpend.rows[0]?.current_spend ?? 0);
 
+      const existingMemberSpend = await client.query(
+        "SELECT COALESCE(SUM(amount_minor),0) AS current_spend FROM business_spend_ledger WHERE business_id=$1 AND user_id=$2 AND created_at >= date_trunc('month', now())",
+        [rule.business_id, rule.created_by_user_id]
+      );
+      let projectedMemberSpend = Number(existingMemberSpend.rows[0]?.current_spend ?? 0);
+
       const deliveries = deliveryIds.length
         ? await client.query(
             `SELECT id, quote_total_minor, status
@@ -180,7 +186,7 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
           skippedBuyOrderTemplates.push({ index, reason: "PER_ORDER_LIMIT_EXCEEDED" });
           continue;
         }
-        if (Number(creatorRow.spend_limit_minor) > 0 && budget > Number(creatorRow.spend_limit_minor)) {
+        if (Number(creatorRow.spend_limit_minor) > 0 && projectedMemberSpend + budget > Number(creatorRow.spend_limit_minor)) {
           skippedBuyOrderTemplates.push({ index, reason: "MEMBER_SPEND_LIMIT_EXCEEDED" });
           continue;
         }
@@ -208,6 +214,7 @@ export async function processRecurringDispatches(limit = 10): Promise<number> {
           createdBuyOrderIds.push(created.rows[0].id);
           createdBuyOrderBudgetMinor += budget;
           projectedSpend += budget;
+          projectedMemberSpend += budget;
           await client.query(
             `INSERT INTO business_spend_ledger
               (business_id, user_id, reference_type, reference_id, amount_minor, currency)
