@@ -226,8 +226,8 @@ router.post("/marketplace/orders/:id/cancel", requireAuth(), async (req, res) =>
   try {
     await client.query("BEGIN");
     const orderResult = await client.query(
-      `SELECT mo.id,mo.status,mo.quantity,mo.listing_id,mo.buyer_user_id,l.seller_user_id,l.stock_quantity,
-              mop.status AS payment_status
+      `SELECT mo.id,mo.status,mo.quantity,mo.listing_id,mo.buyer_user_id,mo.delivery_id,l.seller_user_id,l.stock_quantity,
+              mop.status AS payment_status,mop.provider_reference
          FROM marketplace_orders mo
          JOIN marketplace_listings l ON l.id=mo.listing_id
          LEFT JOIN marketplace_order_payments mop ON mop.marketplace_order_id=mo.id
@@ -237,8 +237,18 @@ router.post("/marketplace/orders/:id/cancel", requireAuth(), async (req, res) =>
     );
     const order = orderResult.rows[0];
     if (!order) { await client.query("ROLLBACK"); return res.status(404).json({ error: "Order not found" }); }
-    if (!["PENDING_PAYMENT","PROCESSING"].includes(order.status)) { await client.query("ROLLBACK"); return res.status(409).json({ error: "Order cannot be cancelled in its current state" }); }
-    if (order.payment_status === "AUTHORIZED") { await client.query("ROLLBACK"); return res.status(409).json({ error: "Paid orders must be refunded before cancellation" }); }
+    if (order.status !== "PENDING_PAYMENT") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Only unpaid marketplace orders can be cancelled here; active delivery orders require delivery cancellation/refund handling" });
+    }
+    if (order.delivery_id) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Marketplace order already has an active delivery and cannot be cancelled through the unpaid-order flow" });
+    }
+    if (order.payment_status === "AUTHORIZED" || order.payment_status === "REFUNDED") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Paid marketplace orders must use the refund workflow before cancellation" });
+    }
 
     await client.query(
       "UPDATE marketplace_orders SET status='CANCELLED', fulfillment_status='CANCELLED', updated_at=now() WHERE id=$1",
