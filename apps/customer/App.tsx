@@ -834,11 +834,11 @@ export default function App() {
           <View key={listing.id} style={styles.notification}>
             <Text style={styles.notificationTitle}>{listing.title}</Text>
             <Text>₦{(Number(listing.price_minor) / 100).toLocaleString()} · Stock {listing.stock_quantity} · {listing.order_count ?? 0} orders</Text>
-            <Text style={styles.muted}>{listing.active ? "Visible in SwiftDrop Shop" : "Hidden from new buyers"} · {String(listing.delivery_mode).replaceAll("_"," ")}</Text>
+            <Text style={styles.muted}>{listing.is_active ? "Visible in SwiftDrop Shop" : "Hidden from new buyers"} · {String(listing.delivery_mode).replaceAll("_"," ")}</Text>
             <View style={styles.row}>
               <Pressable style={styles.secondary} onPress={() => void updateMarketplaceListingState(listing, { stockQuantity: Math.max(0, Number(listing.stock_quantity) - 1) })}><Text style={styles.secondaryText}>− Stock</Text></Pressable>
               <Pressable style={styles.secondary} onPress={() => void updateMarketplaceListingState(listing, { stockQuantity: Number(listing.stock_quantity) + 1 })}><Text style={styles.secondaryText}>+ Stock</Text></Pressable>
-              <Pressable style={styles.secondary} onPress={() => void updateMarketplaceListingState(listing, { active: !listing.active })}><Text style={styles.secondaryText}>{listing.active ? "Hide" : "Publish"}</Text></Pressable>
+              <Pressable style={styles.secondary} onPress={() => void updateMarketplaceListingState(listing, { isActive: !listing.is_active })}><Text style={styles.secondaryText}>{listing.is_active ? "Hide" : "Publish"}</Text></Pressable>
             </View>
           </View>
         )}
