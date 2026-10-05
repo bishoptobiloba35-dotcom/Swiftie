@@ -1291,13 +1291,34 @@ export async function hasRequiredDropoffProofs(deliveryId: string, requirements:
 
 export async function savePickupPhoto(id: string, driverId: string, photoUrl: string): Promise<StoredDelivery | null> {
   if (!pool) return null;
-  const result = await pool.query(
-    `UPDATE deliveries SET pickup_photo_url=$3, status='PICKED_UP', updated_at=now()
-     WHERE id=$1 AND driver_id=$2 AND status='DRIVER_AT_PICKUP'
-     RETURNING *`,
-    [id, driverId, photoUrl]
-  );
-  return result.rows[0] ? rowToDelivery(result.rows[0]) : null;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const gate = (await client.query(
+      `SELECT mo.fulfillment_status
+         FROM marketplace_orders mo
+        WHERE mo.delivery_id=$1
+        FOR UPDATE`,
+      [id]
+    )).rows[0];
+    if (gate && gate.fulfillment_status !== "READY") {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    const result = await client.query(
+      `UPDATE deliveries SET pickup_photo_url=$3, status='PICKED_UP', updated_at=now()
+       WHERE id=$1 AND driver_id=$2 AND status='DRIVER_AT_PICKUP'
+       RETURNING *`,
+      [id, driverId, photoUrl]
+    );
+    await client.query("COMMIT");
+    return result.rows[0] ? rowToDelivery(result.rows[0]) : null;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function verifyReceiverPin(id: string, pin: string): Promise<boolean> {
