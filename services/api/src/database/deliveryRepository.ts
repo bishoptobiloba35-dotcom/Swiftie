@@ -1423,8 +1423,7 @@ export async function confirmReceiverDelivery(id: string, receiverPhone: string,
       WHERE d.id=$1 AND d.receiver_phone=$2
         AND d.receiver_confirmed_at IS NOT NULL
         AND p.status='RELEASED'
-        AND p.collection_mode IN ('SENDER_ESCROW','RECEIVER_ON_DELIVERY')
-        AND verify_pin_placeholder IS NOT NULL`,
+        AND p.collection_mode IN ('SENDER_ESCROW','RECEIVER_ON_DELIVERY')`,
     [id, receiverPhone]
   );
   const row = result.rows[0];
