@@ -14,10 +14,13 @@ export async function reconcileCancelledMarketplacePayments(): Promise<void> {
               mo.status AS order_status
          FROM marketplace_order_payments mop
          JOIN marketplace_orders mo ON mo.id=mop.marketplace_order_id
-        WHERE mop.status='PENDING'
-          AND mo.status='CANCELLED'
+        WHERE mo.status='CANCELLED'
           AND mop.provider_reference IS NOT NULL
           AND mop.updated_at < now() - interval '5 seconds'
+          AND (
+            mop.status='PENDING'
+            OR (mop.status='AUTHORIZED' AND mop.refund_status IN ('RETRY_REQUIRED','FAILED'))
+          )
         ORDER BY mop.updated_at ASC
         LIMIT 25`
     );
@@ -53,6 +56,17 @@ export async function reconcileCancelledMarketplacePayments(): Promise<void> {
           [payment.id]
         );
         if (!claimed.rows[0]) continue;
+
+        const refundClaim = await pool.query(
+          `UPDATE marketplace_order_payments
+              SET refund_status='PROCESSING',refund_updated_at=now(),updated_at=now()
+            WHERE id=$1
+              AND status='AUTHORIZED'
+              AND COALESCE(refund_status,'') IN ('RETRY_REQUIRED','FAILED')
+            RETURNING id`,
+          [payment.id]
+        );
+        if (!refundClaim.rows[0] && payment.status !== "PENDING") continue;
 
         const refundResponse = await fetch("https://api.paystack.co/refund", {
           method: "POST",
