@@ -126,9 +126,24 @@ router.post("/agent/buy-orders/:id/replacement", requireAuth("AGENT"), async (re
       if (evidenceKey) await deletePrivateObject(evidenceKey).catch(() => undefined);
       return res.status(409).json({ error: "Errand item can no longer be changed" });
     }
-    const automatic = locked.replacement_policy === "BEST_MATCH"
+    const authorizedMax = Number(locked.max_authorized_minor ?? order.purchase_budget_minor);
+    const maxDelta = Number(order.max_price_delta_minor ?? 0);
+    const requestedPrice = locked.requested_price_minor == null ? null : Number(locked.requested_price_minor);
+    const withinPriceRules = parsed.data.proposedPriceMinor <= authorizedMax
       && parsed.data.proposedPriceMinor <= Number(order.purchase_budget_minor)
-      && parsed.data.proposedPriceMinor <= Number(locked.max_authorized_minor ?? order.purchase_budget_minor);
+      && (requestedPrice == null || parsed.data.proposedPriceMinor <= requestedPrice + maxDelta);
+    const automatic = locked.replacement_policy === "BEST_MATCH" && withinPriceRules;
+
+    if (locked.replacement_policy === "EXACT_ONLY") {
+      if (evidenceKey) await deletePrivateObject(evidenceKey).catch(() => undefined);
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Exact-only errand items cannot be substituted", code: "EXACT_ITEM_UNAVAILABLE" });
+    }
+    if (locked.replacement_policy === "REFUND_IF_UNAVAILABLE") {
+      if (evidenceKey) await deletePrivateObject(evidenceKey).catch(() => undefined);
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Customer selected refund if unavailable; do not substitute this item", code: "REFUND_IF_UNAVAILABLE" });
+    }
 
     const status = automatic ? "APPROVED" : "PENDING";
     const inserted = await client.query(
@@ -170,7 +185,8 @@ router.post("/buy-orders/:id/replacement/:replacementId/decision", requireAuth("
   try {
     await client.query("BEGIN");
     const result = (await client.query(
-      `SELECT r.*, i.buy_order_id, i.replacement_policy, i.status AS item_status, bo.customer_user_id, bo.purchase_budget_minor
+      `SELECT r.*, i.buy_order_id, i.replacement_policy, i.status AS item_status, i.requested_price_minor,
+             bo.customer_user_id, bo.purchase_budget_minor, bo.max_price_delta_minor
          FROM buy_order_replacement_options r
          JOIN buy_order_items i ON i.id=r.item_id
          JOIN buy_orders bo ON bo.id=i.buy_order_id
@@ -187,9 +203,13 @@ router.post("/buy-orders/:id/replacement/:replacementId/decision", requireAuth("
       return res.status(409).json({ error: "Replacement request is no longer pending" });
     }
     if (decision.data.decision === "APPROVE") {
-      if (Number(result.proposed_price_minor) > Number(result.purchase_budget_minor)) {
+      const approvedMax = Number(result.purchase_budget_minor);
+      const approvedDelta = Number(result.max_price_delta_minor ?? 0);
+      const requestedPrice = result.requested_price_minor == null ? null : Number(result.requested_price_minor);
+      if (Number(result.proposed_price_minor) > approvedMax ||
+          (requestedPrice != null && Number(result.proposed_price_minor) > requestedPrice + approvedDelta)) {
         await client.query("ROLLBACK");
-        return res.status(409).json({ error: "Approved replacement exceeds the errand spending ceiling", code: "SPENDING_CEILING_EXCEEDED" });
+        return res.status(409).json({ error: "Approved replacement exceeds the errand price authorization", code: "PRICE_AUTHORIZATION_EXCEEDED" });
       }
       await client.query("UPDATE buy_order_replacement_options SET status='APPROVED',approved_by_user_id=$2,approved_at=now(),updated_at=now() WHERE id=$1",[result.id,identity(req)]);
       await client.query("UPDATE buy_order_items SET status='APPROVED',updated_at=now() WHERE id=$1",[result.item_id]);
@@ -210,7 +230,8 @@ router.post("/buy-orders/:id/replacement/:replacementId/decision", requireAuth("
     client.release();
   }
 });
-\nrouter.get("/agent/buy-orders", requireAuth("AGENT"), async (req, res) => {
+
+router.get("/agent/buy-orders", requireAuth("AGENT"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const agent = await getAgent(identity(req));
   if (!agent) return res.status(404).json({ error: "Agent profile not found" });
