@@ -745,14 +745,42 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
           return res.status(200).json({received:true});
         }
         if(refundStatus==="processed"){
-          await pool!.query(
-            "UPDATE buy_order_payments SET refund_status='PROCESSED',refund_reference=COALESCE(refund_reference,$2),refund_amount_minor=$3,total_refunded_minor=total_refunded_minor+$3,status=CASE WHEN total_refunded_minor+$3>=amount_minor THEN 'REFUNDED' ELSE status END,updated_at=now() WHERE id=$1",
-            [buyPayment.id,refundReference||null,amountMinor]
+          if (!refundReference) {
+            return res.status(200).json({ received: true, reconciliationRequired: true });
+          }
+          const paymentUpdate = await pool!.query(
+            `UPDATE buy_order_payments
+                SET refund_status='PROCESSED',
+                    refund_reference=$2,
+                    refund_amount_minor=$3,
+                    total_refunded_minor=CASE
+                      WHEN refund_status='PROCESSED' AND refund_reference=$2 THEN total_refunded_minor
+                      ELSE LEAST(amount_minor,total_refunded_minor+$3)
+                    END,
+                    status=CASE
+                      WHEN (
+                        CASE
+                          WHEN refund_status='PROCESSED' AND refund_reference=$2 THEN total_refunded_minor
+                          ELSE LEAST(amount_minor,total_refunded_minor+$3)
+                        END
+                      )>=amount_minor THEN 'REFUNDED' ELSE status
+                    END,
+                    updated_at=now()
+              WHERE id=$1
+              RETURNING buy_order_id,total_refunded_minor,amount_minor`,
+            [buyPayment.id,refundReference,amountMinor]
           );
-          await pool!.query(
-            "UPDATE buy_orders SET refunded_minor=refunded_minor+$2,payment_status=CASE WHEN payment_status<>'REFUNDED' AND $2>=COALESCE((SELECT amount_minor FROM buy_order_payments WHERE id=$1),0) THEN 'REFUNDED' ELSE payment_status END,updated_at=now() WHERE id=$3",
-            [buyPayment.id,amountMinor,buyPayment.buy_order_id]
-          );
+          const updatedPayment=paymentUpdate.rows[0];
+          if (updatedPayment) {
+            await pool!.query(
+              `UPDATE buy_orders
+                  SET refunded_minor=$2,
+                      payment_status=CASE WHEN $2>=COALESCE($3,0) THEN 'REFUNDED' ELSE payment_status END,
+                      updated_at=now()
+                WHERE id=$1`,
+              [updatedPayment.buy_order_id,Number(updatedPayment.total_refunded_minor),Number(updatedPayment.amount_minor)]
+            );
+          }
         }else if(refundStatus==="failed"){
           await pool!.query("UPDATE buy_order_payments SET refund_status='FAILED',updated_at=now() WHERE id=$1",[buyPayment.id]);
         }else{
