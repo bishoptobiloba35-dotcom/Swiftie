@@ -7,7 +7,7 @@ export async function reconcileProcessingDropOffCommissions(): Promise<void> {
 
   const result = await pool.query(`SELECT id,parcel_id,amount_minor,currency,provider_reference
     FROM drop_off_commission_ledger
-    WHERE status='PROCESSING' AND provider_reference IS NOT NULL
+    WHERE status='PROCESSING' AND provider_reference IS NOT NULL AND provider_status IS DISTINCT FROM 'amount_mismatch'
     ORDER BY updated_at ASC
     LIMIT 25`);
 
@@ -41,7 +41,7 @@ export async function reconcileProcessingDropOffCommissions(): Promise<void> {
         if (providerStatus === "success") {
           if (providerAmount !== Number(current.amount_minor) || providerCurrency !== String(current.currency)) {
             const updated = await client.query(
-              "UPDATE drop_off_commission_ledger SET status='AVAILABLE',provider_reference=$2,provider_status='amount_mismatch',updated_at=now() WHERE id=$1 AND status='PROCESSING' RETURNING id",
+              "UPDATE drop_off_commission_ledger SET status='PROCESSING',provider_reference=$2,provider_status='amount_mismatch',updated_at=now() WHERE id=$1 AND status='PROCESSING' RETURNING id",
               [current.id, providerReference]
             );
             if (updated.rows[0] && current.parcel_id) {
