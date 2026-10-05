@@ -108,6 +108,57 @@ router.post("/errands", requireAuth("CUSTOMER"), async (req, res) => {
   }
 });
 
+router.get("/errands/:id", requireAuth("CUSTOMER", "ADMIN", "AGENT"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const id = String(req.params.id ?? "").trim();
+  const order = (await pool.query(
+    `SELECT bo.*,
+            ap.id AS agent_profile_id, u.full_name AS agent_name, u.phone AS agent_phone,
+            d.id AS linked_delivery_id, d.tracking_code, d.status AS delivery_status,
+            d.driver_id AS delivery_driver_id, d.pickup_photo_url, d.exception_status,
+            d.next_delivery_at, d.receiver_confirmed_at
+       FROM buy_orders bo
+       LEFT JOIN agent_profiles ap ON ap.id=bo.agent_id
+       LEFT JOIN users u ON u.id=ap.user_id
+       LEFT JOIN deliveries d ON d.id=bo.delivery_id
+      WHERE bo.id=$1`,
+    [id]
+  )).rows[0];
+  if (!order) return res.status(404).json({ error: "Errand not found" });
+  const role = (req as any).user?.role;
+  if (role === "CUSTOMER" && order.customer_user_id !== identity(req)) return res.status(403).json({ error: "Not authorized for this errand" });
+  if (role === "AGENT" && (!order.agent_profile_id || order.agent_profile_id !== (await pool.query("SELECT id FROM agent_profiles WHERE user_id=$1",[identity(req)])).rows[0]?.id)) {
+    return res.status(403).json({ error: "Not authorized for this errand" });
+  }
+  const [items, events, payment] = await Promise.all([
+    pool.query(`SELECT i.id,i.requested_description,i.quantity,i.max_authorized_minor,i.requested_price_minor,i.replacement_policy,i.status,
+       COALESCE((SELECT json_agg(json_build_object(
+         'id',r.id,'description',r.proposed_description,'quantity',r.proposed_quantity,'priceMinor',r.proposed_price_minor,
+         'currency',r.currency,'shopperNote',r.shopper_note,'status',r.status,'createdAt',r.created_at
+       ) ORDER BY r.created_at DESC) FROM buy_order_replacement_options r WHERE r.item_id=i.id),'[]'::json) replacements
+       FROM buy_order_items i WHERE i.buy_order_id=$1 ORDER BY i.created_at ASC`, [id]),
+    pool.query(`SELECT id,event_type AS "eventType",metadata,created_at AS "createdAt"
+       FROM buy_order_events WHERE buy_order_id=$1 ORDER BY created_at ASC LIMIT 200`, [id]),
+    pool.query(`SELECT id,status,payment_status,amount_minor,currency,provider_reference,refund_status,refund_amount_minor,refund_reference
+       FROM buy_order_payments WHERE buy_order_id=$1 ORDER BY created_at DESC LIMIT 1`, [id])
+  ]);
+  res.json({
+    errand: {
+      ...order,
+      agent: order.agent_profile_id ? { id: order.agent_profile_id, name: order.agent_name, phone: order.agent_phone } : null,
+      delivery: order.linked_delivery_id ? {
+        id: order.linked_delivery_id, trackingCode: order.tracking_code, status: order.delivery_status,
+        driverId: order.delivery_driver_id, pickupPhotoUrl: order.pickup_photo_url,
+        exceptionStatus: order.exception_status, nextDeliveryAt: order.next_delivery_at,
+        receiverConfirmedAt: order.receiver_confirmed_at
+      } : null
+    },
+    items: items.rows,
+    events: events.rows,
+    payment: payment.rows[0] ?? null
+  });
+});
+
 router.get("/errands/:id/replacements", requireAuth("CUSTOMER", "ADMIN", "AGENT"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const id = String(req.params.id ?? "").trim();
