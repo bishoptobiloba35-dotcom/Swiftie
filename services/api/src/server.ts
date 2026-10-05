@@ -758,6 +758,16 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
         }else{
           await pool!.query("UPDATE buy_order_payments SET refund_status=$2,updated_at=now() WHERE id=$1",[buyPayment.id,refundStatus.toUpperCase()]);
         }
+        if (refundReference) {
+          await pool!.query(
+            `UPDATE buy_order_item_refunds
+                SET status=$2,
+                    failure_reason=CASE WHEN $2='FAILED' THEN COALESCE(failure_reason,'Paystack reported refund failure') ELSE NULL END,
+                    updated_at=now()
+              WHERE provider_ref=$1`,
+            [refundReference, refundStatus === "processed" ? "PROCESSED" : refundStatus === "failed" ? "FAILED" : refundStatus.toUpperCase()]
+          );
+        }
         await pool!.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,$3,$4::jsonb)",[buyPayment.buy_order_id,buyPayment.customer_user_id,"REFUND_"+refundStatus.toUpperCase(),JSON.stringify({transactionReference,refundReference,amountMinor})]);
         return res.status(200).json({received:true});
       }
