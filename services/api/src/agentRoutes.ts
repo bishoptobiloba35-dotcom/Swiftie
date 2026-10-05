@@ -88,7 +88,8 @@ router.post("/agents/:id/status", requireAuth("ADMIN"), async (req, res) => {
     [orderId(req), parsed.data.status]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Agent profile not found" });
-  res.json({ agent: result.rows[0] });
+  const agent = result.rows[0];
+  res.json({ agent: { id: agent.id, userId: agent.user_id, status: agent.status, createdAt: agent.created_at, updatedAt: agent.updated_at } });
 });
 
 router.get("/agent/settlement-account", requireAuth("AGENT"), async (req,res)=>{
