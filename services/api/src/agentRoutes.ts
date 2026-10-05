@@ -318,7 +318,7 @@ router.post("/buy-orders/:id/replacement/:replacementId/decision", requireAuth("
           "UPDATE buy_order_payments SET refund_status=$2,refund_reference=COALESCE(refund_reference,$3),refund_amount_minor=GREATEST(refund_amount_minor,$4),updated_at=now() WHERE id=$1",
           [payment.id, providerStatus, providerRef, refundAmountMinor]
         );
-        return res.status(202).json({ ok: true, decision: "REFUND", refundStatus: providerStatus, refundId: refundRow.id, providerReference: providerRef });
+        return res.status(202).json({ ok: true, decision: "REFUND", refundStatus: providerStatus, refundId: refundRow.id });
       } catch (error) {
         await pool.query("UPDATE buy_order_item_refunds SET status='FAILED',failure_reason=$2,updated_at=now() WHERE id=$1",[refundRow.id,String(error instanceof Error ? error.message : "Paystack refund request failed").slice(0,500)]);
         return res.status(502).json({ error: "Refund initiation failed", code: "REFUND_INITIATION_FAILED", refundId: refundRow.id });
