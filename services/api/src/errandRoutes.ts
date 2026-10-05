@@ -33,6 +33,17 @@ const errandSchema = z.object({
   destinationAddress: z.string().trim().min(3).max(500),
   destinationLat: z.number().finite().min(-90).max(90),
   destinationLng: z.number().finite().min(-180).max(180)
+}).superRefine((value, ctx) => {
+  for (const [index, item] of value.items.entries()) {
+    const max = item.maxAuthorizedMinor ?? value.spendingCeilingMinor;
+    if (max > value.spendingCeilingMinor) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["items", index, "maxAuthorizedMinor"],
+        message: "Item authorization cannot exceed the errand spending ceiling"
+      });
+    }
+  }
 });
 
 router.post("/errands", requireAuth("CUSTOMER"), async (req, res) => {
