@@ -312,6 +312,17 @@ export class SwiftDropApi {
     return payload.sales ?? [];
   }
 
+  async markMarketplaceOrderReady(orderId: string, preparationMinutes = 0, busyMode = false): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/marketplace/orders/" + encodeURIComponent(orderId) + "/mark-ready", {
+      method: "POST",
+      headers: this.headers(true),
+      body: JSON.stringify({ preparationMinutes, busyMode })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to mark marketplace order ready");
+    return data.order;
+  }
+
   async marketplaceOrders(): Promise<any[]> {
     const response = await fetch(this.baseUrl + "/api/marketplace/orders", { headers: this.headers() });
     const data = await response.json();
