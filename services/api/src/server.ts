@@ -307,7 +307,7 @@ app.get("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) =>
   const driver = await driverForUser(identity(req));
   if (!driver) return res.status(404).json({ error: "Driver profile not found" });
   const account = await getDriverPayoutAccount(driver.id);
-  return res.json({ account: account ? { id: account.id, bankCode: account.bankCode, bankName: account.bankName, accountName: account.accountName, accountLast4: account.accountLast4, currency: account.currency, active: account.active, verifiedAt: account.verifiedAt, createdAt: account.createdAt, updatedAt: account.updatedAt } : null });
+  return res.json({ account: account ? { bankCode: account.bankCode, bankName: account.bankName, accountName: account.accountName, accountLast4: account.accountLast4, currency: account.currency } : null });
 });
 
 app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) => {
@@ -340,7 +340,7 @@ app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) =
     accountName: resolved.data.account_name,
     recipientCode: recipient.data.recipient_code
   });
-  return res.status(201).json({ account: account ? { id: account.id, bankCode: account.bankCode, bankName: account.bankName, accountName: account.accountName, accountLast4: account.accountLast4, currency: account.currency, active: account.active, verifiedAt: account.verifiedAt, createdAt: account.createdAt, updatedAt: account.updatedAt } : null });
+  return res.status(201).json({ account: account ? { bankCode: account.bankCode, bankName: account.bankName, accountName: account.accountName, accountLast4: account.accountLast4, currency: account.currency } : null });
 });
 
 app.get("/api/driver/payouts", requireAuth("DRIVER"), async (req, res) => {
