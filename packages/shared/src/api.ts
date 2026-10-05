@@ -404,6 +404,23 @@ export class SwiftDropApi {
     return response.json() as Promise<ApiDelivery>;
   }
 
+  async createShareableTrackingLink(deliveryId: string): Promise<{ url: string; expiresAt: string }> {
+    const response = await fetch(this.baseUrl + "/api/deliveries/" + encodeURIComponent(deliveryId) + "/share-tracking", {
+      method: "POST",
+      headers: this.headers(true)
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to create shareable tracking link");
+    return data;
+  }
+
+  async publicTrack(token: string): Promise<ApiDelivery> {
+    const response = await fetch(this.baseUrl + "/api/public/track/" + encodeURIComponent(token));
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Tracking link not found or expired");
+    return data;
+  }
+
   async createTrackingSession(trackingCode: string, receiverPhone: string): Promise<{ deliveryId: string; trackingToken: string }> {
     const response = await fetch(this.baseUrl + "/api/track/session", {
       method: "POST",
