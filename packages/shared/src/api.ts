@@ -383,6 +383,17 @@ export class SwiftDropApi {
     return data;
   }
 
+  async initializeErrandPayment(errandId: string): Promise<{ payment: any; authorizationUrl?: string; accessCode?: string }> {
+    const response = await fetch(this.baseUrl + "/api/buy-orders/" + encodeURIComponent(errandId) + "/payment/initialize", {
+      method: "POST",
+      headers: this.headers(true),
+      body: JSON.stringify({})
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to initialize errand payment");
+    return data;
+  }
+
   async errands(): Promise<any[]> {
     const response = await fetch(this.baseUrl + "/api/errands", { headers: this.headers() });
     const data = await response.json();
