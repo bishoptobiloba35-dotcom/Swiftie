@@ -1054,7 +1054,21 @@ router.get("/buy-orders/:id/payment/status", requireAuth("CUSTOMER", "AGENT", "A
   const row = result.rows[0];
   const role = (req as any).user?.role;
   if (role === "CUSTOMER" && row.customer_user_id !== identity(req)) return res.status(403).json({ error: "Not authorized" });
-  return res.json({ payment: row });
+  const payment = {
+    id: row.id,
+    buyOrderId: row.buy_order_id,
+    provider: row.provider,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    status: row.status,
+    orderPaymentStatus: row.order_payment_status,
+    refundStatus: row.refund_status ?? null,
+    refundAmountMinor: Number(row.refund_amount_minor ?? 0),
+    totalRefundedMinor: Number(row.total_refunded_minor ?? 0),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+  return res.json({ payment });
 });
 
 router.get("/buy-orders", requireAuth("CUSTOMER", "AGENT", "ADMIN"), async (req, res) => {
