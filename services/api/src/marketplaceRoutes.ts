@@ -164,16 +164,16 @@ router.get("/marketplace/sellers/:sellerId", async (req, res) => {
   const sellerId = String(req.params.sellerId);
   const result = await pool.query(
     `SELECT s.id,s.user_id,s.display_name,s.bio,s.location_label,s.created_at,
-            COUNT(mo.id) FILTER (WHERE mo.status='DELIVERED')::int AS successful_sales,
-            COUNT(mo.id) FILTER (WHERE mo.status IN ('PAID','PROCESSING','IN_TRANSIT','DELIVERED','DISPUTED','CANCELLED'))::int AS order_count,
-            COUNT(mo.id) FILTER (WHERE mo.status='CANCELLED')::int AS cancelled_orders,
-            COUNT(mo.id) FILTER (WHERE mo.status='DISPUTED')::int AS disputed_orders,
+            COUNT(DISTINCT mo.id) FILTER (WHERE mo.status='DELIVERED')::int AS successful_sales,
+            COUNT(DISTINCT mo.id) FILTER (WHERE mo.status IN ('PAID','PROCESSING','IN_TRANSIT','DELIVERED','DISPUTED','CANCELLED'))::int AS order_count,
+            COUNT(DISTINCT mo.id) FILTER (WHERE mo.status='CANCELLED')::int AS cancelled_orders,
+            COUNT(DISTINCT mo.id) FILTER (WHERE mo.status='DISPUTED')::int AS disputed_orders,
             ROUND(AVG(r.stars)::numeric,2) AS average_rating,
-            COUNT(r.id)::int AS review_count,
+            COUNT(DISTINCT r.id)::int AS review_count,
             COALESCE(
               ROUND(
-                100.0 * COUNT(mo.id) FILTER (WHERE mo.status='DELIVERED')
-                / NULLIF(COUNT(mo.id) FILTER (WHERE mo.status IN ('PAID','PROCESSING','IN_TRANSIT','DELIVERED','DISPUTED','CANCELLED')),0),
+                100.0 * COUNT(DISTINCT mo.id) FILTER (WHERE mo.status='DELIVERED')
+                / NULLIF(COUNT(DISTINCT mo.id) FILTER (WHERE mo.status IN ('PAID','PROCESSING','IN_TRANSIT','DELIVERED','DISPUTED','CANCELLED')),0),
                 1
               ), 0
             ) AS delivery_rate
