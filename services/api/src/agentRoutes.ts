@@ -183,7 +183,7 @@ router.post("/agent/buy-orders/:id/replacement", requireAuth("AGENT"), async (re
       [order.id, identity(req), automatic ? "REPLACEMENT_AUTO_APPROVED" : "REPLACEMENT_PROPOSED", JSON.stringify({ itemId: locked.id, replacementId: inserted.rows[0].id, priceMinor: parsed.data.proposedPriceMinor })]
     );
     await client.query("COMMIT");
-    return res.status(201).json({ replacement: inserted.rows[0], approvalRequired: !automatic });
+    return res.status(201).json({ replacement: { id: inserted.rows[0].id, itemId: inserted.rows[0].item_id, proposedDescription: inserted.rows[0].proposed_description, proposedQuantity: inserted.rows[0].proposed_quantity, proposedPriceMinor: inserted.rows[0].proposed_price_minor, currency: inserted.rows[0].currency, shopperNote: inserted.rows[0].shopper_note, status: inserted.rows[0].status, createdAt: inserted.rows[0].created_at }, approvalRequired: !automatic });
   } catch (error) {
     await client.query("ROLLBACK");
     if (evidenceKey) await deletePrivateObject(evidenceKey).catch(() => undefined);
@@ -698,7 +698,7 @@ router.post("/buy-orders/:id/cancel", requireAuth("CUSTOMER"), async (req, res) 
         await pool.query("UPDATE buy_order_payments SET refund_status='FAILED',updated_at=now() WHERE buy_order_id=$1",[cancelledOrder.id]);
       }
     }
-    return res.json({ buyOrder: cancelledOrder });
+    return res.json({ buyOrder: publicAgentBuyOrder(cancelledOrder) });
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
