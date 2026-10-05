@@ -1487,7 +1487,7 @@ app.get("/api/admin/drivers/:driverId/documents", requireAuth("ADMIN"), async (r
     "SELECT id, document_type, document_url, status, review_note, created_at, updated_at FROM driver_documents WHERE driver_id=$1 ORDER BY created_at DESC",
     [routeParam(req.params.driverId, "driverId")]
   );
-  res.json({ documents: result.rows });
+  res.json({ documents: result.rows.map((row) => ({ id: row.id, documentType: row.document_type, documentUrl: row.document_url, status: row.status, reviewNote: row.review_note, createdAt: row.created_at, updatedAt: row.updated_at })) });
 });
 
 app.post("/api/admin/driver-documents/:documentId/review", requireAuth("ADMIN"), async (req, res) => {
