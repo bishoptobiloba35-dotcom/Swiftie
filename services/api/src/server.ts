@@ -1703,7 +1703,7 @@ app.post("/api/admin/support/tickets/:id/reply", requireAuth("ADMIN"), async (re
 app.get("/api/admin/payouts", requireAuth("ADMIN"), async (_req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool!.query("SELECT id, delivery_id, driver_id, amount_minor, currency, status, provider, provider_reference, provider_status, failure_reason, processed_at, created_at, updated_at FROM payouts ORDER BY updated_at DESC LIMIT 100");
-  res.json({ payouts: result.rows });
+  res.json({ payouts: result.rows.map((row) => ({ id: row.id, deliveryId: row.delivery_id, driverId: row.driver_id, amountMinor: Number(row.amount_minor), currency: row.currency, status: row.status, provider: row.provider, providerStatus: row.provider_status, failureReason: row.failure_reason, processedAt: row.processed_at, createdAt: row.created_at, updatedAt: row.updated_at })) });
 });
 
 app.post("/api/admin/payouts/:deliveryId/retry", requireAuth("ADMIN"), async (req, res) => {
