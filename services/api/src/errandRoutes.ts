@@ -99,7 +99,16 @@ router.post("/errands", requireAuth("CUSTOMER"), async (req, res) => {
       [errand.id]
     );
     await client.query("COMMIT");
-    return res.status(201).json({ errand, items: createdItems.rows });
+    const publicItems = createdItems.rows.map((item: any) => ({
+      id: item.id,
+      description: item.requested_description,
+      quantity: Number(item.quantity),
+      maxAuthorizedMinor: Number(item.max_authorized_minor),
+      requestedPriceMinor: item.requested_price_minor == null ? null : Number(item.requested_price_minor),
+      replacementPolicy: item.replacement_policy,
+      status: item.status
+    }));
+    return res.status(201).json({ errand, items: publicItems });
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -208,7 +217,31 @@ router.get("/errands", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
        ORDER BY created_at DESC LIMIT 100`,
     [identity(req), (req as any).user?.role]
   );
-  res.json({ errands: result.rows });
+  const errands = result.rows.map((row: any) => ({
+    id: row.id,
+    errandType: row.errand_type,
+    status: row.status,
+    description: row.item_description,
+    merchantName: row.merchant_name,
+    merchantAddress: row.merchant_address,
+    spendingCeilingMinor: Number(row.purchase_budget_minor),
+    actualPurchaseMinor: row.actual_purchase_minor == null ? null : Number(row.actual_purchase_minor),
+    currency: row.currency,
+    replacementPolicy: row.replacement_policy,
+    maxPriceDeltaMinor: Number(row.max_price_delta_minor),
+    instructions: row.errand_instructions,
+    requestedCompletionAt: row.requested_completion_at,
+    receiverName: row.receiver_name,
+    receiverPhone: row.receiver_phone,
+    destinationAddress: row.destination_address,
+    destinationLat: row.destination_lat,
+    destinationLng: row.destination_lng,
+    agentId: row.agent_id,
+    deliveryId: row.delivery_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }));
+  res.json({ errands });
 });
 
 export default router;
