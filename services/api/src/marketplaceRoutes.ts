@@ -159,6 +159,93 @@ router.get("/marketplace/listings", async (req, res) => {
   return res.json({ listings: result.rows });
 });
 
+router.get("/marketplace/sellers/:sellerId", async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const sellerId = String(req.params.sellerId);
+  const result = await pool.query(
+    `SELECT s.id,s.user_id,s.display_name,s.bio,s.location_label,s.created_at,
+            COUNT(mo.id) FILTER (WHERE mo.status='DELIVERED')::int AS successful_sales,
+            COUNT(mo.id) FILTER (WHERE mo.status IN ('PAID','PROCESSING','IN_TRANSIT','DELIVERED','DISPUTED','CANCELLED'))::int AS order_count,
+            COUNT(mo.id) FILTER (WHERE mo.status='CANCELLED')::int AS cancelled_orders,
+            COUNT(mo.id) FILTER (WHERE mo.status='DISPUTED')::int AS disputed_orders,
+            ROUND(AVG(r.stars)::numeric,2) AS average_rating,
+            COUNT(r.id)::int AS review_count,
+            COALESCE(
+              ROUND(
+                100.0 * COUNT(mo.id) FILTER (WHERE mo.status='DELIVERED')
+                / NULLIF(COUNT(mo.id) FILTER (WHERE mo.status IN ('PAID','PROCESSING','IN_TRANSIT','DELIVERED','DISPUTED','CANCELLED')),0),
+                1
+              ), 0
+            ) AS delivery_rate
+       FROM marketplace_seller_profiles s
+       LEFT JOIN marketplace_orders mo ON mo.seller_user_id=s.user_id
+       LEFT JOIN marketplace_seller_reviews r ON r.seller_user_id=s.user_id
+      WHERE s.user_id=$1 AND s.status='ACTIVE'
+      GROUP BY s.id,s.user_id,s.display_name,s.bio,s.location_label,s.created_at`,
+    [sellerId]
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: "Seller not found" });
+  const row = result.rows[0];
+  return res.json({
+    seller: {
+      id: row.id,
+      userId: row.user_id,
+      displayName: row.display_name,
+      bio: row.bio,
+      locationLabel: row.location_label,
+      memberSince: row.created_at,
+      trust: {
+        successfulSales: Number(row.successful_sales ?? 0),
+        orderCount: Number(row.order_count ?? 0),
+        cancelledOrders: Number(row.cancelled_orders ?? 0),
+        disputedOrders: Number(row.disputed_orders ?? 0),
+        deliveryRatePercent: Number(row.delivery_rate ?? 0),
+        averageRating: row.average_rating == null ? null : Number(row.average_rating),
+        reviewCount: Number(row.review_count ?? 0)
+      }
+    }
+  });
+});
+
+router.post("/marketplace/orders/:id/review", requireAuth(), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const parsed = z.object({
+    stars: z.number().int().min(1).max(5),
+    comment: z.string().trim().max(1000).optional()
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const buyerId = identity(req);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const order = (await client.query(
+      `SELECT mo.id,mo.seller_user_id,mo.buyer_user_id,mo.status
+         FROM marketplace_orders mo
+        WHERE mo.id=$1 AND mo.buyer_user_id=$2
+        FOR UPDATE`,
+      [String(req.params.id), buyerId]
+    )).rows[0];
+    if (!order) { await client.query("ROLLBACK"); return res.status(404).json({ error: "Marketplace order not found" }); }
+    if (order.status !== "DELIVERED") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "You can review a marketplace seller only after delivery is completed" });
+    }
+    const review = (await client.query(
+      `INSERT INTO marketplace_seller_reviews (order_id,seller_user_id,buyer_user_id,stars,comment)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (order_id) DO UPDATE
+         SET stars=EXCLUDED.stars,comment=EXCLUDED.comment,updated_at=now()
+       RETURNING id,order_id,stars,comment,created_at,updated_at`,
+      [order.id, order.seller_user_id, order.buyer_user_id, parsed.data.stars, parsed.data.comment ?? null]
+    )).rows[0];
+    await client.query("COMMIT");
+    return res.json({ review });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to save seller review" });
+  } finally { client.release(); }
+});
+
 router.get("/marketplace/sales", requireAuth(), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool.query(
