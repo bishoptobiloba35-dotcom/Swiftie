@@ -558,12 +558,16 @@ export default function App() {
         destinationLng: lng
       });
       setMyErrands(prev => [result.errand, ...prev]);
-      const payment = await api.initializeErrandPayment(result.errand.id);
-      if (payment.authorizationUrl) {
-        await WebBrowser.openBrowserAsync(payment.authorizationUrl);
-        Alert.alert("Payment started", "Complete the Paystack payment. SwiftDrop will verify the payment before an agent can accept the errand.");
-      } else {
-        Alert.alert("Errand created", "Your errand is saved. Payment is already authorized or awaiting reconciliation.");
+      try {
+        const payment = await api.initializeErrandPayment(result.errand.id);
+        if (payment.authorizationUrl) {
+          await WebBrowser.openBrowserAsync(payment.authorizationUrl);
+          Alert.alert("Payment started", "Complete the Paystack payment. SwiftDrop will verify the payment before an agent can accept the errand.");
+        } else {
+          Alert.alert("Errand created", "Your errand is saved. Payment is already authorized or awaiting reconciliation.");
+        }
+      } catch (paymentError) {
+        Alert.alert("Errand created — payment still required", paymentError instanceof Error ? paymentError.message : "Open this errand again to complete payment before an agent can accept it.");
       }
       setErrandDraft(prev => ({ ...prev, description: "", itemDescription: "", instructions: "", receiverPin: "" }));
     } catch (error) {
