@@ -65,6 +65,8 @@ export type CreateDeliveryInput = {
   dropoff: { label: string; formattedAddress: string; latitude: number; longitude: number };
   pickupDropOffLocationId?: string;
   dropoffDropOffLocationId?: string;
+  pickupInstructions?: string;
+  dropoffInstructions?: string;
   quote: {
     currency: "NGN";
     distanceMeters: number;
