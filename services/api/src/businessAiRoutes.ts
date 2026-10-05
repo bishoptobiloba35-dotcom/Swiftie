@@ -449,7 +449,19 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
       );
       await client.query("COMMIT");
       await audit({ userId, plan, capability: "ACTION", action, allowed: true, metadata: { businessId: business.rows[0].id } });
-      return res.status(201).json({ business: business.rows[0] });
+      const publicBusiness = {
+        id: business.rows[0].id,
+        legalName: business.rows[0].legal_name,
+        displayName: business.rows[0].display_name,
+        registrationNumber: business.rows[0].registration_number,
+        monthlySpendLimitMinor: Number(business.rows[0].monthly_spend_limit_minor),
+        perOrderLimitMinor: Number(business.rows[0].per_order_limit_minor),
+        requiresApproval: business.rows[0].requires_approval,
+        status: business.rows[0].status,
+        createdAt: business.rows[0].created_at,
+        updatedAt: business.rows[0].updated_at
+      };
+      return res.status(201).json({ business: publicBusiness });
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
