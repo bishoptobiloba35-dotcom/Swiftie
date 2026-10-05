@@ -53,6 +53,7 @@ const migrations = [
   { id: "054_delivery_proof", file: "054_delivery_proof.sql" },
   { id: "055_unified_errand_services", file: "055_unified_errand_services.sql" },
   { id: "056_errand_replacement_workflow", file: "056_errand_replacement_workflow.sql" },
+  { id: "057_marketplace_seller_readiness", file: "057_marketplace_seller_readiness.sql" },
 ];
 export async function runMigrations(): Promise<void> {
   if (!pool) return;
