@@ -1168,48 +1168,6 @@ export default function App() {
   }
 
 
-    const d = errandDraft;
-    return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}>
-      <View style={styles.header}><View><Text style={styles.logo}>Hire an Errand</Text><Text style={styles.subtitle}>One errand service for general tasks, Purchase & Deliver, and Shop for Me.</Text></View><Pressable onPress={() => setHomeSection("HOME")}><Text style={styles.link}>Home</Text></Pressable></View>
-      <View style={styles.card}>
-        <Text style={styles.homeHeading}>What do you need?</Text>
-        <View style={styles.row}>
-          {([["GENERAL_ERRAND","General errand"],["PURCHASE_AND_DELIVER","Purchase & Deliver"],["SHOP_FOR_ME","Shop for Me"]] as const).map(([value,label]) =>
-            <Pressable key={value} style={[styles.choice, d.errandType === value && styles.choiceActive]} onPress={() => updateErrand({ errandType: value })}><Text style={styles.photoTitle}>{label}</Text></Pressable>
-          )}
-        </View>
-        <TextInput style={[styles.input, styles.multiline]} placeholder="Describe the errand" value={d.description} onChangeText={v => updateErrand({ description: v })} multiline maxLength={2000} />
-        <TextInput style={styles.input} placeholder="Exact item or shopping target (optional for general errands)" value={d.itemDescription} onChangeText={v => updateErrand({ itemDescription: v })} />
-        <TextInput style={styles.input} placeholder="Spending ceiling (₦)" keyboardType="decimal-pad" value={d.spendingCeiling} onChangeText={v => updateErrand({ spendingCeiling: v })} />
-        {d.errandType !== "GENERAL_ERRAND" && <>
-          <TextInput style={styles.input} placeholder="Original / expected item price (₦, optional)" keyboardType="decimal-pad" value={d.requestedPrice} onChangeText={v => updateErrand({ requestedPrice: v })} />
-          <TextInput style={styles.input} placeholder="Maximum price difference allowed (₦)" keyboardType="decimal-pad" value={d.maxPriceDelta} onChangeText={v => updateErrand({ maxPriceDelta: v })} />
-          <Text style={styles.hint}>SwiftDrop will not silently exceed your spending ceiling or your authorized price difference.</Text>
-          <View style={styles.row}>
-            {([["EXACT_ONLY","Exact only"],["BEST_MATCH","Best match"],["APPROVED_ALTERNATIVES","Approved alternatives"],["REFUND_IF_UNAVAILABLE","Refund if unavailable"]] as const).map(([value,label]) =>
-              <Pressable key={value} style={[styles.choice, d.replacementPolicy === value && styles.choiceActive]} onPress={() => updateErrand({ replacementPolicy: value })}><Text style={styles.muted}>{label}</Text></Pressable>
-            )}
-          </View>
-        </>}
-        <TextInput style={styles.input} placeholder="Preferred shop / merchant (optional)" value={d.merchantName} onChangeText={v => updateErrand({ merchantName: v })} />
-        <TextInput style={styles.input} placeholder="Shop address (optional)" value={d.merchantAddress} onChangeText={v => updateErrand({ merchantAddress: v })} />
-        <TextInput style={[styles.input, styles.multiline]} placeholder="Errand instructions" value={d.instructions} onChangeText={v => updateErrand({ instructions: v })} multiline maxLength={2000} />
-        <TextInput style={styles.input} placeholder="Requested completion time, e.g. 2026-10-05T14:00:00+01:00" value={d.requestedCompletionAt} onChangeText={v => updateErrand({ requestedCompletionAt: v })} />
-      </View>
-      <View style={styles.card}>
-        <Text style={styles.homeHeading}>Receiver & destination</Text>
-        <TextInput style={styles.input} placeholder="Receiver full name" value={d.receiverName} onChangeText={v => updateErrand({ receiverName: v })} />
-        <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={d.receiverPhone} onChangeText={v => updateErrand({ receiverPhone: v })} />
-        <TextInput style={styles.input} placeholder="4-6 digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={d.receiverPin} onChangeText={v => updateErrand({ receiverPin: v })} />
-        <TextInput style={styles.input} placeholder="Destination address" value={d.destinationAddress} onChangeText={v => updateErrand({ destinationAddress: v })} />
-        <View style={styles.row}><TextInput style={styles.half} placeholder="Latitude" keyboardType="decimal-pad" value={d.destinationLat} onChangeText={v => updateErrand({ destinationLat: v })} /><TextInput style={styles.half} placeholder="Longitude" keyboardType="decimal-pad" value={d.destinationLng} onChangeText={v => updateErrand({ destinationLng: v })} /></View>
-        <Text style={styles.hint}>Payment and agent assignment remain subject to SwiftDrop's existing authorization, payment and approved-agent controls.</Text>
-        <Pressable style={styles.primary} disabled={errandBusy} onPress={() => void createErrand()}><Text style={styles.primaryText}>{errandBusy ? "Creating errand…" : "Place errand request"}</Text></Pressable>
-      </View>
-      <Pressable style={styles.secondary} onPress={() => setHomeSection("HOME")}><Text style={styles.secondaryText}>Back to home</Text></Pressable>
-    </ScrollView></SafeAreaView>;
-  }
-
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.container}>
     <View style={styles.header}><View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.subtitle}>Place your order. Track every movement.</Text></View><Pressable onPress={() => setHomeSection("HOME")}><Text style={styles.link}>Home</Text></Pressable></View><View style={styles.header}><View></View><View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => { setShowSupport(v => !v); void loadSupportTickets(); }}><Text style={styles.link}>Support</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View></View>
     {showNotifications && <View style={styles.card}><View style={styles.header}><Text style={styles.heading}>Notifications</Text><Pressable onPress={() => void loadNotifications()}><Text>Refresh</Text></Pressable></View>{notifications.length === 0 ? <Text style={styles.muted}>No notifications.</Text> : notifications.map(item => <Pressable key={item.id} style={styles.notification} onPress={() => void markNotificationRead(item.id)}><Text style={styles.notificationTitle}>{item.title}</Text><Text>{item.body}</Text><Text style={styles.muted}>{new Date(item.created_at).toLocaleString()} · {item.read_at ? "Read" : "Tap to mark read"}</Text></Pressable>)}</View>}
