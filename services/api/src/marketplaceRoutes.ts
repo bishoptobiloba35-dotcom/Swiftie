@@ -651,7 +651,17 @@ router.get("/marketplace/listings/:id", async (req, res) => {
     },
     media: listing.media
   };
-  return res.json({ listing: publicListing, recommended: recommended.rows });
+  const publicRecommended = recommended.rows.map((row: any) => ({
+    id: row.id,
+    title: row.title,
+    priceMinor: Number(row.price_minor),
+    deliveryFeeMinor: Number(row.delivery_fee_minor),
+    finalPriceMinor: Number(row.final_price_minor),
+    currency: row.currency,
+    deliveryMode: row.delivery_mode,
+    stockQuantity: Number(row.stock_quantity)
+  }));
+  return res.json({ listing: publicListing, recommended: publicRecommended });
 });
 
 // Any authenticated SwiftDrop user may sell ordinary everyday goods.
