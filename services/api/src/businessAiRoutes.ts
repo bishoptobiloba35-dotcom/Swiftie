@@ -721,10 +721,26 @@ router.post("/buy-orders/:id/payment/initialize", requireAuth("CUSTOMER"), async
   if (!order || order.customer_user_id !== customerId) return res.status(404).json({ error: "Buy & Deliver order not found" });
   if (["CANCELLED", "DELIVERED", "DISPUTED"].includes(order.status)) return res.status(409).json({ error: "This order cannot accept a new payment" });
 
-  const existing = await pool.query("SELECT id, provider, provider_reference, amount_minor, currency, status, authorization_url, access_code FROM buy_order_payments WHERE buy_order_id=$1", [id]);
+  const existing = await pool.query("SELECT id, provider, amount_minor, currency, status, authorization_url, access_code FROM buy_order_payments WHERE buy_order_id=$1", [id]);
   const current = existing.rows[0];
-  if (current && ["HELD", "AUTHORIZED"].includes(current.status)) return res.json({ payment: current, message: "Payment is already authorized/held" });
-  if (current?.status === "PENDING" && current.authorization_url && current.provider_reference) return res.json({ payment: current, authorizationUrl: current.authorization_url, accessCode: current.access_code });
+  const publicPayment = (payment: any) => ({
+    id: payment.id,
+    buyOrderId: payment.buy_order_id,
+    provider: payment.provider,
+    amountMinor: Number(payment.amount_minor),
+    currency: payment.currency,
+    status: payment.status,
+    authorizationUrl: payment.authorization_url ?? null,
+    accessCode: payment.access_code ?? null,
+    createdAt: payment.created_at,
+    updatedAt: payment.updated_at
+  });
+  if (current && ["HELD", "AUTHORIZED"].includes(current.status)) {
+    return res.json({ payment: publicPayment(current), message: "Payment is already authorized/held" });
+  }
+  if (current?.status === "PENDING" && current.authorization_url) {
+    return res.json({ payment: publicPayment(current), authorizationUrl: current.authorization_url, accessCode: current.access_code });
+  }
 
   const secret = process.env.PAYSTACK_SECRET_KEY;
   if (process.env.PAYMENT_PROVIDER && process.env.PAYMENT_PROVIDER !== "paystack") return res.status(503).json({ error: "Buy & Deliver payment provider is not supported" });
@@ -746,12 +762,12 @@ router.post("/buy-orders/:id/payment/initialize", requireAuth("CUSTOMER"), async
 
   const providerReference = payload.data.reference;
   const paymentResult = await pool.query(
-    "INSERT INTO buy_order_payments (buy_order_id, provider, provider_reference, amount_minor, currency, status, authorization_url, access_code) VALUES ($1,'paystack',$2,$3,$4,'PENDING',$5,$6) ON CONFLICT (buy_order_id) DO UPDATE SET provider='paystack', provider_reference=EXCLUDED.provider_reference, amount_minor=EXCLUDED.amount_minor, currency=EXCLUDED.currency, status='PENDING', authorization_url=EXCLUDED.authorization_url, access_code=EXCLUDED.access_code, updated_at=now() RETURNING id, buy_order_id, provider, provider_reference, amount_minor, currency, status, authorization_url, access_code, created_at, updated_at",
+    "INSERT INTO buy_order_payments (buy_order_id, provider, provider_reference, amount_minor, currency, status, authorization_url, access_code) VALUES ($1,'paystack',$2,$3,$4,'PENDING',$5,$6) ON CONFLICT (buy_order_id) DO UPDATE SET provider='paystack', provider_reference=EXCLUDED.provider_reference, amount_minor=EXCLUDED.amount_minor, currency=EXCLUDED.currency, status='PENDING', authorization_url=EXCLUDED.authorization_url, access_code=EXCLUDED.access_code, updated_at=now() RETURNING id, buy_order_id, provider, amount_minor, currency, status, authorization_url, access_code, created_at, updated_at",
     [id, providerReference, amountMinor, String(order.currency ?? "NGN"), payload.data.authorization_url, payload.data.access_code ?? null]
   );
   await pool.query("UPDATE buy_orders SET payment_reference=$2, payment_status='PENDING', updated_at=now() WHERE id=$1", [id, providerReference]);
   await pool.query("INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'PAYMENT_INITIALIZED',$3::jsonb)", [id, customerId, JSON.stringify({ provider: "paystack", reference: providerReference, amountMinor })]);
-  return res.status(201).json({ payment: paymentResult.rows[0], authorizationUrl: payload.data.authorization_url, accessCode: payload.data.access_code ?? null });
+  return res.status(201).json({ payment: publicPayment(paymentResult.rows[0]), authorizationUrl: payload.data.authorization_url, accessCode: payload.data.access_code ?? null });
 });
 
 
