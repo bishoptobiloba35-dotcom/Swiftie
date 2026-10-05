@@ -208,7 +208,29 @@ router.get("/errands", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
        ORDER BY created_at DESC LIMIT 100`,
     [identity(req), (req as any).user?.role]
   );
-  res.json({ errands: result.rows });
+  res.json({ errands: result.rows.map((row) => ({
+    id: row.id,
+    errandType: row.errand_type,
+    status: row.status,
+    itemDescription: row.item_description,
+    merchantName: row.merchant_name,
+    purchaseBudgetMinor: Number(row.purchase_budget_minor ?? 0),
+    actualPurchaseMinor: row.actual_purchase_minor == null ? null : Number(row.actual_purchase_minor),
+    currency: row.currency,
+    replacementPolicy: row.replacement_policy,
+    maxPriceDeltaMinor: Number(row.max_price_delta_minor ?? 0),
+    errandInstructions: row.errand_instructions,
+    requestedCompletionAt: row.requested_completion_at,
+    receiverName: row.receiver_name,
+    receiverPhone: row.receiver_phone,
+    destinationAddress: row.destination_address,
+    destinationLat: row.destination_lat,
+    destinationLng: row.destination_lng,
+    agentId: row.agent_id,
+    deliveryId: row.delivery_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })) });
 });
 
 export default router;
