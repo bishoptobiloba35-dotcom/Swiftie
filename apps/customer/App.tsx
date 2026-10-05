@@ -66,6 +66,8 @@ export default function App() {
   const [dropoffLat, setDropoffLat] = React.useState("");
   const [dropoffLng, setDropoffLng] = React.useState("");
   const [pickupDropOffId, setPickupDropOffId] = React.useState("");
+  const [pickupInstructions, setPickupInstructions] = React.useState("");
+  const [dropoffInstructions, setDropoffInstructions] = React.useState("");
   const [dropoffDropOffId, setDropoffDropOffId] = React.useState("");
   const [pickupDropOffLocations, setPickupDropOffLocations] = React.useState<any[]>([]);
   const [dropoffDropOffLocations, setDropoffDropOffLocations] = React.useState<any[]>([]);
@@ -589,6 +591,8 @@ export default function App() {
         pickup: { label: pickupDropOffId ? "SwiftDrop drop-off point" : "Pickup", formattedAddress: pickup.trim(), ...coords.pickup },
         dropoff: { label: dropoffDropOffId ? "SwiftDrop drop-off point" : "Drop-off", formattedAddress: dropoff.trim(), ...coords.dropoff },
         pickupDropOffLocationId: pickupDropOffId || undefined,
+        pickupInstructions: pickupInstructions.trim() || undefined,
+        dropoffInstructions: dropoffInstructions.trim() || undefined,
         dropoffDropOffLocationId: dropoffDropOffId || undefined,
         quote: { ...serverQuote, currency: "NGN" }
       });
@@ -1014,6 +1018,9 @@ export default function App() {
     <Pressable style={styles.secondary} onPress={() => void useCurrentPickupLocation()}><Text style={styles.secondaryText}>Use my current location for pickup</Text></Pressable>
     <View style={styles.row}><TextInput style={styles.half} placeholder="Pickup latitude" value={pickupLat} onChangeText={value => { setPickupLat(value); setPickupDropOffId(""); }} keyboardType="decimal-pad" /><TextInput style={styles.half} placeholder="Pickup longitude" value={pickupLng} onChangeText={value => { setPickupLng(value); setPickupDropOffId(""); }} keyboardType="decimal-pad" /></View>
     <View style={styles.row}><TextInput style={styles.half} placeholder="Drop-off latitude" value={dropoffLat} onChangeText={value => { setDropoffLat(value); setDropoffDropOffId(""); }} keyboardType="decimal-pad" /><TextInput style={styles.half} placeholder="Drop-off longitude" value={dropoffLng} onChangeText={value => { setDropoffLng(value); setDropoffDropOffId(""); }} keyboardType="decimal-pad" /></View>
+    <TextInput style={styles.input} placeholder="Pickup instructions (gate, floor, contact, parking)" value={pickupInstructions} onChangeText={setPickupInstructions} maxLength={1000} multiline />
+    <TextInput style={styles.input} placeholder="Drop-off instructions (gate, floor, entrance, handoff)" value={dropoffInstructions} onChangeText={setDropoffInstructions} maxLength={1000} multiline />
+    <Text style={styles.hint}>Clear instructions help the courier find the right entrance and complete the handoff without relying on the address alone.</Text>
     <TextInput style={styles.input} placeholder="Receiver name" value={receiver} onChangeText={setReceiver} />
     <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
     <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={receiverPin} onChangeText={setReceiverPin} />
@@ -1060,6 +1067,8 @@ export default function App() {
       <Text style={styles.status}>{delivery.status.replaceAll("_", " ")}</Text>
       <Text>Pickup: {delivery.pickup.formattedAddress}</Text>
       <Text>Drop-off: {delivery.dropoff.formattedAddress}</Text>
+      {delivery.pickupInstructions && <Text style={styles.muted}>Pickup note: {delivery.pickupInstructions}</Text>}
+      {delivery.dropoffInstructions && <Text style={styles.muted}>Drop-off note: {delivery.dropoffInstructions}</Text>}
       {location && delivery.dropoff.location ? <View style={styles.locationBox}>
         <Text style={styles.photoTitle}>Live driver position</Text>
         <MapView
