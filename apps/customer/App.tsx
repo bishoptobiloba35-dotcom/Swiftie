@@ -208,6 +208,17 @@ export default function App() {
     }
   }
 
+  async function markMarketplaceSaleReady(sale: any) {
+    const preparation = Number(sale.seller_preparation_minutes ?? 0);
+    try {
+      await api.markMarketplaceOrderReady(String(sale.id), preparation, Boolean(sale.seller_busy_mode));
+      await loadMarketplaceSales();
+      Alert.alert("Order ready", "The courier can now proceed with pickup.");
+    } catch (error) {
+      Alert.alert("Mark ready failed", error instanceof Error ? error.message : "Unable to mark the order ready");
+    }
+  }
+
   async function loadMarketplace(query = "") {
     setMarketplaceLoading(true);
     try { setMarketplaceListings(await api.marketplaceListings(query)); }
@@ -831,6 +842,13 @@ export default function App() {
           <Text>₦{(Number(sale.total_minor) / 100).toLocaleString()} · {String(sale.status).replaceAll("_"," ")}</Text>
           <Text style={styles.muted}>{sale.fulfillment_status?.replaceAll("_"," ")}{sale.delivery_status ? " · Delivery " + sale.delivery_status.replaceAll("_"," ") : ""}</Text>
           {sale.tracking_code && <Text style={styles.code}>Tracking: {sale.tracking_code}</Text>}
+          {sale.fulfillment_status === "PREPARING" && sale.status === "PROCESSING" && (
+            <View style={styles.row}>
+              <Pressable style={styles.primary} onPress={() => void markMarketplaceSaleReady(sale)}>
+                <Text style={styles.primaryText}>Mark ready for courier</Text>
+              </Pressable>
+            </View>
+          )}
         </View>)}
       </View>}
       {signedIn && <View style={styles.card}>
