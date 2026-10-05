@@ -21,6 +21,7 @@ export default function App() {
   const [marketplaceMyListings, setMarketplaceMyListings] = React.useState<any[]>([]);
   const [selectedListing, setSelectedListing] = React.useState<any | null>(null);
   const [recommendedListings, setRecommendedListings] = React.useState<any[]>([]);
+  const [selectedSellerTrust, setSelectedSellerTrust] = React.useState<any | null>(null);
   const [marketplaceDeliveryAt, setMarketplaceDeliveryAt] = React.useState("");
   const [marketplaceSearch, setMarketplaceSearch] = React.useState("");
   const [marketplaceLoading, setMarketplaceLoading] = React.useState(false);
@@ -226,6 +227,7 @@ export default function App() {
       setSelectedListing(data.listing);
       setMarketplaceDeliveryAt("");
       setRecommendedListings(data.recommended ?? []);
+      try { setSelectedSellerTrust(await api.marketplaceSeller(String(data.listing.seller_id ?? data.listing.seller_user_id))); } catch { setSelectedSellerTrust(null); }
     } catch (error) { Alert.alert("Shop", error instanceof Error ? error.message : "Unable to open this product"); }
   }
 
@@ -959,11 +961,14 @@ export default function App() {
           <TextInput style={styles.input} placeholder="Drop-off address" value={marketplaceDropoffAddress} onChangeText={setMarketplaceDropoffAddress} />
           <View style={styles.row}><TextInput style={styles.half} placeholder="Drop-off latitude" keyboardType="decimal-pad" value={marketplaceDropoffLat} onChangeText={setMarketplaceDropoffLat} /><TextInput style={styles.half} placeholder="Drop-off longitude" keyboardType="decimal-pad" value={marketplaceDropoffLng} onChangeText={setMarketplaceDropoffLng} /></View>
         </View>}
-        <View style={styles.sellerCard}><Text style={styles.eyebrow}>SELLER</Text><Text style={styles.homeHeading}>{selectedListing.seller_name}</Text><Text>{selectedListing.seller_bio || "Verified SwiftDrop marketplace seller."}</Text><Text style={styles.muted}>{selectedListing.seller_location || "Nigeria"}</Text></View>
+        <View style={styles.sellerCard}><Text style={styles.eyebrow}>SELLER TRUST</Text><Text style={styles.homeHeading}>{selectedListing.seller_name}</Text><Text>{selectedListing.seller_bio || "SwiftDrop marketplace seller."}</Text><Text style={styles.muted}>{selectedListing.seller_location || "Nigeria"} · Member since {selectedSellerTrust?.memberSince ? new Date(selectedSellerTrust.memberSince).toLocaleDateString() : "recently"}</Text>
+          {selectedSellerTrust?.trust && <View style={styles.rowBetween}><Text>Successful sales: {selectedSellerTrust.trust.successfulSales}</Text><Text>Delivery rate: {selectedSellerTrust.trust.deliveryRatePercent}%</Text></View>}
+          {selectedSellerTrust?.trust && <View style={styles.rowBetween}><Text>Rating: {selectedSellerTrust.trust.averageRating == null ? "No ratings yet" : selectedSellerTrust.trust.averageRating + "/5"} ({selectedSellerTrust.trust.reviewCount})</Text><Text>Disputes: {selectedSellerTrust.trust.disputedOrders}</Text></View>}
+        </View>
         <Pressable style={styles.primary} onPress={() => void checkoutMarketplaceListing()}><Text style={styles.primaryText}>Proceed to checkout</Text></Pressable>
         <Text style={styles.homeHeading}>More from this seller</Text>
         {recommendedListings.map(item => <Pressable key={item.id} style={styles.recommendCard} onPress={() => void openMarketplaceListing(item.id)}><Text style={styles.productName}>{item.title}</Text><Text>₦{(Number(item.final_price_minor)/100).toLocaleString()} · delivery included</Text></Pressable>)}
-        <Pressable style={styles.secondary} onPress={() => setSelectedListing(null)}><Text style={styles.secondaryText}>Back to Shop</Text></Pressable>
+        <Pressable style={styles.secondary} onPress={() => { setSelectedListing(null); setSelectedSellerTrust(null); }}><Text style={styles.secondaryText}>Back to Shop</Text></Pressable>
       </View> : <View style={styles.shopGrid}>
         {marketplaceListings.length === 0 && <Text style={styles.muted}>No published products yet. Be the first seller to publish an everyday item.</Text>}
         {marketplaceListings.map(item => <Pressable key={item.id} style={styles.listingCard} onPress={() => void openMarketplaceListing(item.id)}>
