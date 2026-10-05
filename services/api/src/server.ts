@@ -1397,7 +1397,19 @@ app.get("/api/admin/support/ai-actions", requireAuth("ADMIN"), async (req, res) 
      JOIN support_tickets t ON t.id=a.ticket_id
      ORDER BY a.created_at DESC LIMIT 200`
   );
-  return res.json({ actions: result.rows });
+  return res.json({ actions: result.rows.map((row) => ({
+    id: row.id,
+    ticketId: row.ticket_id,
+    actionType: row.action_type,
+    decision: row.decision,
+    reason: row.reason,
+    response: row.response,
+    actor: row.actor,
+    createdAt: row.created_at,
+    subject: row.subject,
+    category: row.category,
+    ticketStatus: row.ticket_status
+  })) });
 });
 
 app.post("/api/driver/documents/upload", requireAuth("DRIVER"), async (req, res) => {
@@ -1571,7 +1583,16 @@ app.get("/api/admin/operations", requireAuth("ADMIN"), async (_req, res) => {
   const result = await pool!.query(
     "SELECT (SELECT count(*) FROM users WHERE role='CUSTOMER')::int AS customers, (SELECT count(*) FROM drivers)::int AS drivers, (SELECT count(*) FROM drivers WHERE status='APPROVED' AND online=true)::int AS online_drivers, (SELECT count(*) FROM deliveries)::int AS deliveries, (SELECT count(*) FROM deliveries WHERE status NOT IN ('DELIVERED','CANCELLED','DISPUTED'))::int AS active_deliveries, (SELECT count(*) FROM disputes WHERE status IN ('OPEN','UNDER_REVIEW'))::int AS open_disputes, (SELECT count(*) FROM payouts WHERE status IN ('ELIGIBLE','PROCESSING'))::int AS pending_payouts"
   );
-  res.json({ metrics: result.rows[0] });
+  const row = result.rows[0] ?? {};
+  res.json({ metrics: {
+    customers: Number(row.customers ?? 0),
+    drivers: Number(row.drivers ?? 0),
+    onlineDrivers: Number(row.online_drivers ?? 0),
+    deliveries: Number(row.deliveries ?? 0),
+    activeDeliveries: Number(row.active_deliveries ?? 0),
+    openDisputes: Number(row.open_disputes ?? 0),
+    pendingPayouts: Number(row.pending_payouts ?? 0)
+  } });
 });
 
 app.get("/api/admin/deliveries", requireAuth("ADMIN"), async (req, res) => {
