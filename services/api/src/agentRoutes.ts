@@ -693,7 +693,37 @@ router.get("/buy-orders/:id", requireAuth("CUSTOMER", "AGENT", "ADMIN"), async (
     const agent = await getAgent(userId);
     if (!agent || order.agent_id !== agent.id) return res.status(403).json({ error: "Not authorized" });
   }
-  res.json({ buyOrder: order });
+  const safeOrder = {
+    id: order.id,
+    customer_user_id: order.customer_user_id,
+    errand_type: order.errand_type,
+    status: order.status,
+    item_description: order.item_description,
+    merchant_name: order.merchant_name,
+    merchant_address: order.merchant_address,
+    merchant_lat: order.merchant_lat,
+    merchant_lng: order.merchant_lng,
+    purchase_budget_minor: order.purchase_budget_minor,
+    actual_purchase_minor: order.actual_purchase_minor,
+    currency: order.currency,
+    replacement_policy: order.replacement_policy,
+    max_price_delta_minor: order.max_price_delta_minor,
+    errand_instructions: order.errand_instructions,
+    requested_completion_at: order.requested_completion_at,
+    receiver_name: order.receiver_name,
+    receiver_phone: order.receiver_phone,
+    destination_address: order.destination_address,
+    destination_lat: order.destination_lat,
+    destination_lng: order.destination_lng,
+    agent_id: order.agent_id,
+    delivery_id: order.delivery_id,
+    replacement_review_required: order.replacement_review_required,
+    replacement_review_deadline: order.replacement_review_deadline,
+    payment_status: order.payment_status,
+    created_at: order.created_at,
+    updated_at: order.updated_at
+  };
+  res.json({ buyOrder: safeOrder });
 });
 
 export default router;
