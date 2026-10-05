@@ -301,7 +301,7 @@ router.get("/marketplace/orders", requireAuth(), async (req, res) => {
       LIMIT 50`,
     [identity(req)]
   );
-  return res.json({ orders: result.rows });
+  return res.json({ orders: result.rows.map((row) => publicMarketplaceOrder(row)) });
 });
 
 router.get("/marketplace/orders/:id", requireAuth(), async (req, res) => {
@@ -320,7 +320,7 @@ router.get("/marketplace/orders/:id", requireAuth(), async (req, res) => {
     [String(req.params.id), identity(req)]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Marketplace order not found" });
-  return res.json({ order: result.rows[0] });
+  return res.json({ order: publicMarketplaceOrder(result.rows[0]) });
 });
 
 router.post("/marketplace/orders/:id/cancel", requireAuth(), async (req, res) => {
