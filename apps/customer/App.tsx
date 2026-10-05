@@ -558,7 +558,13 @@ export default function App() {
         destinationLng: lng
       });
       setMyErrands(prev => [result.errand, ...prev]);
-      Alert.alert("Errand created", "Your errand request is now in SwiftDrop's errand workflow.");
+      const payment = await api.initializeErrandPayment(result.errand.id);
+      if (payment.authorizationUrl) {
+        await WebBrowser.openBrowserAsync(payment.authorizationUrl);
+        Alert.alert("Payment started", "Complete the Paystack payment. SwiftDrop will verify the payment before an agent can accept the errand.");
+      } else {
+        Alert.alert("Errand created", "Your errand is saved. Payment is already authorized or awaiting reconciliation.");
+      }
       setErrandDraft(prev => ({ ...prev, description: "", itemDescription: "", instructions: "", receiverPin: "" }));
     } catch (error) {
       Alert.alert("Errand failed", error instanceof Error ? error.message : "Unable to create errand.");
