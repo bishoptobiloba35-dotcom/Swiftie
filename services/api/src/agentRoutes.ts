@@ -673,7 +673,7 @@ router.post("/buy-orders/:id/cancel", requireAuth("CUSTOMER"), async (req, res) 
         const payment=(await pool.query("SELECT id,amount_minor,currency,status,refund_status,refund_reference FROM buy_order_payments WHERE buy_order_id=$1 FOR UPDATE",[cancelledOrder.id])).rows[0];
         if(payment&&["HELD","AUTHORIZED"].includes(payment.status)){
           if (payment.refund_status === "PENDING" || payment.refund_status === "PROCESSED") {
-            return res.json({ buyOrder: cancelledOrder });
+            return res.json({ buyOrder: publicAgentBuyOrder(cancelledOrder) });
           }
           if (!cancelledOrder.payment_reference) {
             await pool.query("UPDATE buy_order_payments SET refund_status='RECONCILIATION_REQUIRED',refund_amount_minor=$2,updated_at=now() WHERE id=$1",[payment.id,Number(payment.amount_minor)]);
