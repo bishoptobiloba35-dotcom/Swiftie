@@ -10,8 +10,8 @@ export async function reconcileCancelledMarketplacePayments(): Promise<void> {
 
   try {
     const result = await pool.query(
-      `SELECT mop.id,mop.marketplace_order_id,mop.provider_reference,mop.amount_minor,mop.currency,
-              mo.status AS order_status
+      `SELECT mop.id,mop.marketplace_order_id,mop.provider_reference,mop.amount_minor,mop.currency,mop.status AS payment_status,
+              mop.refund_status,mo.status AS order_status
          FROM marketplace_order_payments mop
          JOIN marketplace_orders mo ON mo.id=mop.marketplace_order_id
         WHERE mo.status='CANCELLED'
@@ -62,7 +62,9 @@ export async function reconcileCancelledMarketplacePayments(): Promise<void> {
             RETURNING provider_reference,amount_minor,currency`,
           [payment.id]
         );
-        if (!claimed.rows[0]) continue;
+
+        const wasPending = payment.payment_status === "PENDING";
+        if (!claimed.rows[0] && !wasPending) continue;
 
         const refundClaim = await pool.query(
           `UPDATE marketplace_order_payments
@@ -73,7 +75,22 @@ export async function reconcileCancelledMarketplacePayments(): Promise<void> {
             RETURNING id`,
           [payment.id]
         );
-        if (!refundClaim.rows[0] && payment.status !== "PENDING") continue;
+        if (!refundClaim.rows[0]) {
+          if (wasPending) {
+            const authorizedClaim = await pool.query(
+              `UPDATE marketplace_order_payments
+                  SET refund_status='PROCESSING',refund_updated_at=now(),updated_at=now()
+                WHERE id=$1
+                  AND status='AUTHORIZED'
+                  AND refund_status IS NULL
+                RETURNING id`,
+              [payment.id]
+            );
+            if (!authorizedClaim.rows[0]) continue;
+          } else {
+            continue;
+          }
+        }
 
         const refundResponse = await fetch("https://api.paystack.co/refund", {
           method: "POST",
@@ -90,7 +107,7 @@ export async function reconcileCancelledMarketplacePayments(): Promise<void> {
 
         if (!refundResponse) {
           await pool.query(
-            "UPDATE marketplace_order_payments SET refund_status='RETRY_REQUIRED',refund_updated_at=now(),updated_at=now() WHERE id=$1",
+            "UPDATE marketplace_order_payments SET refund_status='RETRY_REQUIRED',refund_updated_at=now(),updated_at=now() WHERE id=$1 AND refund_status='PROCESSING'",
             [payment.id]
           );
           continue;
@@ -99,7 +116,7 @@ export async function reconcileCancelledMarketplacePayments(): Promise<void> {
         const refundPayload = await refundResponse.json().catch(() => null) as any;
         if (!refundResponse.ok || !refundPayload?.status) {
           await pool.query(
-            "UPDATE marketplace_order_payments SET refund_status='FAILED',refund_updated_at=now(),updated_at=now() WHERE id=$1",
+            "UPDATE marketplace_order_payments SET refund_status='FAILED',refund_updated_at=now(),updated_at=now() WHERE id=$1 AND refund_status='PROCESSING'",
             [payment.id]
           );
           continue;
