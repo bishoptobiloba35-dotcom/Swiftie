@@ -1311,7 +1311,8 @@ export async function confirmReceiverAndReleaseEscrow(id: string, receiverPhone:
     await client.query('BEGIN');
     const result = await client.query(`SELECT d.*, p.amount_minor, p.currency AS payment_currency, p.status AS payment_status, p.refund_status, p.collection_mode FROM deliveries d JOIN payments p ON p.delivery_id=d.id WHERE d.id=$1 FOR UPDATE`, [id]);
     const row = result.rows[0];
-    if (!row || row.collection_mode !== "SENDER_ESCROW" || row.receiver_phone !== receiverPhone || row.status !== 'ARRIVED' || row.payment_status !== 'HELD' || ['pending','processing','needs-attention'].includes(String(row.refund_status ?? '')) || !verifyPin(pin, row.receiver_pin_hash) || !row.driver_id) {
+    if (!row || row.collection_mode !== "SENDER_ESCROW" || row.receiver_phone !== receiverPhone || row.status !== 'ARRIVED' || row.payment_status !== 'HELD' || ['pending','processing','needs-attention'].includes(String(row.refund_status ?? '')) || !verifyPin(pin, row.receiver_pin_hash) || !row.driver_id ||
+        !(await hasRequiredDropoffProofs(id, Array.isArray(row.proof_requirements?.dropoff) ? row.proof_requirements.dropoff : ["PIN"]))) {
       await client.query('ROLLBACK');
       return null;
     }
