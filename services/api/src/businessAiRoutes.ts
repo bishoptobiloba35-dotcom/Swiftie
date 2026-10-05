@@ -71,8 +71,18 @@ const buyOrderSchema = z.object({
   itemDescription: z.string().trim().min(3).max(500),
   merchantName: z.string().trim().max(160).optional(),
   merchantAddress: z.string().trim().max(500).optional(),
+  merchantLat: z.number().finite().min(-90).max(90).optional(),
+  merchantLng: z.number().finite().min(-180).max(180).optional(),
   purchaseBudgetMinor: z.number().int().positive().max(100000000),
   notes: z.string().trim().max(1000).optional(),
+  instructions: z.string().trim().max(2000).optional(),
+  requestedCompletionAt: z.string().datetime().optional(),
+  receiverName: z.string().trim().min(1).max(160).optional(),
+  receiverPhone: z.string().trim().min(7).max(40).optional(),
+  receiverPin: z.string().regex(/^\d{4,6}$/).optional(),
+  destinationAddress: z.string().trim().min(3).max(500).optional(),
+  destinationLat: z.number().finite().min(-90).max(90).optional(),
+  destinationLng: z.number().finite().min(-180).max(180).optional(),
   replacementPolicy: z.enum(["EXACT_ONLY", "BEST_MATCH", "APPROVED_ALTERNATIVES", "REFUND_IF_UNAVAILABLE"]).default("EXACT_ONLY"),
   maxPriceDeltaMinor: z.number().int().nonnegative().max(100000000).default(0),
   businessId: z.string().uuid().optional(),
@@ -176,6 +186,19 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
     }
     const parsed = buyOrderSchema.safeParse(req.body?.input);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    if (action === "CREATE_ERRAND") {
+      const input = parsed.data;
+      if (!input.receiverName || !input.receiverPhone || !input.receiverPin ||
+          !input.destinationAddress || input.destinationLat == null || input.destinationLng == null) {
+        return res.status(400).json({ error: "CREATE_ERRAND requires receiver and destination details", code: "ERRAND_DESTINATION_REQUIRED" });
+      }
+      if (input.requestedCompletionAt && new Date(input.requestedCompletionAt).getTime() <= Date.now()) {
+        return res.status(400).json({ error: "requestedCompletionAt must be in the future" });
+      }
+      if (input.errandType !== "GENERAL_ERRAND" && input.purchaseBudgetMinor <= 0) {
+        return res.status(400).json({ error: "Shopping errands require a positive spending ceiling", code: "SPENDING_CEILING_REQUIRED" });
+      }
+    }
 
     const client = await pool!.connect();
     try {
@@ -229,10 +252,10 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
 
       const result = await client.query(
         `INSERT INTO buy_orders
-          (customer_user_id, business_id, errand_type, item_description, merchant_name, merchant_address, purchase_budget_minor, notes, replacement_policy, max_price_delta_minor, errand_instructions)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-         RETURNING id, status, errand_type, item_description, merchant_name, merchant_address, purchase_budget_minor, delivery_fee_minor, total_authorized_minor, currency, notes, replacement_policy, max_price_delta_minor, errand_instructions, created_at, updated_at`,
-        [userId, parsed.data.businessId ?? null, parsed.data.errandType, parsed.data.itemDescription, parsed.data.merchantName ?? null, parsed.data.merchantAddress ?? null, parsed.data.purchaseBudgetMinor, parsed.data.notes ?? null, parsed.data.replacementPolicy, parsed.data.maxPriceDeltaMinor, parsed.data.notes ?? null]
+          (customer_user_id, business_id, errand_type, item_description, merchant_name, merchant_address, merchant_lat, merchant_lng, purchase_budget_minor, notes, replacement_policy, max_price_delta_minor, errand_instructions, requested_completion_at, receiver_name, receiver_phone, receiver_pin_hash, destination_address, destination_lat, destination_lng)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+         RETURNING id, status, errand_type, item_description, merchant_name, merchant_address, purchase_budget_minor, delivery_fee_minor, total_authorized_minor, currency, notes, replacement_policy, max_price_delta_minor, errand_instructions, requested_completion_at, receiver_name, receiver_phone, destination_address, destination_lat, destination_lng, created_at, updated_at`,
+        [userId, parsed.data.businessId ?? null, parsed.data.errandType, parsed.data.itemDescription, parsed.data.merchantName ?? null, parsed.data.merchantAddress ?? null, parsed.data.merchantLat ?? null, parsed.data.merchantLng ?? null, parsed.data.purchaseBudgetMinor, parsed.data.notes ?? null, parsed.data.replacementPolicy, parsed.data.maxPriceDeltaMinor, parsed.data.instructions ?? null, parsed.data.requestedCompletionAt ? new Date(parsed.data.requestedCompletionAt) : null, parsed.data.receiverName ?? null, parsed.data.receiverPhone ?? null, parsed.data.receiverPin ? hashPin(parsed.data.receiverPin) : null, parsed.data.destinationAddress ?? null, parsed.data.destinationLat ?? null, parsed.data.destinationLng ?? null]
       );
 
       const items = parsed.data.items.length ? parsed.data.items : [{
