@@ -418,3 +418,24 @@ if (!db) {
 after(async () => {
   if (db) await db.end();
 });
+
+
+test("marketplace payment reconciliation schema prevents duplicate refund references", async () => {
+  if (!db) return;
+  const columns = (await db.query(
+    `SELECT column_name FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='marketplace_order_payments'
+         AND column_name IN ('refund_reference','refund_status','refund_amount_minor','total_refunded_minor','refund_updated_at')`
+  )).rows.map((row: any) => row.column_name).sort();
+  assert.deepEqual(columns, [
+    "refund_amount_minor",
+    "refund_reference",
+    "refund_status",
+    "refund_updated_at",
+    "total_refunded_minor"
+  ]);
+  const index = (await db.query(
+    `SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_marketplace_order_payments_refund_reference'`
+  )).rowCount;
+  assert.equal(index, 1);
+});
