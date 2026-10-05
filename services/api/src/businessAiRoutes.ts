@@ -289,7 +289,35 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
       );
       await client.query("COMMIT");
       await audit({ userId, plan, capability: "ACTION", action, allowed: true, metadata: { errandId: result.rows[0].id, errandType: parsed.data.errandType } });
-      return res.status(201).json({ buyOrder: result.rows[0] });
+      const created = result.rows[0];
+      return res.status(201).json({
+        buyOrder: {
+          id: created.id,
+          status: created.status,
+          errandType: created.errand_type,
+          itemDescription: created.item_description,
+          merchantName: created.merchant_name,
+          merchantAddress: created.merchant_address,
+          merchantLat: created.merchant_lat,
+          merchantLng: created.merchant_lng,
+          purchaseBudgetMinor: Number(created.purchase_budget_minor),
+          deliveryFeeMinor: Number(created.delivery_fee_minor ?? 0),
+          totalAuthorizedMinor: Number(created.total_authorized_minor ?? 0),
+          currency: created.currency,
+          notes: created.notes,
+          replacementPolicy: created.replacement_policy,
+          maxPriceDeltaMinor: Number(created.max_price_delta_minor ?? 0),
+          errandInstructions: created.errand_instructions,
+          requestedCompletionAt: created.requested_completion_at,
+          receiverName: created.receiver_name,
+          receiverPhone: created.receiver_phone,
+          destinationAddress: created.destination_address,
+          destinationLat: created.destination_lat,
+          destinationLng: created.destination_lng,
+          createdAt: created.created_at,
+          updatedAt: created.updated_at
+        }
+      });
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
