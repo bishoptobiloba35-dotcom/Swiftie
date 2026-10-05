@@ -1248,7 +1248,8 @@ router.post("/admin/business/accounts/:id/status", requireAuth("ADMIN"), async(r
   const result=await pool.query("UPDATE business_accounts SET status=$2,updated_at=now() WHERE id=$1 RETURNING *",[String(req.params.id),parsed.data.status]);
   if(!result.rows[0])return res.status(404).json({error:"Business account not found"});
   await pool.query("INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES((SELECT owner_user_id FROM business_accounts WHERE id=$1),(SELECT ai_plan FROM users WHERE id=(SELECT owner_user_id FROM business_accounts WHERE id=$1)),'ADMIN_BUSINESS_STATUS','UPDATE',true,'Admin status update',$2::jsonb)",[String(req.params.id),JSON.stringify({businessId:String(req.params.id),status:parsed.data.status})]);
-  return res.json({business:result.rows[0]});
+  const business = result.rows[0];
+  return res.json({business: { id: business.id, displayName: business.display_name, status: business.status, ownerUserId: business.owner_user_id, createdAt: business.created_at, updatedAt: business.updated_at }});
 });
 
 router.post("/admin/ai/users/:id/plan", requireAuth("ADMIN"), async(req,res)=>{
@@ -1352,7 +1353,7 @@ router.post("/admin/drop-off/commission/:id/pay", requireAuth("ADMIN"), async(re
 
 router.get("/admin/buy-order-settlements", requireAuth("ADMIN"), async(_req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
-  const result=await pool.query("SELECT s.*,bo.item_description,bo.customer_user_id,ap.user_id AS agent_user_id,u.full_name AS agent_name FROM buy_order_settlements s JOIN buy_orders bo ON bo.id=s.buy_order_id JOIN agent_profiles ap ON ap.id=s.agent_id JOIN users u ON u.id=ap.user_id ORDER BY s.created_at DESC LIMIT 200");
+  const result=await pool.query("SELECT s.id,s.buy_order_id,s.amount_minor,s.currency,s.status,s.provider_status,s.failure_reason,s.paid_at,s.created_at,s.updated_at,bo.item_description,u.full_name AS agent_name FROM buy_order_settlements s JOIN buy_orders bo ON bo.id=s.buy_order_id JOIN agent_profiles ap ON ap.id=s.agent_id JOIN users u ON u.id=ap.user_id ORDER BY s.created_at DESC LIMIT 200");
   return res.json({settlements:result.rows});
 });
 router.post("/admin/buy-order-settlements/:id/status", requireAuth("ADMIN"), async(req,res)=>{
@@ -1367,7 +1368,7 @@ router.post("/admin/buy-order-settlements/:id/status", requireAuth("ADMIN"), asy
     const reference=parsed.data.providerReference??current.provider_reference??current.transfer_reference;
     if(parsed.data.status==="PAID"&&!reference){await client.query("ROLLBACK");return res.status(400).json({error:"A provider transfer reference is required before marking a settlement paid"});}
     if(parsed.data.status==="PAID"&&current.status==="REVERSED"){await client.query("ROLLBACK");return res.status(409).json({error:"A reversed settlement cannot be marked paid manually"});}
-    const result=await client.query("UPDATE buy_order_settlements SET status=$2,provider_reference=COALESCE($3,provider_reference,transfer_reference),failure_reason=COALESCE($4,failure_reason),paid_at=CASE WHEN $2='PAID' THEN COALESCE(paid_at,now()) ELSE paid_at END,updated_at=now() WHERE id=$1 RETURNING *",[id,parsed.data.status,reference??null,parsed.data.failureReason??null]);
+    const result=await client.query("UPDATE buy_order_settlements SET status=$2,provider_reference=COALESCE($3,provider_reference,transfer_reference),failure_reason=COALESCE($4,failure_reason),paid_at=CASE WHEN $2='PAID' THEN COALESCE(paid_at,now()) ELSE paid_at END,updated_at=now() WHERE id=$1 RETURNING id,buy_order_id,agent_id,amount_minor,currency,status,provider_status,failure_reason,paid_at,created_at,updated_at",[id,parsed.data.status,reference??null,parsed.data.failureReason??null]);
     await client.query("INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,(SELECT ai_plan FROM users WHERE id=$1),'SETTLEMENT_STATUS','UPDATE',true,'Admin settlement status update',$2::jsonb)",[identity(req),JSON.stringify({settlementId:id,status:parsed.data.status,providerReference:reference??null})]);
     await client.query("COMMIT");
     return res.json({settlement:result.rows[0]});
