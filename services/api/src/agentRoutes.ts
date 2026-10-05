@@ -319,6 +319,11 @@ router.post("/buy-orders/:id/purchase", requireAuth("AGENT"), async (req, res) =
   const order = await getOrder(id);
   if (!order || order.agent_id !== agent.id) return res.status(404).json({ error: "Buy & Deliver order not found" });
   if (order.status !== "PURCHASING") return res.status(409).json({ error: "Order must be in purchasing state" });
+  if (order.errand_type && order.replacement_review_required) return res.status(409).json({ error: "Customer replacement decision is required before purchase can continue", code: "REPLACEMENT_REVIEW_REQUIRED" });
+  if (order.errand_type) {
+    const pendingItems = await pool.query("SELECT count(*)::int AS count FROM buy_order_items WHERE buy_order_id=$1 AND status='REPLACEMENT_PENDING'", [id]);
+    if (Number(pendingItems.rows[0]?.count ?? 0) > 0) return res.status(409).json({ error: "One or more errand items are awaiting customer replacement decisions", code: "ITEM_REPLACEMENT_PENDING" });
+  }
   if (order.payment_status !== "HELD") return res.status(409).json({ error: "Customer payment must be held before purchase", code: "PAYMENT_NOT_HELD" });
   if (parsed.data.actualPurchaseMinor > Number(order.purchase_budget_minor)) {
     return res.status(409).json({ error: "Actual purchase amount exceeds the authorized budget", code: "PURCHASE_BUDGET_EXCEEDED" });
