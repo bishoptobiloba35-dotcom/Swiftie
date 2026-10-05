@@ -27,6 +27,11 @@ async function getOrder(id: string) {
   return result.rows[0] ?? null;
 }
 
+function publicAgentBuyOrder(row: Record<string, unknown>) {
+  const { customer_user_id: _customerUserId, receiver_pin_hash: _receiverPinHash, payment_reference: _paymentReference, purchase_receipt_key: _purchaseReceiptKey, ...safe } = row;
+  return safe;
+}
+
 router.get("/agents", requireAuth("ADMIN"), async (_req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool.query(
@@ -318,7 +323,7 @@ router.post("/buy-orders/:id/replacement/:replacementId/decision", requireAuth("
           "UPDATE buy_order_payments SET refund_status=$2,refund_reference=COALESCE(refund_reference,$3),refund_amount_minor=GREATEST(refund_amount_minor,$4),updated_at=now() WHERE id=$1",
           [payment.id, providerStatus, providerRef, refundAmountMinor]
         );
-        return res.status(202).json({ ok: true, decision: "REFUND", refundStatus: providerStatus, refundId: refundRow.id, providerReference: providerRef });
+        return res.status(202).json({ ok: true, decision: "REFUND", refundStatus: providerStatus, refundId: refundRow.id });
       } catch (error) {
         await pool.query("UPDATE buy_order_item_refunds SET status='FAILED',failure_reason=$2,updated_at=now() WHERE id=$1",[refundRow.id,String(error instanceof Error ? error.message : "Paystack refund request failed").slice(0,500)]);
         return res.status(502).json({ error: "Refund initiation failed", code: "REFUND_INITIATION_FAILED", refundId: refundRow.id });
@@ -346,7 +351,7 @@ router.get("/agent/buy-orders", requireAuth("AGENT"), async (req, res) => {
       LIMIT 100`,
     [agent.id]
   );
-  res.json({ buyOrders: result.rows });
+  res.json({ buyOrders: result.rows.map((row) => publicAgentBuyOrder(row)) });
 });
 
 router.post("/buy-orders/:id/claim", requireAuth("AGENT"), async (req, res) => {
@@ -396,7 +401,7 @@ router.post("/buy-orders/:id/claim", requireAuth("AGENT"), async (req, res) => {
       [agent.id, id, JSON.stringify({ status: "AGENT_ASSIGNED" })]
     );
     await client.query("COMMIT");
-    return res.status(200).json({ buyOrder: updated.rows[0] });
+    return res.status(200).json({ buyOrder: publicAgentBuyOrder(updated.rows[0]) });
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -426,7 +431,7 @@ router.post("/buy-orders/:id/accept", requireAuth("AGENT"), async (req, res) => 
     "INSERT INTO agent_action_events (agent_id, buy_order_id, action, metadata) VALUES ($1,$2,'ACCEPT','{}'::jsonb)",
     [agent.id, id]
   );
-  res.json({ buyOrder: result.rows[0] });
+  res.json({ buyOrder: publicAgentBuyOrder(result.rows[0]) });
 });
 
 router.post("/buy-orders/:id/purchase", requireAuth("AGENT"), async (req, res) => {
