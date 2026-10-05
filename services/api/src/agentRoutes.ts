@@ -216,10 +216,85 @@ router.post("/buy-orders/:id/replacement/:replacementId/decision", requireAuth("
       await client.query("UPDATE buy_orders SET replacement_review_required=false,replacement_review_deadline=NULL,updated_at=now() WHERE id=$1",[id]);
       await client.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'REPLACEMENT_APPROVED',$3::jsonb)",[id,identity(req),JSON.stringify({replacementId:result.id,itemId:result.item_id})]);
     } else {
+      const refundAmountMinor = Number(result.requested_price_minor ?? result.max_authorized_minor ?? 0);
+      if (!Number.isSafeInteger(refundAmountMinor) || refundAmountMinor <= 0) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "This item has no refundable authorized amount", code: "REFUND_AMOUNT_UNAVAILABLE" });
+      }
+      const payment = (await client.query(
+        "SELECT id,provider_reference,amount_minor,total_refunded_minor,currency,status FROM buy_order_payments WHERE buy_order_id=$1 FOR UPDATE",
+        [id]
+      )).rows[0];
+      if (!payment || !["HELD","AUTHORIZED"].includes(payment.status)) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Customer payment is not available for item refund", code: "PAYMENT_NOT_REFUNDABLE" });
+      }
+      const remaining = Number(payment.amount_minor) - Number(payment.total_refunded_minor ?? 0);
+      if (refundAmountMinor > remaining) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Item refund exceeds the remaining payment authorization", code: "REFUND_EXCEEDS_REMAINING_AUTHORIZATION" });
+      }
+      const existingRefund = (await client.query(
+        "SELECT id,status,provider_ref,amount_minor FROM buy_order_item_refunds WHERE item_id=$1 FOR UPDATE",
+        [result.item_id]
+      )).rows[0];
+      if (existingRefund && ["REQUESTED","PENDING","PROCESSING","PROCESSED"].includes(existingRefund.status)) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "A refund for this item has already been initiated", code: "REFUND_ALREADY_REQUESTED" });
+      }
+      const refundRow = (await client.query(
+        `INSERT INTO buy_order_item_refunds
+          (buy_order_id,item_id,payment_id,amount_minor,currency,status)
+         VALUES ($1,$2,$3,$4,$5,'REQUESTED')
+         ON CONFLICT (item_id) DO UPDATE SET
+           payment_id=EXCLUDED.payment_id,amount_minor=EXCLUDED.amount_minor,currency=EXCLUDED.currency,
+           status='REQUESTED',failure_reason=NULL,updated_at=now()
+         RETURNING id,amount_minor,currency,status`,
+        [id,result.item_id,payment.id,refundAmountMinor,payment.currency ?? "NGN"]
+      )).rows[0];
       await client.query("UPDATE buy_order_replacement_options SET status='REFUNDED',approved_by_user_id=$2,approved_at=now(),updated_at=now() WHERE id=$1",[result.id,identity(req)]);
       await client.query("UPDATE buy_order_items SET status='REFUNDED',updated_at=now() WHERE id=$1",[result.item_id]);
       await client.query("UPDATE buy_orders SET replacement_review_required=false,replacement_review_deadline=NULL,updated_at=now() WHERE id=$1",[id]);
-      await client.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'ITEM_REFUND_REQUESTED',$3::jsonb)",[id,identity(req),JSON.stringify({replacementId:result.id,itemId:result.item_id})]);
+      await client.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'ITEM_REFUND_REQUESTED',$3::jsonb)",[id,identity(req),JSON.stringify({replacementId:result.id,itemId:result.item_id,amountMinor:refundAmountMinor,refundId:refundRow.id})]);
+      await client.query("COMMIT");
+
+      if (!payment.provider_reference || !process.env.PAYSTACK_SECRET_KEY) {
+        await pool.query("UPDATE buy_order_item_refunds SET status='RECONCILIATION_REQUIRED',failure_reason='Paystack payment reference or secret is unavailable',updated_at=now() WHERE id=$1",[refundRow.id]);
+        return res.status(202).json({ ok: true, decision: "REFUND", refundStatus: "RECONCILIATION_REQUIRED", refundId: refundRow.id });
+      }
+
+      try {
+        const refundResponse = await fetch("https://api.paystack.co/refund", {
+          method: "POST",
+          headers: { authorization: "Bearer " + process.env.PAYSTACK_SECRET_KEY, "content-type": "application/json" },
+          body: JSON.stringify({
+            transaction: payment.provider_reference,
+            amount: refundAmountMinor,
+            currency: payment.currency ?? "NGN",
+            customer_note: "Unavailable errand item refund",
+            merchant_note: "SwiftDrop errand item refund " + refundRow.id
+          })
+        });
+        const refundPayload = await refundResponse.json() as any;
+        if (!refundResponse.ok || !refundPayload.status) {
+          await pool.query("UPDATE buy_order_item_refunds SET status='FAILED',failure_reason=$2,updated_at=now() WHERE id=$1",[refundRow.id,String(refundPayload.message ?? "Paystack refund request failed").slice(0,500)]);
+          return res.status(502).json({ error: "Refund initiation failed", code: "REFUND_INITIATION_FAILED", refundId: refundRow.id });
+        }
+        const providerRef = refundPayload.data?.id == null ? null : String(refundPayload.data.id);
+        const providerStatus = String(refundPayload.data?.status ?? "pending").toUpperCase();
+        await pool.query(
+          "UPDATE buy_order_item_refunds SET status=$2,provider_ref=$3,updated_at=now() WHERE id=$1",
+          [refundRow.id, ["PENDING","PROCESSING","NEEDS-ATTENTION"].includes(providerStatus) ? providerStatus : "PENDING", providerRef]
+        );
+        await pool.query(
+          "UPDATE buy_order_payments SET refund_status=$2,refund_reference=COALESCE(refund_reference,$3),refund_amount_minor=GREATEST(refund_amount_minor,$4),updated_at=now() WHERE id=$1",
+          [payment.id, providerStatus, providerRef, refundAmountMinor]
+        );
+        return res.status(202).json({ ok: true, decision: "REFUND", refundStatus: providerStatus, refundId: refundRow.id, providerReference: providerRef });
+      } catch (error) {
+        await pool.query("UPDATE buy_order_item_refunds SET status='FAILED',failure_reason=$2,updated_at=now() WHERE id=$1",[refundRow.id,String(error instanceof Error ? error.message : "Paystack refund request failed").slice(0,500)]);
+        return res.status(502).json({ error: "Refund initiation failed", code: "REFUND_INITIATION_FAILED", refundId: refundRow.id });
+      }
     }
     await client.query("COMMIT");
     return res.json({ ok: true, decision: decision.data.decision });
