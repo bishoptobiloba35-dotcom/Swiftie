@@ -114,13 +114,13 @@ router.post("/agent/settlement-account", requireAuth("AGENT"), async(req,res)=>{
     ON CONFLICT(agent_id) DO UPDATE SET recipient_code=EXCLUDED.recipient_code,bank_code=EXCLUDED.bank_code,bank_name=EXCLUDED.bank_name,account_name=EXCLUDED.account_name,account_last4=EXCLUDED.account_last4,currency='NGN',active=true,verified_at=now(),updated_at=now()
     RETURNING id,bank_code,bank_name,account_name,account_last4,currency,active,verified_at,created_at,updated_at`,
     [agent.id,recipient.data.recipient_code,parsed.data.bankCode,recipient.data.details?.bank_name??null,resolved.data.account_name,parsed.data.accountNumber.slice(-4)]);
-  res.status(201).json({account:result.rows[0]});
+  res.status(201).json({account:{id:result.rows[0].id,bankCode:result.rows[0].bank_code,bankName:result.rows[0].bank_name,accountName:result.rows[0].account_name,accountLast4:result.rows[0].account_last4,currency:result.rows[0].currency,active:result.rows[0].active,verifiedAt:result.rows[0].verified_at,createdAt:result.rows[0].created_at,updatedAt:result.rows[0].updated_at}});
 });
 router.get("/agent/settlements", requireAuth("AGENT"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const agent=await getAgent(identity(req));if(!agent)return res.status(404).json({error:"Agent profile not found"});
   const result=await pool.query("SELECT bos.id,bos.buy_order_id,bos.amount_minor,bos.currency,bos.status,bos.provider_status,bos.failure_reason,bos.paid_at,bos.created_at,bos.updated_at FROM buy_order_settlements bos WHERE bos.agent_id=$1 ORDER BY bos.created_at DESC LIMIT 100",[agent.id]);
-  res.json({settlements:result.rows});
+  res.json({settlements:result.rows.map(row=>({id:row.id,buyOrderId:row.buy_order_id,amountMinor:row.amount_minor,currency:row.currency,status:row.status,providerStatus:row.provider_status,failureReason:row.failure_reason,paidAt:row.paid_at,createdAt:row.created_at,updatedAt:row.updated_at}))});
 });
 
 
