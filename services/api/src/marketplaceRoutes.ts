@@ -210,7 +210,7 @@ router.get("/marketplace/sellers/:sellerId", async (req, res) => {
   if (!result.rows[0]) return res.status(404).json({ error: "Seller not found" });
   const row = result.rows[0];
   return res.json({ seller: {
-    id: row.id, userId: row.user_id, displayName: row.display_name, bio: row.bio, locationLabel: row.location_label,
+    id: row.id, displayName: row.display_name, bio: row.bio, locationLabel: row.location_label,
     memberSince: row.created_at,
     trust: {
       successfulSales: Number(row.successful_sales ?? 0), orderCount: Number(row.order_count ?? 0),
@@ -448,7 +448,7 @@ router.post("/marketplace/orders/:id/fulfill", requireAuth(), async (req, res) =
     if (!updatedOrder) throw new Error("Marketplace fulfillment state changed concurrently");
     await client.query("COMMIT");
     return res.status(201).json({
-      order: updatedOrder,
+      order: publicMarketplaceOrder(updatedOrder),
       deliveryId,
       trackingCode,
       fulfillmentStatus: "PREPARING",
