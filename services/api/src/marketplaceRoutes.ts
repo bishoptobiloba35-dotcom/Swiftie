@@ -180,7 +180,7 @@ router.get("/marketplace/sellers/:sellerId", async (req, res) => {
        FROM marketplace_seller_profiles s
        LEFT JOIN marketplace_orders mo ON mo.seller_user_id=s.user_id
        LEFT JOIN marketplace_seller_reviews r ON r.seller_user_id=s.user_id
-      WHERE s.user_id=$1 AND s.status='ACTIVE'
+      WHERE (s.id=$1 OR s.user_id=$1) AND s.status='ACTIVE'
       GROUP BY s.id,s.user_id,s.display_name,s.bio,s.location_label,s.created_at`,
     [sellerId]
   );
