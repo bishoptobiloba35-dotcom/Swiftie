@@ -62,6 +62,7 @@ const buyOrderItemSchema = z.object({
   description: z.string().trim().min(1).max(500),
   quantity: z.number().int().positive().max(1000).default(1),
   maxAuthorizedMinor: z.number().int().nonnegative().max(100000000).optional(),
+  requestedPriceMinor: z.number().int().nonnegative().max(100000000).optional(),
   replacementPolicy: z.enum(["EXACT_ONLY", "BEST_MATCH", "APPROVED_ALTERNATIVES", "REFUND_IF_UNAVAILABLE"]).optional()
 });
 
@@ -180,21 +181,6 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
     try {
       await client.query("BEGIN");
       let businessMemberRow: any = null;
-      const items = parsed.data.items.length ? parsed.data.items : [{
-        description: parsed.data.itemDescription,
-        quantity: 1,
-        maxAuthorizedMinor: parsed.data.purchaseBudgetMinor,
-        replacementPolicy: parsed.data.replacementPolicy
-      }];
-      for (const item of items) {
-        await client.query(
-          `INSERT INTO buy_order_items
-            (buy_order_id,requested_description,quantity,max_authorized_minor,replacement_policy)
-           VALUES ($1,$2,$3,$4,$5)`,
-          [result.rows[0].id, item.description, item.quantity, item.maxAuthorizedMinor ?? parsed.data.purchaseBudgetMinor, item.replacementPolicy ?? parsed.data.replacementPolicy]
-        );
-      }
-
       if (parsed.data.businessId) {
         await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [parsed.data.businessId]);
         const memberResult = await client.query(
@@ -248,6 +234,22 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
          RETURNING id, status, errand_type, item_description, merchant_name, merchant_address, purchase_budget_minor, delivery_fee_minor, total_authorized_minor, currency, notes, replacement_policy, max_price_delta_minor, errand_instructions, created_at, updated_at`,
         [userId, parsed.data.businessId ?? null, parsed.data.errandType, parsed.data.itemDescription, parsed.data.merchantName ?? null, parsed.data.merchantAddress ?? null, parsed.data.purchaseBudgetMinor, parsed.data.notes ?? null, parsed.data.replacementPolicy, parsed.data.maxPriceDeltaMinor, parsed.data.notes ?? null]
       );
+
+      const items = parsed.data.items.length ? parsed.data.items : [{
+        description: parsed.data.itemDescription,
+        quantity: 1,
+        maxAuthorizedMinor: parsed.data.purchaseBudgetMinor,
+        requestedPriceMinor: undefined,
+        replacementPolicy: parsed.data.replacementPolicy
+      }];
+      for (const item of items) {
+        await client.query(
+          `INSERT INTO buy_order_items
+            (buy_order_id,requested_description,quantity,max_authorized_minor,requested_price_minor,replacement_policy)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [result.rows[0].id, item.description, item.quantity, item.maxAuthorizedMinor ?? parsed.data.purchaseBudgetMinor, item.requestedPriceMinor ?? null, item.replacementPolicy ?? parsed.data.replacementPolicy]
+        );
+      }
 
       if (parsed.data.businessId) {
         await client.query(
