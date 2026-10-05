@@ -72,7 +72,36 @@ router.post("/errands", requireAuth("CUSTOMER"), async (req, res) => {
   return res.status(201).json({ errand });
 });
 
-router.get("/errands", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
+
+router.get("/errands/:id/replacements", requireAuth("CUSTOMER", "ADMIN", "AGENT"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const id = String(req.params.id ?? "").trim();
+  const order = (await pool.query("SELECT id, customer_user_id, agent_id, replacement_review_required, replacement_review_deadline FROM buy_orders WHERE id=$1",[id])).rows[0];
+  if (!order) return res.status(404).json({ error: "Errand not found" });
+  const role = (req as any).user?.role;
+  if (role === "CUSTOMER" && order.customer_user_id !== identity(req)) return res.status(403).json({ error: "Not authorized for this errand" });
+  if (role === "AGENT") {
+    const agent = (await pool.query("SELECT id FROM agent_profiles WHERE user_id=$1",[identity(req)])).rows[0];
+    if (!agent || agent.id !== order.agent_id) return res.status(403).json({ error: "Not authorized for this errand" });
+  }
+  const items = await pool.query(
+    `SELECT i.id, i.requested_description, i.quantity, i.max_authorized_minor,
+            i.replacement_policy, i.status,
+            COALESCE(json_agg(json_build_object(
+              'id',r.id,'description',r.proposed_description,'quantity',r.proposed_quantity,
+              'priceMinor',r.proposed_price_minor,'currency',r.currency,
+              'shopperNote',r.shopper_note,'status',r.status,'createdAt',r.created_at
+            ) ORDER BY r.created_at DESC) FILTER (WHERE r.id IS NOT NULL), '[]'::json) AS replacements
+       FROM buy_order_items i
+       LEFT JOIN buy_order_replacement_options r ON r.item_id=i.id
+      WHERE i.buy_order_id=$1
+      GROUP BY i.id
+      ORDER BY i.created_at ASC`,
+    [id]
+  );
+  res.json({ replacementReviewRequired: order.replacement_review_required, reviewDeadline: order.replacement_review_deadline, items: items.rows });
+});
+\nrouter.get("/errands", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool.query(
     `SELECT id, errand_type, status, item_description, merchant_name, merchant_address,
