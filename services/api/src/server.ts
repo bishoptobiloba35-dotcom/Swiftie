@@ -23,6 +23,7 @@ import marketplaceRoutes from "./marketplaceRoutes.js";
 import { processSupportAiBatch } from "./supportAiAgent.js";
 import recurringDispatchRoutes from "./recurringDispatchRoutes.js";
 import deliveryExceptionRoutes from "./deliveryExceptionRoutes.js";
+import errandRoutes from "./errandRoutes.js";
 import { processRecurringDispatches } from "./recurringDispatchWorker.js";
 import { getActivePricingConfig } from "./pricing.js";
 import { reconcileProcessingBuyOrderSettlements } from "./buyOrderSettlementWorker.js";
@@ -78,6 +79,7 @@ app.use("/api", agentRoutes);
 app.use("/api", marketplaceRoutes);
 app.use("/api", recurringDispatchRoutes);
 app.use("/api", deliveryExceptionRoutes);
+app.use("/api", errandRoutes);
 
 type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED" | "RETURNED";
 type DeliveryLocation = { latitude: number; longitude: number; recordedAt?: string };
