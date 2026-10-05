@@ -7,6 +7,7 @@ import { identity } from "./requestIdentity.js";
 import { driverForUser } from "./database/deliveryRepository.js";
 import { canCreatePersonalBuyOrder, canDispatchBusiness, canManageBusiness, canUseAiAction } from "./aiPolicy.js";
 import { getPrivateObject, putPrivateObject } from "./storage.js";
+import { hashPin } from "./security.js";
 
 const router = Router();
 
