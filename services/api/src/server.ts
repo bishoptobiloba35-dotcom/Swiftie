@@ -420,8 +420,19 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
     if (data.data.reference && data.data.reference !== reference) {
       await setPayoutProviderReference(routeParam(req.params.id, "id"), data.data.reference);
     }
+    const payoutResult = await findPayout(routeParam(req.params.id, "id"));
+    const publicPayout = payoutResult ? {
+      id: payoutResult.id,
+      deliveryId: payoutResult.deliveryId,
+      amountMinor: payoutResult.amountMinor,
+      currency: payoutResult.currency,
+      status: payoutResult.status,
+      providerStatus: payoutResult.providerStatus,
+      failureReason: payoutResult.failureReason,
+      processedAt: payoutResult.processedAt
+    } : null;
     return res.status(202).json({
-      payout: await findPayout(routeParam(req.params.id, "id")),
+      payout: publicPayout,
       providerStatus: data.data.status ?? "pending",
       message: "Transfer initiated. Final payout status will be updated from Paystack's transfer webhook or reconciliation worker."
     });
@@ -435,8 +446,19 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
       providerReference: reference,
       error: error instanceof Error ? error.message : "unknown"
     }));
+    const payoutResult = await findPayout(routeParam(req.params.id, "id"));
+    const publicPayout = payoutResult ? {
+      id: payoutResult.id,
+      deliveryId: payoutResult.deliveryId,
+      amountMinor: payoutResult.amountMinor,
+      currency: payoutResult.currency,
+      status: payoutResult.status,
+      providerStatus: payoutResult.providerStatus,
+      failureReason: payoutResult.failureReason,
+      processedAt: payoutResult.processedAt
+    } : null;
     return res.status(202).json({
-      payout: await findPayout(routeParam(req.params.id, "id")),
+      payout: publicPayout,
       providerStatus: "pending",
       message: "Transfer status is being reconciled with Paystack."
     });
