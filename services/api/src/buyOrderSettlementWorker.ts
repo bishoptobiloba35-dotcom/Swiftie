@@ -5,7 +5,7 @@ export async function reconcileProcessingBuyOrderSettlements(): Promise<void> {
   const secret = process.env.PAYSTACK_SECRET_KEY;
   if (!secret) return;
   const result = await pool.query(`SELECT id,buy_order_id,transfer_reference,amount_minor,currency
-    FROM buy_order_settlements WHERE status='PROCESSING' AND transfer_reference IS NOT NULL
+    FROM buy_order_settlements WHERE status='PROCESSING' AND transfer_reference IS NOT NULL AND provider_status IS DISTINCT FROM 'amount_mismatch'
     ORDER BY updated_at ASC LIMIT 25`);
   for (const settlement of result.rows) {
     const reference = String(settlement.transfer_reference);
