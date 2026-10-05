@@ -276,7 +276,7 @@ router.get("/marketplace/orders/:id", requireAuth(), async (req, res) => {
             mo.status,mo.fulfillment_status,mo.delivery_id,mo.requested_delivery_at,mo.created_at,mo.updated_at,
             l.title,l.description,l.condition,l.use_description,l.usage_instructions,l.delivery_mode,
             s.display_name AS seller_name,s.location_label AS seller_location,
-            mop.status AS payment_status,mop.provider_status,mop.authorization_url
+            mop.status AS payment_status,mop.provider_status
        FROM marketplace_orders mo
        JOIN marketplace_listings l ON l.id=mo.listing_id
        JOIN marketplace_seller_profiles s ON s.id=l.seller_profile_id
