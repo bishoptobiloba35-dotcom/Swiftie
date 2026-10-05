@@ -1150,17 +1150,18 @@ router.post("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, 
   const result = await pool!.query(
     `INSERT INTO business_accounts
       (owner_user_id, legal_name, display_name, registration_number, monthly_spend_limit_minor, per_order_limit_minor, requires_approval, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,owner_user_id,legal_name,display_name,registration_number,monthly_spend_limit_minor,per_order_limit_minor,requires_approval,status,created_at,updated_at`,
     [userId, parsed.data.legalName, parsed.data.displayName, parsed.data.registrationNumber ?? null, parsed.data.monthlySpendLimitMinor, parsed.data.perOrderLimitMinor, parsed.data.requiresApproval, (req as any).user?.role === "ADMIN" ? "ACTIVE" : "PENDING"]
   );
   await pool!.query("INSERT INTO business_members (business_id, user_id, member_role) VALUES ($1,$2,'OWNER')", [result.rows[0].id, userId]);
-  res.status(201).json({ business: result.rows[0] });
+  const business = result.rows[0];
+  res.status(201).json({ business: { id: business.id, ownerUserId: business.owner_user_id, legalName: business.legal_name, displayName: business.display_name, registrationNumber: business.registration_number, monthlySpendLimitMinor: Number(business.monthly_spend_limit_minor ?? 0), perOrderLimitMinor: Number(business.per_order_limit_minor ?? 0), requiresApproval: business.requires_approval, status: business.status, createdAt: business.created_at, updatedAt: business.updated_at } });
 });
 
 router.get("/admin/business/recurring-dispatches", requireAuth("ADMIN"), async (_req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool.query(
-    `SELECT rd.*, ba.display_name AS business_name,
+    `SELECT rd.id,rd.business_id,rd.frequency,rd.next_run_at,rd.active,rd.last_run_at,rd.last_dispatch_plan_id,rd.created_at,rd.updated_at, ba.display_name AS business_name,
             bdp.status AS plan_status, bdp.created_at AS plan_created_at
        FROM business_recurring_dispatches rd
        JOIN business_accounts ba ON ba.id=rd.business_id
@@ -1168,16 +1169,16 @@ router.get("/admin/business/recurring-dispatches", requireAuth("ADMIN"), async (
       ORDER BY rd.active DESC, rd.next_run_at ASC
       LIMIT 200`
   );
-  res.json({ recurringDispatches: result.rows });
+  res.json({ recurringDispatches: result.rows.map((row) => ({ id: row.id, businessId: row.business_id, frequency: row.frequency, nextRunAt: row.next_run_at, active: row.active, lastRunAt: row.last_run_at, lastDispatchPlanId: row.last_dispatch_plan_id, createdAt: row.created_at, updatedAt: row.updated_at, businessName: row.business_name, planStatus: row.plan_status, planCreatedAt: row.plan_created_at })) });
 });
 
 router.get("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Business accounts require the production database" });
   const userId = identity(req);
   const result = (req as any).user?.role === "ADMIN"
-    ? await pool!.query("SELECT * FROM business_accounts ORDER BY created_at DESC LIMIT 200")
-    : await pool!.query("SELECT ba.* FROM business_accounts ba JOIN business_members bm ON bm.business_id=ba.id WHERE bm.user_id=$1 AND bm.active=true ORDER BY ba.created_at DESC", [userId]);
-  res.json({ businesses: result.rows });
+    ? await pool!.query("SELECT id,owner_user_id,legal_name,display_name,registration_number,monthly_spend_limit_minor,per_order_limit_minor,requires_approval,status,created_at,updated_at FROM business_accounts ORDER BY created_at DESC LIMIT 200")
+    : await pool!.query("SELECT ba.id,ba.owner_user_id,ba.legal_name,ba.display_name,ba.registration_number,ba.monthly_spend_limit_minor,ba.per_order_limit_minor,ba.requires_approval,ba.status,ba.created_at,ba.updated_at FROM business_accounts ba JOIN business_members bm ON bm.business_id=ba.id WHERE bm.user_id=$1 AND bm.active=true ORDER BY ba.created_at DESC", [userId]);
+  res.json({ businesses: result.rows.map((row) => ({ id: row.id, ownerUserId: row.owner_user_id, legalName: row.legal_name, displayName: row.display_name, registrationNumber: row.registration_number, monthlySpendLimitMinor: Number(row.monthly_spend_limit_minor ?? 0), perOrderLimitMinor: Number(row.per_order_limit_minor ?? 0), requiresApproval: row.requires_approval, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at })) });
 });
 
 const dropOffApplicationSchema = z.object({
@@ -1216,7 +1217,7 @@ router.get("/drop-off/locations", requireAuth("CUSTOMER","AGENT","ADMIN"), async
   if(!Number.isFinite(latitude)||!Number.isFinite(longitude))return res.status(400).json({error:"latitude and longitude are required"});
   const latDelta=radiusKm/111,lngDelta=radiusKm/(111*Math.max(.2,Math.cos(latitude*Math.PI/180)));
   const result=await pool.query("SELECT dl.*,ba.display_name AS business_name FROM drop_off_locations dl JOIN business_accounts ba ON ba.id=dl.business_id WHERE dl.status='ACTIVE' AND dl.verification_status='VERIFIED' AND dl.latitude BETWEEN $1 AND $2 AND dl.longitude BETWEEN $3 AND $4 LIMIT 200",[latitude-latDelta,latitude+latDelta,longitude-lngDelta,longitude+lngDelta]);
-  const locations=result.rows.map(row=>{const p1=latitude*Math.PI/180,p2=Number(row.latitude)*Math.PI/180,dp=(Number(row.latitude)-latitude)*Math.PI/180,dl=(Number(row.longitude)-longitude)*Math.PI/180,h=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return {...row,distanceKm:6371*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h))}}).filter(row=>row.distanceKm<=radiusKm).sort((a,b)=>a.distanceKm-b.distanceKm);
+  const locations=result.rows.map(row=>{const p1=latitude*Math.PI/180,p2=Number(row.latitude)*Math.PI/180,dp=(Number(row.latitude)-latitude)*Math.PI/180,dl=(Number(row.longitude)-longitude)*Math.PI/180,h=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return {id:row.id,businessId:row.business_id,name:row.name,address:row.address,latitude:Number(row.latitude),longitude:Number(row.longitude),phone:row.phone,operatingHours:row.operating_hours,capacity:Number(row.capacity),status:row.status,verificationStatus:row.verification_status,createdAt:row.created_at,updatedAt:row.updated_at,businessName:row.business_name,distanceKm:6371*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h))}}).filter(row=>row.distanceKm<=radiusKm).sort((a,b)=>a.distanceKm-b.distanceKm);
   res.json({locations});
 });
 router.get("/drop-off/locations/mine", requireAuth("CUSTOMER","AGENT","ADMIN"), async(req,res)=>{
