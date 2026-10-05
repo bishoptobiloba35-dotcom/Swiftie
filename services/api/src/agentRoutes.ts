@@ -129,9 +129,21 @@ router.post("/agent/buy-orders/:id/replacement", requireAuth("AGENT"), async (re
     const authorizedMax = Number(locked.max_authorized_minor ?? order.purchase_budget_minor);
     const maxDelta = Number(order.max_price_delta_minor ?? 0);
     const requestedPrice = locked.requested_price_minor == null ? null : Number(locked.requested_price_minor);
-    const withinPriceRules = parsed.data.proposedPriceMinor <= authorizedMax
-      && parsed.data.proposedPriceMinor <= Number(order.purchase_budget_minor)
-      && (requestedPrice == null || parsed.data.proposedPriceMinor <= requestedPrice + maxDelta);
+    const requestedQuantity = Number(locked.quantity ?? 1);
+    const proposedQuantity = Number(parsed.data.proposedQuantity);
+    const proposedPrice = Number(parsed.data.proposedPriceMinor);
+    const unitRequestedPrice = requestedPrice != null && requestedQuantity > 0
+      ? requestedPrice / requestedQuantity
+      : null;
+    const maxAuthorizedTotal = Math.min(
+      authorizedMax,
+      Number(order.purchase_budget_minor),
+      unitRequestedPrice != null ? unitRequestedPrice * proposedQuantity + maxDelta : authorizedMax
+    );
+    const withinPriceRules = Number.isSafeInteger(proposedPrice) && proposedPrice > 0
+      && Number.isSafeInteger(proposedQuantity) && proposedQuantity > 0
+      && proposedQuantity <= requestedQuantity
+      && proposedPrice <= maxAuthorizedTotal;
     const automatic = locked.replacement_policy === "BEST_MATCH" && withinPriceRules;
 
     if (locked.replacement_policy === "EXACT_ONLY") {
