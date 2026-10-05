@@ -577,7 +577,7 @@ router.post("/buy-orders/:id/purchase", requireAuth("AGENT"), async (req, res) =
     "INSERT INTO agent_action_events (agent_id, buy_order_id, action, metadata) VALUES ($1,$2,'PURCHASE_RECORDED',$3::jsonb)",
     [agent.id, id, JSON.stringify({ actualPurchaseMinor: parsed.data.actualPurchaseMinor })]
   );
-  res.status(201).json({ buyOrder: result.rows[0] });
+  res.status(201).json({ buyOrder: publicAgentBuyOrder(result.rows[0]) });
 });
 
 router.post("/buy-orders/:id/create-delivery", requireAuth("AGENT"), async (req,res)=>{
@@ -678,7 +678,7 @@ router.post("/buy-orders/:id/cancel", requireAuth("CUSTOMER"), async (req, res) 
           if (!cancelledOrder.payment_reference) {
             await pool.query("UPDATE buy_order_payments SET refund_status='RECONCILIATION_REQUIRED',refund_amount_minor=$2,updated_at=now() WHERE id=$1",[payment.id,Number(payment.amount_minor)]);
             await pool.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'REFUND_RECONCILIATION_REQUIRED',$3::jsonb)",[cancelledOrder.id,identity(req),JSON.stringify({amountMinor:Number(payment.amount_minor),reason:"Missing provider payment reference"})]);
-            return res.json({ buyOrder: cancelledOrder });
+            return res.json({ buyOrder: publicAgentBuyOrder(cancelledOrder) });
           }
           const refundResponse=await fetch("https://api.paystack.co/refund",{
             method:"POST",
