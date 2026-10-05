@@ -112,7 +112,14 @@ router.get("/errands/:id", requireAuth("CUSTOMER", "ADMIN", "AGENT"), async (req
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const id = String(req.params.id ?? "").trim();
   const order = (await pool.query(
-    `SELECT bo.*,
+    `SELECT bo.id, bo.customer_user_id, bo.errand_type, bo.status, bo.item_description,
+            bo.merchant_name, bo.merchant_address, bo.merchant_lat, bo.merchant_lng,
+            bo.purchase_budget_minor, bo.actual_purchase_minor, bo.currency,
+            bo.replacement_policy, bo.max_price_delta_minor, bo.errand_instructions,
+            bo.requested_completion_at, bo.receiver_name, bo.receiver_phone,
+            bo.destination_address, bo.destination_lat, bo.destination_lng,
+            bo.agent_id, bo.delivery_id, bo.replacement_review_required,
+            bo.replacement_review_deadline, bo.created_at, bo.updated_at,
             ap.id AS agent_profile_id, u.full_name AS agent_name, u.phone AS agent_phone,
             d.id AS linked_delivery_id, d.tracking_code, d.status AS delivery_status,
             d.driver_id AS delivery_driver_id, d.pickup_photo_url, d.exception_status,
@@ -139,7 +146,7 @@ router.get("/errands/:id", requireAuth("CUSTOMER", "ADMIN", "AGENT"), async (req
        FROM buy_order_items i WHERE i.buy_order_id=$1 ORDER BY i.created_at ASC`, [id]),
     pool.query(`SELECT id,event_type AS "eventType",metadata,created_at AS "createdAt"
        FROM buy_order_events WHERE buy_order_id=$1 ORDER BY created_at ASC LIMIT 200`, [id]),
-    pool.query(`SELECT id,status,payment_status,amount_minor,currency,provider_reference,refund_status,refund_amount_minor,refund_reference
+    pool.query(`SELECT id,status,payment_status,amount_minor,currency,refund_status,refund_amount_minor
        FROM buy_order_payments WHERE buy_order_id=$1 ORDER BY created_at DESC LIMIT 1`, [id])
   ]);
   res.json({
