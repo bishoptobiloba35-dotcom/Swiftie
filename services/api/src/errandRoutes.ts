@@ -151,14 +151,37 @@ router.get("/errands/:id", requireAuth("CUSTOMER", "ADMIN", "AGENT"), async (req
   ]);
   res.json({
     errand: {
-      ...order,
+      id: order.id,
+      errandType: order.errand_type,
+      status: order.status,
+      itemDescription: order.item_description,
+      merchantName: order.merchant_name,
+      merchantAddress: order.merchant_address,
+      merchantLat: order.merchant_lat,
+      merchantLng: order.merchant_lng,
+      purchaseBudgetMinor: Number(order.purchase_budget_minor ?? 0),
+      actualPurchaseMinor: order.actual_purchase_minor == null ? null : Number(order.actual_purchase_minor),
+      currency: order.currency,
+      replacementPolicy: order.replacement_policy,
+      maxPriceDeltaMinor: Number(order.max_price_delta_minor ?? 0),
+      errandInstructions: order.errand_instructions,
+      requestedCompletionAt: order.requested_completion_at,
+      receiverName: order.receiver_name,
+      receiverPhone: order.receiver_phone,
+      destinationAddress: order.destination_address,
+      destinationLat: order.destination_lat,
+      destinationLng: order.destination_lng,
+      replacementReviewRequired: Boolean(order.replacement_review_required),
+      replacementReviewDeadline: order.replacement_review_deadline,
       agent: order.agent_profile_id ? { id: order.agent_profile_id, name: order.agent_name, phone: order.agent_phone } : null,
       delivery: order.linked_delivery_id ? {
         id: order.linked_delivery_id, trackingCode: order.tracking_code, status: order.delivery_status,
         driverId: order.delivery_driver_id, pickupPhotoUrl: order.pickup_photo_url,
         exceptionStatus: order.exception_status, nextDeliveryAt: order.next_delivery_at,
         receiverConfirmedAt: order.receiver_confirmed_at
-      } : null
+      } : null,
+      createdAt: order.created_at,
+      updatedAt: order.updated_at
     },
     items: items.rows,
     events: events.rows,
@@ -208,7 +231,29 @@ router.get("/errands", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
        ORDER BY created_at DESC LIMIT 100`,
     [identity(req), (req as any).user?.role]
   );
-  res.json({ errands: result.rows });
+  res.json({ errands: result.rows.map((row) => ({
+    id: row.id,
+    errandType: row.errand_type,
+    status: row.status,
+    itemDescription: row.item_description,
+    merchantName: row.merchant_name,
+    purchaseBudgetMinor: Number(row.purchase_budget_minor ?? 0),
+    actualPurchaseMinor: row.actual_purchase_minor == null ? null : Number(row.actual_purchase_minor),
+    currency: row.currency,
+    replacementPolicy: row.replacement_policy,
+    maxPriceDeltaMinor: Number(row.max_price_delta_minor ?? 0),
+    errandInstructions: row.errand_instructions,
+    requestedCompletionAt: row.requested_completion_at,
+    receiverName: row.receiver_name,
+    receiverPhone: row.receiver_phone,
+    destinationAddress: row.destination_address,
+    destinationLat: row.destination_lat,
+    destinationLng: row.destination_lng,
+    agentId: row.agent_id,
+    deliveryId: row.delivery_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })) });
 });
 
 export default router;
