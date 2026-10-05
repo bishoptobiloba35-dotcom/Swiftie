@@ -279,7 +279,31 @@ router.get("/marketplace/sales", requireAuth(), async (req, res) => {
       LIMIT 50`,
     [identity(req)]
   );
-  return res.json({ sales: result.rows });
+  return res.json({ sales: result.rows.map((row) => ({
+    id: row.id,
+    listingId: row.listing_id,
+    quantity: Number(row.quantity),
+    unitFinalPriceMinor: Number(row.unit_final_price_minor),
+    totalMinor: Number(row.total_minor),
+    currency: row.currency,
+    status: row.status,
+    fulfillmentStatus: row.fulfillment_status,
+    deliveryId: row.delivery_id,
+    requestedDeliveryAt: row.requested_delivery_at,
+    sellerPreparationMinutes: Number(row.seller_preparation_minutes ?? 0),
+    sellerReadyAt: row.seller_ready_at,
+    sellerBusyMode: Boolean(row.seller_busy_mode),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    listing: { title: row.title, condition: row.condition, deliveryMode: row.delivery_mode },
+    buyer: { email: row.buyer_email },
+    delivery: row.tracking_code ? {
+      trackingCode: row.tracking_code,
+      status: row.delivery_status,
+      receiverName: row.receiver_name,
+      receiverPhone: row.receiver_phone
+    } : null
+  })) });
 });
 
 router.get("/marketplace/orders", requireAuth(), async (req, res) => {
