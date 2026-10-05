@@ -1411,15 +1411,42 @@ export async function settleReceiverPaymentAndReleasePayout(
 
 export async function confirmReceiverDelivery(id: string, receiverPhone: string, pin: string): Promise<StoredDelivery | null> {
   if (!pool) return null;
-  const delivery = await findDelivery(id);
-  if (!delivery || delivery.receiverPhone !== receiverPhone || !verifyPin(pin, delivery.receiverPinHash)) return null;
+
+  // Legacy callers must not be able to use this helper as the receiver-confirmation
+  // primitive. The authoritative flows first record receiver confirmation and settle
+  // the payment, then may use a guarded completion helper. In particular, this
+  // function must never set receiver_confirmed_at itself.
   const result = await pool.query(
-    `UPDATE deliveries SET status='DELIVERED', receiver_confirmed_at=now(), updated_at=now()
-     WHERE id=$1 AND receiver_phone=$2 AND status='ARRIVED'
-     RETURNING *`,
+    `SELECT d.*, p.status AS payment_status, p.collection_mode
+       FROM deliveries d
+       LEFT JOIN payments p ON p.delivery_id=d.id
+      WHERE d.id=$1 AND d.receiver_phone=$2
+        AND d.receiver_confirmed_at IS NOT NULL
+        AND p.status='RELEASED'
+        AND p.collection_mode IN ('SENDER_ESCROW','RECEIVER_ON_DELIVERY')`,
     [id, receiverPhone]
   );
-  return result.rows[0] ? rowToDelivery(result.rows[0]) : null;
+  const row = result.rows[0];
+  if (!row || !verifyPin(pin, row.receiver_pin_hash)) return null;
+
+  const updated = await pool.query(
+    `UPDATE deliveries
+        SET status='DELIVERED', updated_at=now()
+      WHERE id=$1
+        AND receiver_phone=$2
+        AND status='ARRIVED'
+        AND receiver_confirmed_at IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+            FROM payments p
+           WHERE p.delivery_id=deliveries.id
+             AND p.status='RELEASED'
+             AND p.collection_mode IN ('SENDER_ESCROW','RECEIVER_ON_DELIVERY')
+        )
+      RETURNING *`,
+    [id, receiverPhone]
+  );
+  return updated.rows[0] ? rowToDelivery(updated.rows[0]) : null;
 }
 
 export async function completeDelivery(id: string, driverId: string): Promise<StoredDelivery | null> {
