@@ -59,11 +59,14 @@ async function premiumAction(req: any, res: any, action: string): Promise<Plan |
 }
 
 const buyOrderSchema = z.object({
+  errandType: z.enum(["GENERAL_ERRAND", "PURCHASE_AND_DELIVER", "SHOP_FOR_ME"]).default("GENERAL_ERRAND"),
   itemDescription: z.string().trim().min(3).max(500),
   merchantName: z.string().trim().max(160).optional(),
   merchantAddress: z.string().trim().max(500).optional(),
   purchaseBudgetMinor: z.number().int().positive().max(100000000),
   notes: z.string().trim().max(1000).optional(),
+  replacementPolicy: z.enum(["EXACT_ONLY", "BEST_MATCH", "APPROVED_ALTERNATIVES", "REFUND_IF_UNAVAILABLE"]).default("EXACT_ONLY"),
+  maxPriceDeltaMinor: z.number().int().nonnegative().max(100000000).default(0),
   businessId: z.string().uuid().optional()
 });
 
@@ -151,10 +154,10 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
   const plan = await premiumAction(req, res, action || "UNKNOWN");
   if (!plan) return;
 
-  if (action === "CREATE_BUY_ORDER") {
+  if (action === "CREATE_ERRAND" || action === "CREATE_BUY_ORDER") {
     if (!(req.body?.input?.businessId) && !canCreatePersonalBuyOrder((req as any).user?.role)) {
       await audit({ userId, plan, capability: "ACTION", action, allowed: false, reason: "CUSTOMER_ONLY" });
-      return res.status(403).json({ error: "Buy & Deliver orders must be created by a customer or authorized business member" });
+      return res.status(403).json({ error: "Errand requests must be created by a customer or authorized business member" });
     }
     const parsed = buyOrderSchema.safeParse(req.body?.input);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -211,10 +214,10 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
 
       const result = await client.query(
         `INSERT INTO buy_orders
-          (customer_user_id, business_id, item_description, merchant_name, merchant_address, purchase_budget_minor, notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)
-         RETURNING id, status, item_description, merchant_name, merchant_address, purchase_budget_minor, delivery_fee_minor, total_authorized_minor, currency, notes, created_at, updated_at`,
-        [userId, parsed.data.businessId ?? null, parsed.data.itemDescription, parsed.data.merchantName ?? null, parsed.data.merchantAddress ?? null, parsed.data.purchaseBudgetMinor, parsed.data.notes ?? null]
+          (customer_user_id, business_id, errand_type, item_description, merchant_name, merchant_address, purchase_budget_minor, notes, replacement_policy, max_price_delta_minor, errand_instructions)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         RETURNING id, status, errand_type, item_description, merchant_name, merchant_address, purchase_budget_minor, delivery_fee_minor, total_authorized_minor, currency, notes, replacement_policy, max_price_delta_minor, errand_instructions, created_at, updated_at`,
+        [userId, parsed.data.businessId ?? null, parsed.data.errandType, parsed.data.itemDescription, parsed.data.merchantName ?? null, parsed.data.merchantAddress ?? null, parsed.data.purchaseBudgetMinor, parsed.data.notes ?? null, parsed.data.replacementPolicy, parsed.data.maxPriceDeltaMinor, parsed.data.notes ?? null]
       );
 
       if (parsed.data.businessId) {
@@ -230,7 +233,7 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
         [result.rows[0].id, userId, JSON.stringify({ plan, businessId: parsed.data.businessId ?? null })]
       );
       await client.query("COMMIT");
-      await audit({ userId, plan, capability: "ACTION", action, allowed: true, metadata: { buyOrderId: result.rows[0].id } });
+      await audit({ userId, plan, capability: "ACTION", action, allowed: true, metadata: { errandId: result.rows[0].id, errandType: parsed.data.errandType } });
       return res.status(201).json({ buyOrder: result.rows[0] });
     } catch (error) {
       await client.query("ROLLBACK");
