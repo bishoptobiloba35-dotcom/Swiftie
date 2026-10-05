@@ -5,6 +5,7 @@ import { pool } from "./db.js";
 import { runMigrations } from "./migrate.js";
 import {
   confirmReceiverAndReleaseEscrow,
+  confirmReceiverDelivery,
   confirmReceiverOnDeliveryPaymentDue,
   settleReceiverPaymentAndReleasePayout,
   createDispute,
@@ -241,6 +242,16 @@ if (!db) {
     assert.ok(receiverConfirmed);
     assert.equal(receiverConfirmed.status, "ARRIVED");
     assert.ok(receiverConfirmed.receiverConfirmedAt);
+    // The legacy generic helper must not be able to convert receiver confirmation
+    // into delivery completion before the Paystack payment is actually settled.
+    assert.equal(await confirmReceiverDelivery(receiverPaidDelivery.id, "+2349020000003", "333444"), null);
+    const beforeLegacyCompletion = (await db.query(
+      "SELECT d.status, d.receiver_confirmed_at, p.status AS payment_status FROM deliveries d JOIN payments p ON p.delivery_id=d.id WHERE d.id=$1",
+      [receiverPaidDelivery.id]
+    )).rows[0];
+    assert.equal(beforeLegacyCompletion.status, "ARRIVED");
+    assert.ok(beforeLegacyCompletion.receiver_confirmed_at);
+    assert.equal(beforeLegacyCompletion.payment_status, "PENDING");
     const beforeReceiverPayment = (await db.query(
       "SELECT p.status AS payment_status, p.escrow_status, d.status AS delivery_status FROM payments p JOIN deliveries d ON d.id=p.delivery_id WHERE p.delivery_id=$1",
       [receiverPaidDelivery.id]
