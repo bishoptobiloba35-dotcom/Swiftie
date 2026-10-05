@@ -707,7 +707,7 @@ router.post("/business/dispatch-plans/:id/execute", requireAuth("CUSTOMER", "ADM
       [identity(req), JSON.stringify({ dispatchPlanId: id, deliveryIds })]
     );
     await client.query("COMMIT");
-    return res.json({ dispatchPlan: updated.rows[0], releasedDeliveryIds: deliveryIds });
+    return res.json({ dispatchPlan: publicDispatchPlan(updated.rows[0]), releasedDeliveryIds: deliveryIds });
   } catch (error) {
     try { await client.query("ROLLBACK"); } catch {}
     throw error;
@@ -729,7 +729,7 @@ router.post("/business/dispatch-plans/:id/cancel", requireAuth("CUSTOMER", "ADMI
     [id]
   );
   if (!result.rows[0]) return res.status(409).json({ error: "Dispatch plan changed concurrently" });
-  return res.json({ dispatchPlan: result.rows[0] });
+  return res.json({ dispatchPlan: publicDispatchPlan(result.rows[0]) });
 });
 
 router.post("/buy-orders/:id/payment/initialize", requireAuth("CUSTOMER"), async (req, res) => {
