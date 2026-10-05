@@ -1550,7 +1550,8 @@ app.post("/api/admin/drivers/:driverId/approve", requireAuth("ADMIN"), async (re
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Pending driver not found" });
   await recordAdminCaseAudit({ adminUserId: identity(req), action: "DRIVER_APPROVED", metadata: { driverId: result.rows[0].id } });
-  res.json({ driver: result.rows[0] });
+  const driver = result.rows[0];
+  res.json({ driver: { id: driver.id, userId: driver.user_id, status: driver.status, online: driver.online, updatedAt: driver.updated_at } });
 });
 
 app.post("/api/admin/drivers/:driverId/suspend", requireAuth("ADMIN"), async (req, res) => {
@@ -1561,7 +1562,8 @@ app.post("/api/admin/drivers/:driverId/suspend", requireAuth("ADMIN"), async (re
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Driver not found" });
   await recordAdminCaseAudit({ adminUserId: identity(req), action: "DRIVER_SUSPENDED", metadata: { driverId: result.rows[0].id } });
-  res.json({ driver: result.rows[0] });
+  const driver = result.rows[0];
+  res.json({ driver: { id: driver.id, userId: driver.user_id, status: driver.status, online: driver.online, updatedAt: driver.updated_at } });
 });
 
 app.get("/api/admin/operations", requireAuth("ADMIN"), async (_req, res) => {
