@@ -28,6 +28,23 @@ const ruleSchema = z.object({
   }).default({ deliveryIds: [], buyOrderIds: [], buyOrderTemplates: [] })
 });
 
+
+function publicRecurringDispatch(row: Record<string, any>) {
+  return {
+    id: row.id,
+    businessId: row.business_id,
+    name: row.name,
+    cadenceMinutes: Number(row.cadence_minutes),
+    nextRunAt: row.next_run_at,
+    approvalRequired: Boolean(row.approval_required),
+    active: Boolean(row.active),
+    lastRunAt: row.last_run_at,
+    lastDispatchPlanId: row.last_dispatch_plan_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 async function member(userId: string, businessId: string) {
   if (!pool) return null;
   const result = await pool.query(
@@ -49,7 +66,7 @@ router.get("/business/recurring-dispatches", requireAuth("CUSTOMER", "ADMIN"), a
     "SELECT * FROM business_recurring_dispatches WHERE business_id=$1 ORDER BY created_at DESC",
     [businessId]
   );
-  res.json({ recurringDispatches: result.rows });
+  res.json({ recurringDispatches: result.rows.map(publicRecurringDispatch) });
 });
 
 router.post("/business/recurring-dispatches", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
@@ -74,7 +91,7 @@ router.post("/business/recurring-dispatches", requireAuth("CUSTOMER", "ADMIN"), 
      RETURNING *`,
     [parsed.data.businessId, userId, parsed.data.name, parsed.data.cadenceMinutes, parsed.data.nextRunAt, parsed.data.approvalRequired, JSON.stringify(parsed.data.template)]
   );
-  res.status(201).json({ recurringDispatch: result.rows[0] });
+  res.status(201).json({ recurringDispatch: publicRecurringDispatch(result.rows[0]) });
 });
 
 router.post("/business/recurring-dispatches/:id/cancel", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
@@ -88,7 +105,7 @@ router.post("/business/recurring-dispatches/:id/cancel", requireAuth("CUSTOMER",
     "UPDATE business_recurring_dispatches SET active=false, updated_at=now() WHERE id=$1 RETURNING *",
     [id]
   );
-  res.json({ recurringDispatch: result.rows[0] });
+  res.json({ recurringDispatch: publicRecurringDispatch(result.rows[0]) });
 });
 
 export default router;
