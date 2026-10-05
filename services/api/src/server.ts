@@ -1930,7 +1930,7 @@ app.post("/api/deliveries/:id/share-tracking", requireAuth("CUSTOMER", "ADMIN"),
     "INSERT INTO delivery_tracking_links(delivery_id,token_hash,expires_at,created_by_user_id) VALUES($1,$2,$3,$4)",
     [delivery.id, tokenHash, expiresAt, user.userId]
   );
-  const configuredBase = (process.env.PUBLIC_TRACKING_BASE_URL ?? "").trim().replace(/\\/$/, "");
+  const configuredBase = (process.env.PUBLIC_TRACKING_BASE_URL ?? "").trim().replace(/\/$/, "");
   const base = configuredBase || `${req.protocol}://${req.get("host")}/api/public/track`;
   return res.status(201).json({
     url: `${base}/${rawToken}`,
