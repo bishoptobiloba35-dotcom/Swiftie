@@ -903,7 +903,17 @@ router.get("/marketplace/orders/:id/payment", requireAuth(), async (req, res) =>
     [String(req.params.id), identity(req)]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Marketplace payment not found" });
-  return res.json({ payment: result.rows[0] });
+  const payment = result.rows[0];
+  return res.json({ payment: {
+    id: payment.id,
+    marketplaceOrderId: payment.marketplace_order_id,
+    amountMinor: Number(payment.amount_minor),
+    currency: payment.currency,
+    status: payment.status,
+    providerStatus: payment.provider_status,
+    createdAt: payment.created_at,
+    updatedAt: payment.updated_at
+  } });
 });
 
 router.post("/marketplace/listings/:id/checkout", requireAuth(), async (req, res) => {
