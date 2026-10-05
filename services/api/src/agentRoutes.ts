@@ -79,7 +79,7 @@ router.post("/agent/settlement-account", requireAuth("AGENT"), async(req,res)=>{
 router.get("/agent/settlements", requireAuth("AGENT"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const agent=await getAgent(identity(req));if(!agent)return res.status(404).json({error:"Agent profile not found"});
-  const result=await pool.query("SELECT bos.id,bos.buy_order_id,bos.amount_minor,bos.currency,bos.status,bos.provider_reference,bos.provider_status,bos.failure_reason,bos.paid_at,bos.created_at,bos.updated_at FROM buy_order_settlements bos WHERE bos.agent_id=$1 ORDER BY bos.created_at DESC LIMIT 100",[agent.id]);
+  const result=await pool.query("SELECT bos.id,bos.buy_order_id,bos.amount_minor,bos.currency,bos.status,bos.provider_status,bos.failure_reason,bos.paid_at,bos.created_at,bos.updated_at FROM buy_order_settlements bos WHERE bos.agent_id=$1 ORDER BY bos.created_at DESC LIMIT 100",[agent.id]);
   res.json({settlements:result.rows});
 });
 
