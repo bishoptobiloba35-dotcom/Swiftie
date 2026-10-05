@@ -28,8 +28,43 @@ async function getOrder(id: string) {
 }
 
 function publicAgentBuyOrder(row: Record<string, unknown>) {
-  const { customer_user_id: _customerUserId, receiver_pin_hash: _receiverPinHash, payment_reference: _paymentReference, purchase_receipt_key: _purchaseReceiptKey, ...safe } = row;
-  return safe;
+  return {
+    id: row.id,
+    business_id: row.business_id,
+    agent_id: row.agent_id,
+    status: row.status,
+    item_description: row.item_description,
+    merchant_name: row.merchant_name,
+    merchant_address: row.merchant_address,
+    merchant_lat: row.merchant_lat,
+    merchant_lng: row.merchant_lng,
+    purchase_budget_minor: row.purchase_budget_minor,
+    actual_purchase_minor: row.actual_purchase_minor,
+    delivery_fee_minor: row.delivery_fee_minor,
+    total_authorized_minor: row.total_authorized_minor,
+    currency: row.currency,
+    notes: row.notes,
+    errand_type: row.errand_type,
+    replacement_policy: row.replacement_policy,
+    max_price_delta_minor: row.max_price_delta_minor,
+    errand_instructions: row.errand_instructions,
+    requested_completion_at: row.requested_completion_at,
+    receiver_name: row.receiver_name,
+    receiver_phone: row.receiver_phone,
+    destination_address: row.destination_address,
+    destination_lat: row.destination_lat,
+    destination_lng: row.destination_lng,
+    delivery_id: row.delivery_id,
+    replacement_review_required: row.replacement_review_required,
+    replacement_review_deadline: row.replacement_review_deadline,
+    payment_status: row.payment_status,
+    unused_authorization_minor: row.unused_authorization_minor,
+    refunded_minor: row.refunded_minor,
+    purchased_at: row.purchased_at,
+    assigned_at: row.assigned_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  };
 }
 
 router.get("/agents", requireAuth("ADMIN"), async (_req, res) => {
