@@ -60,6 +60,12 @@ router.post("/errands", requireAuth("CUSTOMER"), async (req, res) => {
   );
   const errand = result.rows[0];
   await pool.query(
+    `INSERT INTO buy_order_items
+      (buy_order_id, requested_description, quantity, max_authorized_minor, replacement_policy)
+     VALUES ($1,$2,1,$3,$4)`,
+    [errand.id, data.description, data.spendingCeilingMinor, data.replacementPolicy]
+  );
+  await pool.query(
     "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'ERRAND_CREATED',$3::jsonb)",
     [errand.id, identity(req), JSON.stringify({ errandType: data.errandType, replacementPolicy: data.replacementPolicy })]
   );
