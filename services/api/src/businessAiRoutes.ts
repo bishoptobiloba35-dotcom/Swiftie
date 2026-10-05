@@ -1324,7 +1324,8 @@ router.post("/admin/buy-order-settlements/:id/pay", requireAuth("ADMIN"), async(
       return res.status(502).json({error:payload.message??"Paystack transfer could not be initiated"});
     }
     if(payload.data.reference!==reference)await pool.query("UPDATE buy_order_settlements SET transfer_reference=$2,updated_at=now() WHERE id=$1",[id,payload.data.reference]);
-    return res.status(202).json({settlement:(await pool.query("SELECT * FROM buy_order_settlements WHERE id=$1",[id])).rows[0]});
+    return const settlement = (await pool.query("SELECT id,buy_order_id,agent_id,amount_minor,currency,status,provider_status,failure_reason,paid_at,created_at,updated_at FROM buy_order_settlements WHERE id=$1",[id])).rows[0];
+    return res.status(202).json({settlement: settlement ? { id:settlement.id,buyOrderId:settlement.buy_order_id,agentId:settlement.agent_id,amountMinor:Number(settlement.amount_minor),currency:settlement.currency,status:settlement.status,providerStatus:settlement.provider_status,failureReason:settlement.failure_reason,paidAt:settlement.paid_at,createdAt:settlement.created_at,updatedAt:settlement.updated_at } : null});
   }catch(error){try{await client.query("ROLLBACK")}catch{}throw error}finally{client.release();}
 });
 router.post("/admin/drop-off/commission/:id/pay", requireAuth("ADMIN"), async(req,res)=>{
@@ -1347,14 +1348,15 @@ router.post("/admin/drop-off/commission/:id/pay", requireAuth("ADMIN"), async(re
       return res.status(502).json({error:payload.message??"Paystack transfer could not be initiated"});
     }
     if(payload.data.reference!==reference)await pool.query("UPDATE drop_off_commission_ledger SET provider_reference=$2,updated_at=now() WHERE id=$1",[id,payload.data.reference]);
-    return res.status(202).json({commission:(await pool.query("SELECT * FROM drop_off_commission_ledger WHERE id=$1",[id])).rows[0]});
+    const commission = (await pool.query("SELECT id,location_id,amount_minor,currency,status,provider_status,failure_reason,paid_at,created_at,updated_at FROM drop_off_commission_ledger WHERE id=$1",[id])).rows[0];
+    return res.status(202).json({commission: commission ? { id:commission.id,locationId:commission.location_id,amountMinor:Number(commission.amount_minor),currency:commission.currency,status:commission.status,providerStatus:commission.provider_status,failureReason:commission.failure_reason,paidAt:commission.paid_at,createdAt:commission.created_at,updatedAt:commission.updated_at } : null});
   }catch(error){try{await client.query("ROLLBACK")}catch{}throw error}finally{client.release();}
 });
 
 router.get("/admin/buy-order-settlements", requireAuth("ADMIN"), async(_req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const result=await pool.query("SELECT s.id,s.buy_order_id,s.amount_minor,s.currency,s.status,s.provider_status,s.failure_reason,s.paid_at,s.created_at,s.updated_at,bo.item_description,u.full_name AS agent_name FROM buy_order_settlements s JOIN buy_orders bo ON bo.id=s.buy_order_id JOIN agent_profiles ap ON ap.id=s.agent_id JOIN users u ON u.id=ap.user_id ORDER BY s.created_at DESC LIMIT 200");
-  return res.json({settlements:result.rows});
+  return res.json({settlements:result.rows.map((row) => ({ id:row.id,buyOrderId:row.buy_order_id,amountMinor:Number(row.amount_minor),currency:row.currency,status:row.status,providerStatus:row.provider_status,failureReason:row.failure_reason,paidAt:row.paid_at,createdAt:row.created_at,updatedAt:row.updated_at }))});
 });
 router.post("/admin/buy-order-settlements/:id/status", requireAuth("ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
@@ -1371,7 +1373,8 @@ router.post("/admin/buy-order-settlements/:id/status", requireAuth("ADMIN"), asy
     const result=await client.query("UPDATE buy_order_settlements SET status=$2,provider_reference=COALESCE($3,provider_reference,transfer_reference),failure_reason=COALESCE($4,failure_reason),paid_at=CASE WHEN $2='PAID' THEN COALESCE(paid_at,now()) ELSE paid_at END,updated_at=now() WHERE id=$1 RETURNING id,buy_order_id,agent_id,amount_minor,currency,status,provider_status,failure_reason,paid_at,created_at,updated_at",[id,parsed.data.status,reference??null,parsed.data.failureReason??null]);
     await client.query("INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,(SELECT ai_plan FROM users WHERE id=$1),'SETTLEMENT_STATUS','UPDATE',true,'Admin settlement status update',$2::jsonb)",[identity(req),JSON.stringify({settlementId:id,status:parsed.data.status,providerReference:reference??null})]);
     await client.query("COMMIT");
-    return res.json({settlement:result.rows[0]});
+    const settlement = result.rows[0];
+    return res.json({settlement:{id:settlement.id,buyOrderId:settlement.buy_order_id,agentId:settlement.agent_id,amountMinor:Number(settlement.amount_minor),currency:settlement.currency,status:settlement.status,providerStatus:settlement.provider_status,failureReason:settlement.failure_reason,paidAt:settlement.paid_at,createdAt:settlement.created_at,updatedAt:settlement.updated_at}});
   }catch(error){try{await client.query("ROLLBACK")}catch{}throw error}finally{client.release();}
 });
 
