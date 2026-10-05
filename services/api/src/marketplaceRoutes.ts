@@ -157,7 +157,18 @@ router.patch("/marketplace/listings/:id", requireAuth(), async (req, res) => {
       values
     );
     await client.query("COMMIT");
-    return res.json({ listing: result.rows[0] });
+    const updatedListing = result.rows[0];
+    return res.json({ listing: {
+      id: updatedListing.id,
+      title: updatedListing.title,
+      description: updatedListing.description,
+      condition: updatedListing.condition,
+      priceMinor: Number(updatedListing.price_minor),
+      deliveryFeeMinor: Number(updatedListing.delivery_fee_minor),
+      stockQuantity: Number(updatedListing.stock_quantity),
+      isActive: updatedListing.is_active,
+      updatedAt: updatedListing.updated_at
+    } });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to update listing" });
@@ -642,7 +653,25 @@ router.post("/marketplace/listings", requireAuth(), async (req, res) => {
     }
 
     await client.query("COMMIT");
-    return res.status(201).json({ listing: listing.rows[0], seller: publicMarketplaceSeller(seller.rows[0]), mediaCount: uploadedKeys.length });
+    const createdListing = listing.rows[0];
+    return res.status(201).json({ listing: {
+      id: createdListing.id,
+      title: createdListing.title,
+      description: createdListing.description,
+      condition: createdListing.condition,
+      useDescription: createdListing.use_description,
+      usageInstructions: createdListing.usage_instructions,
+      category: createdListing.category,
+      priceMinor: Number(createdListing.price_minor),
+      deliveryFeeMinor: Number(createdListing.delivery_fee_minor),
+      finalPriceMinor: Number(createdListing.final_price_minor),
+      currency: createdListing.currency,
+      deliveryMode: createdListing.delivery_mode,
+      stockQuantity: Number(createdListing.stock_quantity),
+      isPerishable: createdListing.is_perishable,
+      createdAt: createdListing.created_at,
+      updatedAt: createdListing.updated_at
+    }, seller: publicMarketplaceSeller(seller.rows[0]), mediaCount: uploadedKeys.length });
   } catch (error) {
     await client.query("ROLLBACK"); throw error;
   } finally { client.release(); }
