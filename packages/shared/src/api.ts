@@ -10,6 +10,8 @@ export type ApiDelivery = {
   declaredValueMinor: number;
   pickup: { label: string; formattedAddress: string; location?: { latitude: number; longitude: number; recordedAt?: string } };
   dropoff: { label: string; formattedAddress: string; location?: { latitude: number; longitude: number; recordedAt?: string } };
+  pickupInstructions?: string;
+  dropoffInstructions?: string;
   quote?: {
     currency: string;
     distanceMeters: number;
@@ -65,6 +67,8 @@ export type CreateDeliveryInput = {
   dropoff: { label: string; formattedAddress: string; latitude: number; longitude: number };
   pickupDropOffLocationId?: string;
   dropoffDropOffLocationId?: string;
+  pickupInstructions?: string;
+  dropoffInstructions?: string;
   quote: {
     currency: "NGN";
     distanceMeters: number;
