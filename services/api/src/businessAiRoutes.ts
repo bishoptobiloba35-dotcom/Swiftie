@@ -1139,7 +1139,7 @@ router.get("/buy-orders", requireAuth("CUSTOMER", "AGENT", "ADMIN"), async (req,
     : (req as any).user?.role === "AGENT"
       ? await pool!.query(`SELECT id,customer_user_id,business_id,errand_type,status,item_description,merchant_name,merchant_address,merchant_lat,merchant_lng,purchase_budget_minor,actual_purchase_minor,delivery_fee_minor,total_authorized_minor,currency,notes,replacement_policy,max_price_delta_minor,errand_instructions,requested_completion_at,receiver_name,receiver_phone,destination_address,destination_lat,destination_lng,agent_id,delivery_id,replacement_review_required,replacement_review_deadline,created_at,updated_at FROM buy_orders bo JOIN agent_profiles ap ON ap.id=bo.agent_id WHERE ap.user_id=$1 ORDER BY bo.created_at DESC LIMIT 100`, [userId])
       : await pool!.query(`SELECT id,customer_user_id,business_id,errand_type,status,item_description,merchant_name,merchant_address,merchant_lat,merchant_lng,purchase_budget_minor,actual_purchase_minor,delivery_fee_minor,total_authorized_minor,currency,notes,replacement_policy,max_price_delta_minor,errand_instructions,requested_completion_at,receiver_name,receiver_phone,destination_address,destination_lat,destination_lng,agent_id,delivery_id,replacement_review_required,replacement_review_deadline,created_at,updated_at FROM buy_orders WHERE customer_user_id=$1 ORDER BY created_at DESC LIMIT 100`, [userId]);
-  res.json({ buyOrders: result.rows });
+  res.json({ buyOrders: result.rows.map((row) => ({ id: row.id, customerUserId: row.customer_user_id, businessId: row.business_id, errandType: row.errand_type, status: row.status, itemDescription: row.item_description, merchantName: row.merchant_name, merchantAddress: row.merchant_address, merchantLat: row.merchant_lat, merchantLng: row.merchant_lng, purchaseBudgetMinor: Number(row.purchase_budget_minor), actualPurchaseMinor: row.actual_purchase_minor == null ? null : Number(row.actual_purchase_minor), deliveryFeeMinor: Number(row.delivery_fee_minor), totalAuthorizedMinor: Number(row.total_authorized_minor), currency: row.currency, notes: row.notes, replacementPolicy: row.replacement_policy, maxPriceDeltaMinor: Number(row.max_price_delta_minor ?? 0), errandInstructions: row.errand_instructions, requestedCompletionAt: row.requested_completion_at, receiverName: row.receiver_name, receiverPhone: row.receiver_phone, destinationAddress: row.destination_address, destinationLat: row.destination_lat, destinationLng: row.destination_lng, agentId: row.agent_id, deliveryId: row.delivery_id, replacementReviewRequired: row.replacement_review_required, replacementReviewDeadline: row.replacement_review_deadline, createdAt: row.created_at, updatedAt: row.updated_at })) });
 });
 
 router.post("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
@@ -1223,7 +1223,7 @@ router.get("/drop-off/locations", requireAuth("CUSTOMER","AGENT","ADMIN"), async
 router.get("/drop-off/locations/mine", requireAuth("CUSTOMER","AGENT","ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const result=await pool.query("SELECT dl.*,ba.display_name AS business_name FROM drop_off_locations dl JOIN business_accounts ba ON ba.id=dl.business_id WHERE ba.owner_user_id=$1 OR EXISTS (SELECT 1 FROM business_members bm WHERE bm.business_id=ba.id AND bm.user_id=$1 AND bm.active=true AND bm.member_role IN ('OWNER','ADMIN')) ORDER BY dl.created_at DESC",[identity(req)]);
-  res.json({locations:result.rows});
+  res.json({locations:result.rows.map(row=>({id:row.id,businessId:row.business_id,name:row.name,address:row.address,latitude:Number(row.latitude),longitude:Number(row.longitude),phone:row.phone,operatingHours:row.operating_hours,capacity:Number(row.capacity),commissionMinor:Number(row.commission_minor),status:row.status,verificationStatus:row.verification_status,createdAt:row.created_at,updatedAt:row.updated_at}))});
 });
 router.post("/drop-off/locations/:id/documents", requireAuth("CUSTOMER","AGENT","ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
@@ -1277,7 +1277,8 @@ router.get("/drop-off/settlement-account/:id", requireAuth("CUSTOMER","AGENT","A
   const id=String(req.params.id),role=(req as any).user?.role;
   if(role!=="ADMIN"&&!await managesDropOff(identity(req),id))return res.status(403).json({error:"Not authorized"});
   const result=await pool.query("SELECT id,bank_code,bank_name,account_name,account_last4,currency,active,verified_at,created_at,updated_at FROM drop_off_settlement_accounts WHERE location_id=$1",[id]);
-  res.json({account:result.rows[0]??null});
+  const account=result.rows[0];
+  res.json({account:account?{id:account.id,bankCode:account.bank_code,bankName:account.bank_name,accountName:account.account_name,accountLast4:account.account_last4,currency:account.currency,active:account.active,verifiedAt:account.verified_at,createdAt:account.created_at,updatedAt:account.updated_at}:null});
 });
 router.post("/drop-off/settlement-account/:id", requireAuth("CUSTOMER","AGENT","ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
@@ -1382,7 +1383,7 @@ router.post("/admin/buy-order-settlements/:id/status", requireAuth("ADMIN"), asy
 router.get("/admin/drop-off/locations/:locationId/documents", requireAuth("ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const result=await pool.query("SELECT id,document_type,status,review_note,created_at,updated_at FROM drop_off_location_documents WHERE location_id=$1 ORDER BY created_at ASC",[String(req.params.locationId)]);
-  return res.json({documents:result.rows});
+  return res.json({documents:result.rows.map(row=>({id:row.id,documentType:row.document_type,status:row.status,reviewNote:row.review_note,createdAt:row.created_at,updatedAt:row.updated_at}))});
 });
 
 router.get("/admin/drop-off/locations/:locationId/documents/:documentId", requireAuth("ADMIN"), async(req,res)=>{
@@ -1400,13 +1401,13 @@ router.get("/admin/drop-off/locations/:locationId/documents/:documentId", requir
 router.get("/admin/drop-off/commission", requireAuth("ADMIN"), async(_req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const result=await pool.query("SELECT l.id AS location_id,l.name,l.address,ba.display_name AS business_name,c.status,c.currency,count(*)::int AS parcels,sum(c.amount_minor)::bigint AS amount_minor FROM drop_off_commission_ledger c JOIN drop_off_locations l ON l.id=c.location_id JOIN business_accounts ba ON ba.id=l.business_id GROUP BY l.id,l.name,l.address,ba.display_name,c.status,c.currency ORDER BY l.name,c.status");
-  return res.json({commission:result.rows});
+  return res.json({commission:result.rows.map(row=>({locationId:row.location_id,name:row.name,address:row.address,businessName:row.business_name,status:row.status,currency:row.currency,parcels:Number(row.parcels),amountMinor:Number(row.amount_minor)}))});
 });
 
 router.get("/admin/drop-off/applications", requireAuth("ADMIN"), async(_req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const result=await pool.query("SELECT dl.*,ba.display_name AS business_name,(SELECT count(*) FROM drop_off_location_documents d WHERE d.location_id=dl.id) AS document_count FROM drop_off_locations dl JOIN business_accounts ba ON ba.id=dl.business_id ORDER BY dl.created_at DESC LIMIT 500");
-  res.json({applications:result.rows});
+  res.json({applications:result.rows.map(row=>({id:row.id,businessId:row.business_id,name:row.name,address:row.address,latitude:Number(row.latitude),longitude:Number(row.longitude),phone:row.phone,operatingHours:row.operating_hours,capacity:Number(row.capacity),commissionMinor:Number(row.commission_minor),status:row.status,verificationStatus:row.verification_status,createdAt:row.created_at,updatedAt:row.updated_at,businessName:row.business_name,documentCount:Number(row.document_count)}))});
 });
 router.post("/admin/drop-off/locations/:id/review", requireAuth("ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
