@@ -571,6 +571,26 @@ router.get("/admin/recurring-dispatch-recovery", requireAuth("ADMIN"), async (_r
   })) });
 });
 
+
+function publicDispatchPlan(row: Record<string, any>) {
+  const plan = row.plan && typeof row.plan === "object" ? { ...row.plan } : {};
+  delete plan.autonomousPaymentResults;
+  return {
+    id: row.id,
+    businessId: row.business_id,
+    status: row.status,
+    deliveryWindowStart: row.delivery_window_start,
+    deliveryWindowEnd: row.delivery_window_end,
+    estimatedTotalMinor: Number(row.estimated_total_minor ?? 0),
+    approvalRequired: Boolean(row.approval_required),
+    approvedAt: row.approved_at,
+    executedAt: row.executed_at,
+    plan,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 router.get("/business/dispatch-plans", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const businessId = String(req.query.businessId ?? "");
@@ -580,7 +600,7 @@ router.get("/business/dispatch-plans", requireAuth("CUSTOMER", "ADMIN"), async (
     "SELECT * FROM business_dispatch_plans WHERE business_id=$1 ORDER BY created_at DESC LIMIT 200",
     [businessId]
   );
-  return res.json({ dispatchPlans: result.rows });
+  return res.json({ dispatchPlans: result.rows.map(publicDispatchPlan) });
 });
 
 router.post("/business/dispatch-plans/:id/approve", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
@@ -599,7 +619,7 @@ router.post("/business/dispatch-plans/:id/approve", requireAuth("CUSTOMER", "ADM
   );
   if (!result.rows[0]) return res.status(409).json({ error: "Dispatch plan changed concurrently" });
   await audit({ userId: identity(req), plan: await currentPlan(identity(req)), capability: "ACTION", action: "APPROVE_DISPATCH_PLAN", allowed: true, metadata: { dispatchPlanId: id } });
-  return res.json({ dispatchPlan: result.rows[0] });
+  return res.json({ dispatchPlan: publicDispatchPlan(result.rows[0]) });
 });
 
 router.post("/business/dispatch-plans/:id/execute", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
