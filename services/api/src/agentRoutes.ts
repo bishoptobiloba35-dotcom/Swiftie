@@ -83,7 +83,134 @@ router.get("/agent/settlements", requireAuth("AGENT"), async(req,res)=>{
   res.json({settlements:result.rows});
 });
 
-router.get("/agent/buy-orders", requireAuth("AGENT"), async (req, res) => {
+
+
+router.post("/agent/buy-orders/:id/replacement", requireAuth("AGENT"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const agent = await getAgent(identity(req));
+  if (!agent || agent.status !== "APPROVED") return res.status(403).json({ error: "Approved agent status is required" });
+  const parsed = z.object({
+    itemId: z.string().uuid(),
+    proposedDescription: z.string().trim().min(1).max(500),
+    proposedQuantity: z.number().int().positive().max(1000).default(1),
+    proposedPriceMinor: z.number().int().nonnegative(),
+    evidenceFile: z.string().optional(),
+    shopperNote: z.string().trim().max(1000).optional()
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const order = await getOrder(orderId(req));
+  if (!order || order.agent_id !== agent.id) return res.status(404).json({ error: "Errand not found" });
+  if (!["AGENT_ASSIGNED","PURCHASING"].includes(order.status)) return res.status(409).json({ error: "Errand is not in a shopping state" });
+
+  const item = (await pool.query("SELECT * FROM buy_order_items WHERE id=$1 AND buy_order_id=$2 FOR UPDATE", [parsed.data.itemId, order.id])).rows[0];
+  if (!item) return res.status(404).json({ error: "Errand item not found" });
+
+  let evidenceKey: string | null = null;
+  if (parsed.data.evidenceFile) {
+    const match = parsed.data.evidenceFile.match(/^data:(image\/(?:jpeg|jpg|png));base64,(.+)$/i);
+    if (!match) return res.status(400).json({ error: "Replacement evidence must be a JPEG or PNG data URL" });
+    const buffer = Buffer.from(match[2], "base64");
+    if (!buffer.length || buffer.length > 8 * 1024 * 1024) return res.status(400).json({ error: "Replacement evidence must be between 1 byte and 8MB" });
+    const extension = match[1].includes("png") ? "png" : "jpg";
+    evidenceKey = `buy-orders/${order.id}/replacements/${randomUUID()}.${extension}`;
+    await putPrivateObject(evidenceKey, buffer, match[1]);
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const locked = (await client.query("SELECT * FROM buy_order_items WHERE id=$1 AND buy_order_id=$2 FOR UPDATE", [item.id, order.id])).rows[0];
+    if (!locked || locked.status === "PURCHASED" || locked.status === "REFUNDED") {
+      await client.query("ROLLBACK");
+      if (evidenceKey) await deletePrivateObject(evidenceKey).catch(() => undefined);
+      return res.status(409).json({ error: "Errand item can no longer be changed" });
+    }
+    const automatic = locked.replacement_policy === "BEST_MATCH"
+      && parsed.data.proposedPriceMinor <= Number(order.purchase_budget_minor)
+      && parsed.data.proposedPriceMinor <= Number(locked.max_authorized_minor ?? order.purchase_budget_minor);
+
+    const status = automatic ? "APPROVED" : "PENDING";
+    const inserted = await client.query(
+      `INSERT INTO buy_order_replacement_options
+        (item_id, proposed_description, proposed_quantity, proposed_price_minor, currency, evidence_key, shopper_note, status, proposed_by_agent_id, approved_by_user_id, approved_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       RETURNING id, item_id, proposed_description, proposed_quantity, proposed_price_minor, currency, shopper_note, status, created_at`,
+      [locked.id, parsed.data.proposedDescription, parsed.data.proposedQuantity, parsed.data.proposedPriceMinor, order.currency ?? "NGN", evidenceKey, parsed.data.shopperNote ?? null, status, agent.id, automatic ? order.customer_user_id : null, automatic ? new Date() : null]
+    );
+    await client.query(
+      "UPDATE buy_order_items SET status=$2,updated_at=now() WHERE id=$1",
+      [locked.id, automatic ? "APPROVED" : "REPLACEMENT_PENDING"]
+    );
+    await client.query(
+      "UPDATE buy_orders SET replacement_review_required=$2,replacement_review_deadline=$3,updated_at=now() WHERE id=$1",
+      [order.id, !automatic, automatic ? null : new Date(Date.now() + 15 * 60 * 1000)]
+    );
+    await client.query(
+      "INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,$3,$4::jsonb)",
+      [order.id, identity(req), automatic ? "REPLACEMENT_AUTO_APPROVED" : "REPLACEMENT_PROPOSED", JSON.stringify({ itemId: locked.id, replacementId: inserted.rows[0].id, priceMinor: parsed.data.proposedPriceMinor })]
+    );
+    await client.query("COMMIT");
+    return res.status(201).json({ replacement: inserted.rows[0], approvalRequired: !automatic });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    if (evidenceKey) await deletePrivateObject(evidenceKey).catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+router.post("/buy-orders/:id/replacement/:replacementId/decision", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const decision = z.object({ decision: z.enum(["APPROVE","REFUND"]) }).safeParse(req.body);
+  if (!decision.success) return res.status(400).json({ error: decision.error.flatten() });
+  const id = orderId(req);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = (await client.query(
+      `SELECT r.*, i.buy_order_id, i.replacement_policy, i.status AS item_status, bo.customer_user_id, bo.purchase_budget_minor
+         FROM buy_order_replacement_options r
+         JOIN buy_order_items i ON i.id=r.item_id
+         JOIN buy_orders bo ON bo.id=i.buy_order_id
+        WHERE r.id=$1 AND bo.id=$2
+        FOR UPDATE OF r,i,bo`,
+      [String(req.params.replacementId), id]
+    )).rows[0];
+    if (!result || result.customer_user_id !== identity(req)) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Replacement request not found" });
+    }
+    if (result.status !== "PENDING") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Replacement request is no longer pending" });
+    }
+    if (decision.data.decision === "APPROVE") {
+      if (Number(result.proposed_price_minor) > Number(result.purchase_budget_minor)) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Approved replacement exceeds the errand spending ceiling", code: "SPENDING_CEILING_EXCEEDED" });
+      }
+      await client.query("UPDATE buy_order_replacement_options SET status='APPROVED',approved_by_user_id=$2,approved_at=now(),updated_at=now() WHERE id=$1",[result.id,identity(req)]);
+      await client.query("UPDATE buy_order_items SET status='APPROVED',updated_at=now() WHERE id=$1",[result.item_id]);
+      await client.query("UPDATE buy_orders SET replacement_review_required=false,replacement_review_deadline=NULL,updated_at=now() WHERE id=$1",[id]);
+      await client.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'REPLACEMENT_APPROVED',$3::jsonb)",[id,identity(req),JSON.stringify({replacementId:result.id,itemId:result.item_id})]);
+    } else {
+      await client.query("UPDATE buy_order_replacement_options SET status='REFUNDED',approved_by_user_id=$2,approved_at=now(),updated_at=now() WHERE id=$1",[result.id,identity(req)]);
+      await client.query("UPDATE buy_order_items SET status='REFUNDED',updated_at=now() WHERE id=$1",[result.item_id]);
+      await client.query("UPDATE buy_orders SET replacement_review_required=false,replacement_review_deadline=NULL,updated_at=now() WHERE id=$1",[id]);
+      await client.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'ITEM_REFUND_REQUESTED',$3::jsonb)",[id,identity(req),JSON.stringify({replacementId:result.id,itemId:result.item_id})]);
+    }
+    await client.query("COMMIT");
+    return res.json({ ok: true, decision: decision.data.decision });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+\nrouter.get("/agent/buy-orders", requireAuth("AGENT"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const agent = await getAgent(identity(req));
   if (!agent) return res.status(404).json({ error: "Agent profile not found" });
