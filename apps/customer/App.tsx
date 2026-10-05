@@ -37,6 +37,9 @@ export default function App() {
   });
   const [errandBusy, setErrandBusy] = React.useState(false);
   const [myErrands, setMyErrands] = React.useState<any[]>([]);
+  const [selectedErrand, setSelectedErrand] = React.useState<any | null>(null);
+  const [errandDetail, setErrandDetail] = React.useState<any | null>(null);
+  const [errandDetailBusy, setErrandDetailBusy] = React.useState(false);
   const updateErrand = (patch: Partial<typeof errandDraft>) => setErrandDraft(prev => ({ ...prev, ...patch }));
   const [marketplaceListings, setMarketplaceListings] = React.useState<any[]>([]);
   const [marketplaceSales, setMarketplaceSales] = React.useState<any[]>([]);
@@ -521,12 +524,17 @@ export default function App() {
 
   async function refreshErrand(errandId: string) {
     try {
+      setErrandDetailBusy(true);
       const detail = await api.errand(errandId);
+      setSelectedErrand(detail.errand);
+      setErrandDetail(detail);
       setMyErrands(prev => prev.map(item => item.id === errandId ? detail.errand : item));
       return detail;
     } catch (error) {
       Alert.alert("Errand", error instanceof Error ? error.message : "Unable to refresh errand");
       return null;
+    } finally {
+      setErrandDetailBusy(false);
     }
   }
 
@@ -1089,6 +1097,28 @@ export default function App() {
         </Pressable>)}
       </View>}
       <Pressable style={styles.secondary} onPress={() => setHomeSection("HOME")}><Text style={styles.secondaryText}>Back to home</Text></Pressable>
+    </ScrollView></SafeAreaView>;
+  }
+
+  if (homeSection === "ERRAND" && selectedErrand && errandDetail) {
+    const e = selectedErrand;
+    const pending = (errandDetail.items ?? []).filter((i: any) => i.status === "REPLACEMENT_PENDING");
+    return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}>
+      <View style={styles.header}><View><Text style={styles.logo}>Errand status</Text><Text style={styles.subtitle}>{String(e.errand_type ?? "").replaceAll("_"," ")}</Text></View><Pressable onPress={() => { setSelectedErrand(null); setErrandDetail(null); }}><Text style={styles.link}>All errands</Text></Pressable></View>
+      <View style={styles.card}>
+        <Text style={styles.eyebrow}>CURRENT STAGE</Text><Text style={styles.heroTitle}>{String(e.status ?? "").replaceAll("_"," ")}</Text>
+        <Text style={styles.muted}>{e.item_description}</Text>
+        <Text>Spending ceiling: ₦{(Number(e.purchase_budget_minor ?? 0)/100).toLocaleString()}</Text>
+        {e.agent && <Text>Errand agent: {e.agent.name}{e.agent.phone ? " · " + e.agent.phone : ""}</Text>}
+        {e.delivery && <><Text style={styles.done}>Delivery: {String(e.delivery.status).replaceAll("_"," ")}</Text><Text style={styles.code}>Tracking: {e.delivery.trackingCode}</Text><Pressable style={styles.secondary} onPress={() => { setTrackingCode(e.delivery.trackingCode); setTrackingPhone(e.receiver_phone ?? ""); setHomeSection("TRACK"); }}><Text style={styles.secondaryText}>Open live delivery tracking</Text></Pressable></>}
+      </View>
+      {pending.length > 0 && <View style={styles.card}><Text style={styles.homeHeading}>Your approval is required</Text>{pending.map((item: any) => (item.replacements ?? []).filter((r: any) => r.status === "PENDING").map((r: any) => <View key={r.id} style={styles.locationCard}>
+        <Text style={styles.photoTitle}>Replacement proposed</Text><Text>{r.description} × {r.quantity}</Text><Text>Proposed price: ₦{(Number(r.priceMinor)/100).toLocaleString()}</Text>{r.shopperNote && <Text style={styles.muted}>{r.shopperNote}</Text>}
+        <View style={styles.row}><Pressable style={styles.primary} onPress={() => void api.decideErrandReplacement(e.id,r.id,"APPROVE").then(() => refreshErrand(e.id))}><Text style={styles.primaryText}>Approve</Text></Pressable><Pressable style={styles.dangerButton} onPress={() => void api.decideErrandReplacement(e.id,r.id,"REFUND").then(() => refreshErrand(e.id))}><Text style={styles.primaryText}>Refund</Text></Pressable></View>
+      </View>))}</View>}
+      <View style={styles.card}><Text style={styles.homeHeading}>Execution timeline</Text>{(errandDetail.events ?? []).map((event: any) => <View key={event.id} style={styles.notification}><Text style={styles.notificationTitle}>{String(event.eventType ?? "").replaceAll("_"," ")}</Text><Text style={styles.muted}>{new Date(event.createdAt).toLocaleString()}</Text></View>)}</View>
+      {errandDetail.payment && <View style={styles.card}><Text style={styles.homeHeading}>Payment</Text><Text>Status: {String(errandDetail.payment.status ?? "").replaceAll("_"," ")}</Text><Text>Authorization: {String(errandDetail.payment.payment_status ?? "").replaceAll("_"," ")}</Text>{errandDetail.payment.refund_status && <Text>Refund: {String(errandDetail.payment.refund_status).replaceAll("_"," ")}</Text>}</View>}
+      <Pressable style={styles.secondary} disabled={errandDetailBusy} onPress={() => void refreshErrand(e.id)}><Text style={styles.secondaryText}>{errandDetailBusy ? "Refreshing…" : "Refresh status"}</Text></Pressable>
     </ScrollView></SafeAreaView>;
   }
 
