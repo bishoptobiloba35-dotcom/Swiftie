@@ -9,6 +9,30 @@ import { hashPin } from "./security.js";
 
 const router = Router();
 
+const publicMarketplaceOrder = (row: any) => ({
+  id: row.id,
+  listingId: row.listing_id,
+  quantity: Number(row.quantity),
+  unitFinalPriceMinor: Number(row.unit_final_price_minor),
+  totalMinor: Number(row.total_minor),
+  currency: row.currency,
+  status: row.status,
+  fulfillmentStatus: row.fulfillment_status,
+  deliveryId: row.delivery_id,
+  requestedDeliveryAt: row.requested_delivery_at,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at
+});
+
+const publicMarketplaceSeller = (row: any) => ({
+  id: row.id,
+  displayName: row.display_name,
+  bio: row.bio,
+  locationLabel: row.location_label,
+  createdAt: row.created_at
+});
+
+
 const listingSchema = z.object({
   displayName: z.string().trim().min(2).max(120),
   bio: z.string().trim().max(1000).default(""),
@@ -596,7 +620,7 @@ router.post("/marketplace/listings", requireAuth(), async (req, res) => {
     }
 
     await client.query("COMMIT");
-    return res.status(201).json({ listing: listing.rows[0], seller: seller.rows[0], mediaCount: uploadedKeys.length });
+    return res.status(201).json({ listing: listing.rows[0], seller: publicMarketplaceSeller(seller.rows[0]), mediaCount: uploadedKeys.length });
   } catch (error) {
     await client.query("ROLLBACK"); throw error;
   } finally { client.release(); }
@@ -854,7 +878,7 @@ router.post("/marketplace/listings/:id/checkout", requireAuth(), async (req, res
     );
     if (existingOrder.rows[0]) {
       await client.query("ROLLBACK");
-      return res.status(200).json({ order: existingOrder.rows[0], idempotentReplay: true, message: "Checkout already created for this request." });
+      return res.status(200).json({ order: publicMarketplaceOrder(existingOrder.rows[0]), idempotentReplay: true, message: "Checkout already created for this request." });
     }
     const locked = await client.query("SELECT * FROM marketplace_listings WHERE id=$1 FOR UPDATE", [String(req.params.id)]);
     const listing = locked.rows[0];
@@ -877,7 +901,7 @@ router.post("/marketplace/listings/:id/checkout", requireAuth(), async (req, res
       [listing.id,identity(req),listing.seller_user_id,quantity,listing.final_price_minor,total,listing.currency,requestedDeliveryAt,idempotencyKey]
     );
     await client.query("COMMIT");
-    return res.status(201).json({ order: order.rows[0], stockRemaining: Number(stockUpdate.rows[0].stock_quantity), message: "Checkout created. Payment authorization is the next step." });
+    return res.status(201).json({ order: publicMarketplaceOrder(order.rows[0]), stockRemaining: Number(stockUpdate.rows[0].stock_quantity), message: "Checkout created. Payment authorization is the next step." });
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally { client.release(); }
 });
