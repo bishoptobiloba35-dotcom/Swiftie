@@ -52,7 +52,7 @@ router.post("/errands", requireAuth("CUSTOMER"), async (req, res) => {
     [
       identity(req), data.errandType, data.description, data.merchantName ?? null,
       data.merchantAddress ?? null, data.merchantLat ?? null, data.merchantLng ?? null,
-      data.spendingCeilingMinor, data.instructions ?? null, data.replacementPolicy,
+      data.spendingCeilingMinor, null, data.replacementPolicy,
       data.maxPriceDeltaMinor, data.instructions ?? null, requested,
       data.receiverName, data.receiverPhone, hashPin(data.receiverPin),
       data.destinationAddress, data.destinationLat, data.destinationLng
