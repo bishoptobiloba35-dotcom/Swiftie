@@ -149,6 +149,8 @@ const createDeliverySchema = z.object({
   pickup: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   dropoff: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   pickupDropOffLocationId: z.string().uuid().optional(),
+  pickupInstructions: z.string().trim().max(1000).optional(),
+  dropoffInstructions: z.string().trim().max(1000).optional(),
   dropoffDropOffLocationId: z.string().uuid().optional(),
   quote: z.object({
     currency: z.literal("NGN"),
@@ -566,6 +568,8 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
 
       const created = await createPersistentDelivery({
         senderId: input.senderId,
+        pickupInstructions: input.pickupInstructions,
+        dropoffInstructions: input.dropoffInstructions,
         receiverName: input.receiverName,
         receiverPhone: input.receiverPhone,
         pickup: { label: input.pickup.label, formattedAddress: input.pickup.formattedAddress, location: { latitude: input.pickup.latitude, longitude: input.pickup.longitude } },
