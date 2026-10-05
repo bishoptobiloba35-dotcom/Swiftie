@@ -307,7 +307,7 @@ app.get("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) =>
   const driver = await driverForUser(identity(req));
   if (!driver) return res.status(404).json({ error: "Driver profile not found" });
   const account = await getDriverPayoutAccount(driver.id);
-  return res.json({ account });
+  return res.json({ account: account ? { id: account.id, bankCode: account.bankCode, bankName: account.bankName, accountName: account.accountName, accountLast4: account.accountLast4, currency: account.currency, active: account.active, verifiedAt: account.verifiedAt, createdAt: account.createdAt, updatedAt: account.updatedAt } : null });
 });
 
 app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) => {
@@ -340,7 +340,7 @@ app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) =
     accountName: resolved.data.account_name,
     recipientCode: recipient.data.recipient_code
   });
-  return res.status(201).json({ account });
+  return res.status(201).json({ account: account ? { id: account.id, bankCode: account.bankCode, bankName: account.bankName, accountName: account.accountName, accountLast4: account.accountLast4, currency: account.currency, active: account.active, verifiedAt: account.verifiedAt, createdAt: account.createdAt, updatedAt: account.updatedAt } : null });
 });
 
 app.get("/api/driver/payouts", requireAuth("DRIVER"), async (req, res) => {
@@ -364,7 +364,7 @@ app.get("/api/driver/payouts", requireAuth("DRIVER"), async (req, res) => {
     else if (row.status === "FAILED") acc.failedMinor += amount;
     return acc;
   }, { eligibleMinor: 0, processingMinor: 0, releasedMinor: 0, failedMinor: 0 });
-  return res.json({ summary, payouts: result.rows });
+  return res.json({ summary, payouts: result.rows.map((row) => ({ id: row.id, deliveryId: row.delivery_id, driverId: row.driver_id, amountMinor: Number(row.amount_minor), currency: row.currency, status: row.status, provider: row.provider, providerStatus: row.provider_status, failureReason: row.failure_reason, processedAt: row.processed_at, createdAt: row.created_at, updatedAt: row.updated_at })) });
 });
 
 app.get("/api/deliveries/:id/payout", requireAuth(), async (req, res) => {
