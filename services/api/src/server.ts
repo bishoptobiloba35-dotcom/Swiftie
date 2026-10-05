@@ -348,7 +348,7 @@ app.get("/api/driver/payouts", requireAuth("DRIVER"), async (req, res) => {
   const driver = await driverForUser(identity(req));
   if (!driver) return res.status(404).json({ error: "Driver profile not found" });
   const result = await pool!.query(
-    `SELECT id, delivery_id, amount_minor, currency, status, provider, provider_reference,
+    `SELECT id, delivery_id, amount_minor, currency, status, provider,
             provider_status, failure_reason, processed_at, created_at, updated_at
        FROM payouts
       WHERE driver_id=$1
