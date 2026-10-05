@@ -1545,7 +1545,7 @@ app.post("/api/admin/drivers/:driverId/approve", requireAuth("ADMIN"), async (re
     return res.status(409).json({ error: "At least one approved KYC document is required before driver approval" });
   }
   const result = await pool!.query(
-    "UPDATE drivers SET status='APPROVED' WHERE id=$1 AND status='PENDING' RETURNING id, user_id, status",
+    "UPDATE drivers SET status='APPROVED', updated_at=now() WHERE id=$1 AND status='PENDING' RETURNING id, user_id, status, online, updated_at",
     [routeParam(req.params.driverId, "driverId")]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Pending driver not found" });
@@ -1557,7 +1557,7 @@ app.post("/api/admin/drivers/:driverId/approve", requireAuth("ADMIN"), async (re
 app.post("/api/admin/drivers/:driverId/suspend", requireAuth("ADMIN"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool!.query(
-    "UPDATE drivers SET status='SUSPENDED', online=false WHERE id=$1 AND status <> 'SUSPENDED' RETURNING id, user_id, status",
+    "UPDATE drivers SET status='SUSPENDED', online=false, updated_at=now() WHERE id=$1 AND status <> 'SUSPENDED' RETURNING id, user_id, status, online, updated_at",
     [routeParam(req.params.driverId, "driverId")]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Driver not found" });
@@ -1704,8 +1704,8 @@ app.post("/api/admin/support/tickets/:id/reply", requireAuth("ADMIN"), async (re
 
 app.get("/api/admin/payouts", requireAuth("ADMIN"), async (_req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
-  const result = await pool!.query("SELECT id, delivery_id, driver_id, amount_minor, currency, status, provider, provider_reference, provider_status, failure_reason, processed_at, created_at, updated_at FROM payouts ORDER BY updated_at DESC LIMIT 100");
-  res.json({ payouts: result.rows });
+  const result = await pool!.query("SELECT id, delivery_id, driver_id, amount_minor, currency, status, provider, provider_status, failure_reason, processed_at, created_at, updated_at FROM payouts ORDER BY updated_at DESC LIMIT 100");
+  res.json({ payouts: result.rows.map((row) => ({ id:row.id,deliveryId:row.delivery_id,driverId:row.driver_id,amountMinor:Number(row.amount_minor),currency:row.currency,status:row.status,provider:row.provider,providerStatus:row.provider_status,failureReason:row.failure_reason,processedAt:row.processed_at,createdAt:row.created_at,updatedAt:row.updated_at })) });
 });
 
 app.post("/api/admin/payouts/:deliveryId/retry", requireAuth("ADMIN"), async (req, res) => {
