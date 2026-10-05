@@ -1045,10 +1045,10 @@ router.get("/buy-orders", requireAuth("CUSTOMER", "AGENT", "ADMIN"), async (req,
   if (!pool) return res.status(503).json({ error: "Buy & Deliver requires the production database" });
   const userId = identity(req);
   const result = (req as any).user?.role === "ADMIN"
-    ? await pool!.query("SELECT * FROM buy_orders ORDER BY created_at DESC LIMIT 200")
+    ? await pool!.query(`SELECT id,customer_user_id,business_id,errand_type,status,item_description,merchant_name,merchant_address,merchant_lat,merchant_lng,purchase_budget_minor,actual_purchase_minor,delivery_fee_minor,total_authorized_minor,currency,notes,replacement_policy,max_price_delta_minor,errand_instructions,requested_completion_at,receiver_name,receiver_phone,destination_address,destination_lat,destination_lng,agent_id,delivery_id,replacement_review_required,replacement_review_deadline,created_at,updated_at FROM buy_orders ORDER BY created_at DESC LIMIT 200`)
     : (req as any).user?.role === "AGENT"
-      ? await pool!.query("SELECT bo.* FROM buy_orders bo JOIN agent_profiles ap ON ap.id=bo.agent_id WHERE ap.user_id=$1 ORDER BY bo.created_at DESC LIMIT 100", [userId])
-      : await pool!.query("SELECT * FROM buy_orders WHERE customer_user_id=$1 ORDER BY created_at DESC LIMIT 100", [userId]);
+      ? await pool!.query(`SELECT id,customer_user_id,business_id,errand_type,status,item_description,merchant_name,merchant_address,merchant_lat,merchant_lng,purchase_budget_minor,actual_purchase_minor,delivery_fee_minor,total_authorized_minor,currency,notes,replacement_policy,max_price_delta_minor,errand_instructions,requested_completion_at,receiver_name,receiver_phone,destination_address,destination_lat,destination_lng,agent_id,delivery_id,replacement_review_required,replacement_review_deadline,created_at,updated_at FROM buy_orders bo JOIN agent_profiles ap ON ap.id=bo.agent_id WHERE ap.user_id=$1 ORDER BY bo.created_at DESC LIMIT 100`, [userId])
+      : await pool!.query(`SELECT id,customer_user_id,business_id,errand_type,status,item_description,merchant_name,merchant_address,merchant_lat,merchant_lng,purchase_budget_minor,actual_purchase_minor,delivery_fee_minor,total_authorized_minor,currency,notes,replacement_policy,max_price_delta_minor,errand_instructions,requested_completion_at,receiver_name,receiver_phone,destination_address,destination_lat,destination_lng,agent_id,delivery_id,replacement_review_required,replacement_review_deadline,created_at,updated_at FROM buy_orders WHERE customer_user_id=$1 ORDER BY created_at DESC LIMIT 100`, [userId]);
   res.json({ buyOrders: result.rows });
 });
 
