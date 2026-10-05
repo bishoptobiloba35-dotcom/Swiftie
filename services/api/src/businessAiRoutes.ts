@@ -1353,7 +1353,7 @@ router.post("/admin/drop-off/commission/:id/pay", requireAuth("ADMIN"), async(re
 router.get("/admin/buy-order-settlements", requireAuth("ADMIN"), async(_req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const result=await pool.query("SELECT s.*,bo.item_description,bo.customer_user_id,ap.user_id AS agent_user_id,u.full_name AS agent_name FROM buy_order_settlements s JOIN buy_orders bo ON bo.id=s.buy_order_id JOIN agent_profiles ap ON ap.id=s.agent_id JOIN users u ON u.id=ap.user_id ORDER BY s.created_at DESC LIMIT 200");
-  return res.json({settlements:result.rows});
+  return res.json({settlements:result.rows.map(row=>({id:row.id,buyOrderId:row.buy_order_id,amountMinor:row.amount_minor,currency:row.currency,status:row.status,providerStatus:row.provider_status,failureReason:row.failure_reason,paidAt:row.paid_at,createdAt:row.created_at,updatedAt:row.updated_at,itemDescription:row.item_description,agentName:row.agent_name}))});
 });
 router.post("/admin/buy-order-settlements/:id/status", requireAuth("ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
