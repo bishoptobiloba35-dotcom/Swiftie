@@ -7,7 +7,9 @@ import { identity } from "./requestIdentity.js";
 import { deletePrivateObject, getPrivateObject, putPrivateObject } from "./storage.js";
 import { hashPin } from "./security.js";
 
-const router = Router();\n\nconst publicMarketplaceOrder = (row: any) => ({
+const router = Router();
+
+const publicMarketplaceOrder = (row: any) => ({
   id: row.id,
   listingId: row.listing_id,
   quantity: Number(row.quantity),
