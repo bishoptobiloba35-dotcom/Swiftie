@@ -185,7 +185,10 @@ router.post("/buy-orders/:id/replacement/:replacementId/decision", requireAuth("
   try {
     await client.query("BEGIN");
     const result = (await client.query(
-      `SELECT r.*, i.buy_order_id, i.replacement_policy, i.status AS item_status, i.requested_price_minor,
+      `SELECT r.id, r.item_id, r.proposed_description, r.proposed_quantity, r.proposed_price_minor,
+             r.currency, r.shopper_note, r.status, r.created_at, r.updated_at,
+             i.buy_order_id, i.replacement_policy, i.status AS item_status, i.requested_price_minor,
+             i.max_authorized_minor, i.quantity AS requested_quantity,
              bo.customer_user_id, bo.purchase_budget_minor, bo.max_price_delta_minor
          FROM buy_order_replacement_options r
          JOIN buy_order_items i ON i.id=r.item_id
@@ -203,11 +206,21 @@ router.post("/buy-orders/:id/replacement/:replacementId/decision", requireAuth("
       return res.status(409).json({ error: "Replacement request is no longer pending" });
     }
     if (decision.data.decision === "APPROVE") {
-      const approvedMax = Number(result.purchase_budget_minor);
+      const itemMax = Number(result.max_authorized_minor ?? result.purchase_budget_minor ?? 0);
       const approvedDelta = Number(result.max_price_delta_minor ?? 0);
       const requestedPrice = result.requested_price_minor == null ? null : Number(result.requested_price_minor);
-      if (Number(result.proposed_price_minor) > approvedMax ||
-          (requestedPrice != null && Number(result.proposed_price_minor) > requestedPrice + approvedDelta)) {
+      const proposedPrice = Number(result.proposed_price_minor);
+      const proposedQuantity = Number(result.proposed_quantity);
+      const requestedQuantity = Number(result.requested_quantity ?? 1);
+      const unitRequestedPrice = requestedPrice != null && requestedQuantity > 0 ? requestedPrice / requestedQuantity : null;
+      const maxAuthorizedTotal = Math.min(
+        itemMax,
+        unitRequestedPrice != null ? unitRequestedPrice * proposedQuantity + approvedDelta : itemMax
+      );
+      if (!Number.isSafeInteger(proposedPrice) || proposedPrice <= 0 ||
+          !Number.isSafeInteger(proposedQuantity) || proposedQuantity <= 0 ||
+          proposedQuantity > requestedQuantity ||
+          proposedPrice > maxAuthorizedTotal) {
         await client.query("ROLLBACK");
         return res.status(409).json({ error: "Approved replacement exceeds the errand price authorization", code: "PRICE_AUTHORIZATION_EXCEEDED" });
       }
@@ -216,7 +229,10 @@ router.post("/buy-orders/:id/replacement/:replacementId/decision", requireAuth("
       await client.query("UPDATE buy_orders SET replacement_review_required=false,replacement_review_deadline=NULL,updated_at=now() WHERE id=$1",[id]);
       await client.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'REPLACEMENT_APPROVED',$3::jsonb)",[id,identity(req),JSON.stringify({replacementId:result.id,itemId:result.item_id})]);
     } else {
-      const refundAmountMinor = Number(result.requested_price_minor ?? result.max_authorized_minor ?? 0);
+      const requestedPrice = result.requested_price_minor == null ? null : Number(result.requested_price_minor);
+      const itemMax = Number(result.max_authorized_minor ?? result.purchase_budget_minor ?? 0);
+      const requestedQuantity = Number(result.requested_quantity ?? 1);
+      const refundAmountMinor = Math.min(itemMax, requestedPrice ?? itemMax);
       if (!Number.isSafeInteger(refundAmountMinor) || refundAmountMinor <= 0) {
         await client.query("ROLLBACK");
         return res.status(409).json({ error: "This item has no refundable authorized amount", code: "REFUND_AMOUNT_UNAVAILABLE" });
