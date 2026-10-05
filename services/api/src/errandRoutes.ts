@@ -1,0 +1,85 @@
+import { Router } from "express";
+import { z } from "zod";
+import { pool } from "./database/db.js";
+import { requireAuth } from "./authMiddleware.js";
+import { identity } from "./requestIdentity.js";
+import { hashPin } from "./security.js";
+
+const router = Router();
+
+const errandSchema = z.object({
+  errandType: z.enum(["GENERAL_ERRAND", "PURCHASE_AND_DELIVER", "SHOP_FOR_ME"]),
+  description: z.string().trim().min(3).max(2000),
+  spendingCeilingMinor: z.number().int().nonnegative().max(2_000_000_000).default(0),
+  merchantName: z.string().trim().max(200).optional(),
+  merchantAddress: z.string().trim().max(500).optional(),
+  merchantLat: z.number().finite().min(-90).max(90).optional(),
+  merchantLng: z.number().finite().min(-180).max(180).optional(),
+  replacementPolicy: z.enum(["EXACT_ONLY", "BEST_MATCH", "APPROVED_ALTERNATIVES", "REFUND_IF_UNAVAILABLE"]).default("EXACT_ONLY"),
+  maxPriceDeltaMinor: z.number().int().nonnegative().max(2_000_000_000).default(0),
+  instructions: z.string().trim().max(2000).optional(),
+  requestedCompletionAt: z.string().datetime().optional(),
+  receiverName: z.string().trim().min(1).max(160),
+  receiverPhone: z.string().trim().min(7).max(40),
+  receiverPin: z.string().regex(/^\d{4,6}$/),
+  destinationAddress: z.string().trim().min(3).max(500),
+  destinationLat: z.number().finite().min(-90).max(90),
+  destinationLng: z.number().finite().min(-180).max(180)
+});
+
+router.post("/errands", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const parsed = errandSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const data = parsed.data;
+  const requested = data.requestedCompletionAt ? new Date(data.requestedCompletionAt) : null;
+  if (requested && requested.getTime() <= Date.now()) {
+    return res.status(400).json({ error: "requestedCompletionAt must be in the future" });
+  }
+
+  const result = await pool.query(
+    `INSERT INTO buy_orders
+      (customer_user_id, errand_type, item_description, merchant_name, merchant_address,
+       merchant_lat, merchant_lng, purchase_budget_minor, notes, replacement_policy,
+       max_price_delta_minor, errand_instructions, requested_completion_at,
+       receiver_name, receiver_phone, receiver_pin_hash, destination_address,
+       destination_lat, destination_lng)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+     RETURNING id, errand_type, status, item_description, merchant_name, merchant_address,
+       purchase_budget_minor, currency, replacement_policy, max_price_delta_minor,
+       errand_instructions, requested_completion_at, receiver_name, receiver_phone,
+       destination_address, destination_lat, destination_lng, created_at, updated_at`,
+    [
+      identity(req), data.errandType, data.description, data.merchantName ?? null,
+      data.merchantAddress ?? null, data.merchantLat ?? null, data.merchantLng ?? null,
+      data.spendingCeilingMinor, data.instructions ?? null, data.replacementPolicy,
+      data.maxPriceDeltaMinor, data.instructions ?? null, requested,
+      data.receiverName, data.receiverPhone, hashPin(data.receiverPin),
+      data.destinationAddress, data.destinationLat, data.destinationLng
+    ]
+  );
+  const errand = result.rows[0];
+  await pool.query(
+    "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'ERRAND_CREATED',$3::jsonb)",
+    [errand.id, identity(req), JSON.stringify({ errandType: data.errandType, replacementPolicy: data.replacementPolicy })]
+  );
+  return res.status(201).json({ errand });
+});
+
+router.get("/errands", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const result = await pool.query(
+    `SELECT id, errand_type, status, item_description, merchant_name, merchant_address,
+       purchase_budget_minor, actual_purchase_minor, currency, replacement_policy,
+       max_price_delta_minor, errand_instructions, requested_completion_at,
+       receiver_name, receiver_phone, destination_address, destination_lat,
+       destination_lng, agent_id, delivery_id, created_at, updated_at
+       FROM buy_orders
+       WHERE customer_user_id=$1 OR $2='ADMIN'
+       ORDER BY created_at DESC LIMIT 100`,
+    [identity(req), (req as any).user?.role]
+  );
+  res.json({ errands: result.rows });
+});
+
+export default router;
