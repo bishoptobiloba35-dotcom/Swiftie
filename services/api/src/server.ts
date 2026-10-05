@@ -668,7 +668,7 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
   const reference = "SD-" + delivery.trackingCode + "-" + Date.now();
   const reservation = await reservePaymentInitialization(delivery.id, reference);
   if (!reservation.reserved) {
-    if (reservation.payment?.authorizationUrl) return res.status(200).json({ paymentId: reservation.payment.id, reference: reservation.payment.providerReference, authorizationUrl: reservation.payment.authorizationUrl, accessCode: reservation.payment.accessCode, amountMinor: reservation.payment.amountMinor });
+    if (reservation.payment?.authorizationUrl) return res.status(200).json({ paymentId: reservation.payment.id, authorizationUrl: reservation.payment.authorizationUrl, accessCode: reservation.payment.accessCode, amountMinor: reservation.payment.amountMinor });
     return res.status(409).json({ error: "Payment initialization is already in progress. Retry shortly." });
   }
   const response = await fetch("https://api.paystack.co/transaction/initialize", {
