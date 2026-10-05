@@ -569,7 +569,14 @@ router.post("/marketplace/orders/:id/mark-ready", requireAuth(), async (req, res
       })]
     );
     await client.query("COMMIT");
-    return res.json({ order: updated, message: "Order marked ready for courier pickup." });
+    return res.json({ order: {
+      id: updated.id,
+      fulfillmentStatus: updated.fulfillment_status,
+      sellerPreparationMinutes: Number(updated.seller_preparation_minutes ?? 0),
+      sellerReadyAt: updated.seller_ready_at,
+      sellerBusyMode: Boolean(updated.seller_busy_mode),
+      deliveryId: updated.delivery_id
+    }, message: "Order marked ready for courier pickup." });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to mark order ready" });
