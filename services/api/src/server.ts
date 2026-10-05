@@ -372,7 +372,17 @@ app.get("/api/deliveries/:id/payout", requireAuth(), async (req, res) => {
   const delivery = await findDeliveryForUser(routeParam(req.params.id, "id"), identity(req), "DRIVER");
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
   const payout = await findPayout(routeParam(req.params.id, "id"));
-  return res.json({ payout });
+  const publicPayout = payout ? {
+    id: payout.id,
+    deliveryId: payout.deliveryId,
+    amountMinor: payout.amountMinor,
+    currency: payout.currency,
+    status: payout.status,
+    providerStatus: payout.providerStatus,
+    failureReason: payout.failureReason,
+    processedAt: payout.processedAt
+  } : null;
+  return res.json({ payout: publicPayout });
 });
 
 app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (req, res) => {
