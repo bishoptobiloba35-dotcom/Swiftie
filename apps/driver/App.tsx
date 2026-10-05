@@ -121,9 +121,9 @@ export default function App() {
   const [ratingStars, setRatingStars] = React.useState(0);
   const [ratingComment, setRatingComment] = React.useState("");
   const [ratingSubmitted, setRatingSubmitted] = React.useState(false);
-  const [payout, setPayout] = React.useState<{ amount_minor: number; currency: string; status: string; provider_status?: string | null; provider_reference?: string | null; failure_reason?: string | null } | null>(null);
+  const [payout, setPayout] = React.useState<{ amount_minor: number; currency: string; status: string; provider_status?: string | null; failure_reason?: string | null } | null>(null);
   const [payoutSummary, setPayoutSummary] = React.useState<{ eligibleMinor: number; processingMinor: number; releasedMinor: number; failedMinor: number }>({ eligibleMinor: 0, processingMinor: 0, releasedMinor: 0, failedMinor: 0 });
-  const [payoutHistory, setPayoutHistory] = React.useState<Array<{ id: string; amount_minor: number; currency: string; status: string; provider_reference?: string | null; failure_reason?: string | null }>>([]);
+  const [payoutHistory, setPayoutHistory] = React.useState<Array<{ id: string; amount_minor: number; currency: string; status: string; failure_reason?: string | null }>>([]);
   const [payoutAccount, setPayoutAccount] = React.useState<{ bankCode: string; bankName?: string | null; accountName: string; accountLast4: string; recipientCode: string } | null>(null);
   const [bankCode, setBankCode] = React.useState("");
   const [accountNumber, setAccountNumber] = React.useState("");
@@ -611,7 +611,6 @@ export default function App() {
       <Text style={styles.title}>Current payout</Text>
       <Text style={styles.title}>₦{(payout.amount_minor / 100).toLocaleString()}</Text>
       <Text style={styles.muted}>Status: {payout.status.replaceAll("_", " ")}{payout.provider_status ? " · Paystack: " + payout.provider_status : ""}</Text>
-      {payout.provider_reference ? <Text style={styles.muted}>Transfer: {payout.provider_reference}</Text> : null}
       {payout.failure_reason ? <Text style={styles.muted}>Reason: {payout.failure_reason}</Text> : null}
       {payout.status === "ELIGIBLE" && payoutAccount ? <Pressable style={styles.primary} onPress={() => void withdrawPayout()}><Text style={styles.primaryText}>Withdraw to bank</Text></Pressable> : null}
     </View>}
@@ -621,7 +620,7 @@ export default function App() {
       {payoutHistory.length === 0 ? <Text style={styles.muted}>No payouts yet.</Text> : payoutHistory.slice(0, 10).map(item => (
         <View key={item.id} style={{ marginBottom: 10 }}>
           <Text>₦{(item.amount_minor / 100).toLocaleString()} · {item.status.replaceAll("_", " ")}</Text>
-          <Text style={styles.muted}>{item.provider_reference ? "Paystack " + item.provider_reference : "Awaiting transfer"}</Text>
+          <Text style={styles.muted}>{item.status.replaceAll("_", " ")}</Text>
           {item.failure_reason ? <Text style={styles.muted}>{item.failure_reason}</Text> : null}
         </View>
       ))}
