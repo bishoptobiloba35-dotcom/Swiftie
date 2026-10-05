@@ -1181,6 +1181,20 @@ router.get("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, r
   res.json({ businesses: result.rows.map((row) => ({ id: row.id, ownerUserId: row.owner_user_id, legalName: row.legal_name, displayName: row.display_name, registrationNumber: row.registration_number, monthlySpendLimitMinor: Number(row.monthly_spend_limit_minor ?? 0), perOrderLimitMinor: Number(row.per_order_limit_minor ?? 0), requiresApproval: row.requires_approval, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at })) });
 });
 
+const publicDropOffParcel = (row: any) => ({
+  id: row.id,
+  deliveryId: row.delivery_id,
+  locationId: row.location_id,
+  endpoint: row.endpoint,
+  status: row.status,
+  receivedAt: row.received_at,
+  courierDriverId: row.courier_driver_id,
+  courierCollectedAt: row.courier_collected_at,
+  completedAt: row.completed_at,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at
+});
+
 const dropOffApplicationSchema = z.object({
   businessId: z.string().uuid().optional(), legalName: z.string().trim().min(2).max(200).optional(), displayName: z.string().trim().min(2).max(120).optional(),
   registrationNumber: z.string().trim().max(100).optional(), name: z.string().trim().min(2).max(160), address: z.string().trim().min(5).max(500),
@@ -1440,10 +1454,10 @@ router.post("/drop-off/parcels", requireAuth("CUSTOMER","AGENT","ADMIN"), async(
   const userId=identity(req),role=(req as any).user?.role;
   const delivery=await pool.query("SELECT id FROM deliveries WHERE id=$1 AND sender_id=$2",[parsed.data.deliveryId,userId]);
   if(!delivery.rows[0]&&role!=="ADMIN")return res.status(404).json({error:"Delivery not found"});
-  const location=(await pool.query("SELECT * FROM drop_off_locations WHERE id=$1",[parsed.data.locationId])).rows[0];
+  const location=(await pool.query("SELECT id,status,verification_status,capacity,commission_minor FROM drop_off_locations WHERE id=$1",[parsed.data.locationId])).rows[0];
   if(!location||location.status!=="ACTIVE"||location.verification_status!=="VERIFIED")return res.status(409).json({error:"Drop-off location is not active"});
-  const existing=await pool.query("SELECT * FROM drop_off_parcels WHERE delivery_id=$1 AND location_id=$2 AND endpoint=$3",[parsed.data.deliveryId,parsed.data.locationId,parsed.data.endpoint]);
-  if(existing.rows[0])return res.json({parcel:existing.rows[0]});
+  const existing=await pool.query("SELECT id,delivery_id,location_id,endpoint,status,received_at,courier_driver_id,courier_collected_at,completed_at,created_at,updated_at FROM drop_off_parcels WHERE delivery_id=$1 AND location_id=$2 AND endpoint=$3",[parsed.data.deliveryId,parsed.data.locationId,parsed.data.endpoint]);
+  if(existing.rows[0])return res.json({parcel:publicDropOffParcel(existing.rows[0])});
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
@@ -1451,10 +1465,10 @@ router.post("/drop-off/parcels", requireAuth("CUSTOMER","AGENT","ADMIN"), async(
     if(!lockedLocation){await client.query("ROLLBACK");return res.status(409).json({error:"Drop-off location is no longer active"});}
     const capacity=await client.query("SELECT count(*)::int AS count FROM drop_off_parcels WHERE location_id=$1 AND status IN ('AT_LOCATION','READY_FOR_COURIER')",[location.id]);
     if(Number(capacity.rows[0].count)>=Number(lockedLocation.capacity)){await client.query("ROLLBACK");return res.status(409).json({error:"Drop-off location is at capacity"});}
-    const parcel=await client.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,$3,encode(gen_random_bytes(5),'hex')) RETURNING *",[parsed.data.deliveryId,location.id,parsed.data.endpoint]);
+    const parcel=await client.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,$3,encode(gen_random_bytes(5),'hex')) RETURNING id,delivery_id,location_id,endpoint,status,received_at,courier_driver_id,courier_collected_at,completed_at,created_at,updated_at",[parsed.data.deliveryId,location.id,parsed.data.endpoint]);
     await client.query("INSERT INTO drop_off_events(parcel_id,actor_user_id,event_type,metadata) VALUES($1,$2,'PARCEL_EXPECTED',$3::jsonb)",[parcel.rows[0].id,userId,JSON.stringify({endpoint:parsed.data.endpoint})]);
     await client.query("COMMIT");
-    res.status(201).json({parcel:parcel.rows[0]});
+    res.status(201).json({parcel:publicDropOffParcel(parcel.rows[0])});
   }catch(error){await client.query("ROLLBACK");throw error}finally{client.release();}
 });
 
@@ -1463,11 +1477,11 @@ router.post("/drop-off/parcels/:id/intake", requireAuth("CUSTOMER","AGENT","ADMI
   const parsed=z.object({intakeCode:z.string().min(6).max(20),storageReference:z.string().max(120).optional(),parcelPhoto:z.string().optional()}).safeParse(req.body);
   if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
   const parcelId=String(req.params.id);
-  const parcel=(await pool.query("SELECT p.*,dl.capacity,dl.commission_minor FROM drop_off_parcels p JOIN drop_off_locations dl ON dl.id=p.location_id WHERE p.id=$1",[parcelId])).rows[0];
+  const parcel=(await pool.query("SELECT p.id,p.delivery_id,p.location_id,p.endpoint,p.intake_code,p.status,p.received_at,p.courier_driver_id,p.courier_collected_at,p.completed_at,p.created_at,p.updated_at,dl.capacity,dl.commission_minor FROM drop_off_parcels p JOIN drop_off_locations dl ON dl.id=p.location_id WHERE p.id=$1",[parcelId])).rows[0];
   if(!parcel)return res.status(404).json({error:"Parcel not found"});
   if((req as any).user?.role!=="ADMIN"&&!await managesDropOff(identity(req),parcel.location_id))return res.status(403).json({error:"Only the approved drop-off operator can intake parcels"});
   if(parcel.intake_code!==parsed.data.intakeCode)return res.status(403).json({error:"Invalid parcel intake code"});
-  if(parcel.status==="READY_FOR_COURIER")return res.json({parcel});
+  if(parcel.status==="READY_FOR_COURIER")return res.json({parcel:publicDropOffParcel(parcel)});
   if(parcel.status!=="EXPECTED")return res.status(409).json({error:"Parcel is not awaiting intake"});
   const count=(await pool.query("SELECT count(*)::int AS count FROM drop_off_parcels WHERE location_id=$1 AND status IN ('AT_LOCATION','READY_FOR_COURIER')",[parcel.location_id])).rows[0].count;
   if(Number(count)>=parcel.capacity)return res.status(409).json({error:"Location capacity exceeded"});
@@ -1484,11 +1498,11 @@ router.post("/drop-off/parcels/:id/intake", requireAuth("CUSTOMER","AGENT","ADMI
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
-    const updated=await client.query("UPDATE drop_off_parcels SET status='READY_FOR_COURIER',storage_reference=COALESCE($2,storage_reference),received_by_user_id=$3,received_at=now(),parcel_photo_key=COALESCE($4,parcel_photo_key),updated_at=now() WHERE id=$1 AND status='EXPECTED' RETURNING *",[parcelId,parsed.data.storageReference??null,identity(req),parcelPhotoKey]);
+    const updated=await client.query("UPDATE drop_off_parcels SET status='READY_FOR_COURIER',storage_reference=COALESCE($2,storage_reference),received_by_user_id=$3,received_at=now(),parcel_photo_key=COALESCE($4,parcel_photo_key),updated_at=now() WHERE id=$1 AND status='EXPECTED' RETURNING id,delivery_id,location_id,endpoint,status,received_at,courier_driver_id,courier_collected_at,completed_at,created_at,updated_at",[parcelId,parsed.data.storageReference??null,identity(req),parcelPhotoKey]);
     if(!updated.rows[0]){await client.query("ROLLBACK");return res.status(409).json({error:"Parcel intake changed concurrently"});}
     await client.query("INSERT INTO drop_off_events(parcel_id,actor_user_id,event_type,metadata) VALUES($1,$2,'PARCEL_INTAKE','{}'::jsonb)",[parcelId,identity(req)]);
     await client.query("INSERT INTO drop_off_commission_ledger(location_id,parcel_id,amount_minor,status) VALUES($1,$2,$3,'EARNED') ON CONFLICT(parcel_id) DO NOTHING",[parcel.location_id,parcelId,parcel.commission_minor]);
-    await client.query("COMMIT");res.status(201).json({parcel:updated.rows[0]});
+    await client.query("COMMIT");res.status(201).json({parcel:publicDropOffParcel(updated.rows[0])});
   }catch(e){await client.query("ROLLBACK");throw e}finally{client.release();}
 });
 
