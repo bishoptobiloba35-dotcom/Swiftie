@@ -1916,6 +1916,55 @@ app.post("/api/track/session", async (req, res) => {
   res.json({ deliveryId: delivery.id, trackingToken: issueTrackingToken(delivery.id) });
 });
 
+app.post("/api/deliveries/:id/share-tracking", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Shareable tracking requires the production database" });
+  const user = (req as typeof req & { user?: { userId: string; role: "CUSTOMER" | "ADMIN" } }).user!;
+  const delivery = await findDeliveryForUser(routeParam(req.params.id, "id"), user.userId, user.role);
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  if (delivery.status === "CANCELLED") return res.status(409).json({ error: "Cancelled deliveries cannot be shared" });
+
+  const rawToken = randomUUID() + randomUUID();
+  const tokenHash = createHash("sha256").update(rawToken).digest("hex");
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  await pool!.query(
+    "INSERT INTO delivery_tracking_links(delivery_id,token_hash,expires_at,created_by_user_id) VALUES($1,$2,$3,$4)",
+    [delivery.id, tokenHash, expiresAt, user.userId]
+  );
+  const configuredBase = (process.env.PUBLIC_TRACKING_BASE_URL ?? "").trim().replace(/\\/$/, "");
+  const base = configuredBase || `${req.protocol}://${req.get("host")}/api/public/track`;
+  return res.status(201).json({
+    url: `${base}/${rawToken}`,
+    expiresAt: expiresAt.toISOString()
+  });
+});
+
+app.get("/api/public/track/:token", async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Public tracking requires the production database" });
+  const token = String(routeParam(req.params.token, "token")).trim();
+  if (token.length < 32 || token.length > 128) return res.status(404).json({ error: "Tracking link not found or expired" });
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const result = await pool!.query(
+    `SELECT d.id,d.tracking_code,d.status,d.pickup,d.dropoff,d.pickup_photo_url,d.updated_at
+       FROM delivery_tracking_links l
+       JOIN deliveries d ON d.id=l.delivery_id
+      WHERE l.token_hash=$1 AND l.revoked_at IS NULL AND l.expires_at > now()`,
+    [tokenHash]
+  );
+  const row = result.rows[0];
+  if (!row) return res.status(404).json({ error: "Tracking link not found or expired" });
+  const latestLocation = await latestPersistentLocation(String(row.id));
+  return res.json({
+    id: row.id,
+    trackingCode: row.tracking_code,
+    status: row.status,
+    pickup: row.pickup,
+    dropoff: row.dropoff,
+    pickupPhotoUrl: row.pickup_photo_url,
+    latestLocation,
+    updatedAt: row.updated_at
+  });
+});
+
 app.get("/api/track/:trackingCode", async (req, res) => {
   const code = String(routeParam(req.params.trackingCode, "trackingCode") ?? "").trim().toUpperCase();
   const receiverPhone = String(req.query.receiverPhone ?? "").trim();
