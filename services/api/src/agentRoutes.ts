@@ -93,7 +93,7 @@ router.post("/agent/buy-orders/:id/replacement", requireAuth("AGENT"), async (re
     itemId: z.string().uuid(),
     proposedDescription: z.string().trim().min(1).max(500),
     proposedQuantity: z.number().int().positive().max(1000).default(1),
-    proposedPriceMinor: z.number().int().nonnegative(),
+    proposedPriceMinor: z.number().int().positive(),
     evidenceFile: z.string().optional(),
     shopperNote: z.string().trim().max(1000).optional()
   }).safeParse(req.body);
