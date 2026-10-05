@@ -452,6 +452,18 @@ router.post("/buy-orders/:id/purchase", requireAuth("AGENT"), async (req, res) =
   if (parsed.data.actualPurchaseMinor > Number(order.purchase_budget_minor)) {
     return res.status(409).json({ error: "Actual purchase amount exceeds the authorized budget", code: "PURCHASE_BUDGET_EXCEEDED" });
   }
+  if (order.errand_type) {
+    const itemAuthorization = await pool.query(
+      `SELECT COALESCE(SUM(GREATEST(max_authorized_minor, 0) * quantity), 0)::numeric AS authorized_minor
+         FROM buy_order_items
+        WHERE buy_order_id=$1 AND status <> 'REFUNDED'`,
+      [id]
+    );
+    const itemAuthorizedMinor = Number(itemAuthorization.rows[0]?.authorized_minor ?? 0);
+    if (!Number.isSafeInteger(itemAuthorizedMinor) || itemAuthorizedMinor <= 0 || parsed.data.actualPurchaseMinor > itemAuthorizedMinor) {
+      return res.status(409).json({ error: "Actual purchase amount exceeds item-level errand authorization", code: "ITEM_AUTHORIZATION_EXCEEDED" });
+    }
+  }
   if (parsed.data.actualPurchaseMinor > Number(agent.max_purchase_minor)) {
     return res.status(409).json({ error: "Purchase exceeds this agent's authorized purchase limit", code: "AGENT_PURCHASE_LIMIT_EXCEEDED" });
   }
