@@ -122,7 +122,7 @@ router.get("/agent/settlements", requireAuth("AGENT"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const agent=await getAgent(identity(req));if(!agent)return res.status(404).json({error:"Agent profile not found"});
   const result=await pool.query("SELECT bos.id,bos.buy_order_id,bos.amount_minor,bos.currency,bos.status,bos.provider_status,bos.failure_reason,bos.paid_at,bos.created_at,bos.updated_at FROM buy_order_settlements bos WHERE bos.agent_id=$1 ORDER BY bos.created_at DESC LIMIT 100",[agent.id]);
-  res.json({settlements:result.rows});
+  res.json({settlements:result.rows.map((row) => ({ id: row.id, buyOrderId: row.buy_order_id, amountMinor: Number(row.amount_minor), currency: row.currency, status: row.status, providerStatus: row.provider_status, failureReason: row.failure_reason, paidAt: row.paid_at, createdAt: row.created_at, updatedAt: row.updated_at }))});
 });
 
 
