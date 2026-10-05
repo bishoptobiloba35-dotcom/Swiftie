@@ -665,8 +665,16 @@ router.post("/buy-orders/:id/cancel", requireAuth("CUSTOMER"), async (req, res) 
     const cancelledOrder=result.rows[0];
     if(cancelledOrder.payment_status==="HELD"&&cancelledOrder.payment_reference&&process.env.PAYSTACK_SECRET_KEY){
       try{
-        const payment=(await pool.query("SELECT id,amount_minor,currency,status FROM buy_order_payments WHERE buy_order_id=$1",[cancelledOrder.id])).rows[0];
+        const payment=(await pool.query("SELECT id,amount_minor,currency,status,refund_status,refund_reference FROM buy_order_payments WHERE buy_order_id=$1 FOR UPDATE",[cancelledOrder.id])).rows[0];
         if(payment&&["HELD","AUTHORIZED"].includes(payment.status)){
+          if (payment.refund_status === "PENDING" || payment.refund_status === "PROCESSED") {
+            return res.json({ buyOrder: cancelledOrder });
+          }
+          if (!cancelledOrder.payment_reference) {
+            await pool.query("UPDATE buy_order_payments SET refund_status='RECONCILIATION_REQUIRED',refund_amount_minor=$2,updated_at=now() WHERE id=$1",[payment.id,Number(payment.amount_minor)]);
+            await pool.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'REFUND_RECONCILIATION_REQUIRED',$3::jsonb)",[cancelledOrder.id,identity(req),JSON.stringify({amountMinor:Number(payment.amount_minor),reason:"Missing provider payment reference"})]);
+            return res.json({ buyOrder: cancelledOrder });
+          }
           const refundResponse=await fetch("https://api.paystack.co/refund",{
             method:"POST",
             headers:{authorization:"Bearer "+process.env.PAYSTACK_SECRET_KEY,"content-type":"application/json"},
