@@ -565,7 +565,29 @@ router.get("/marketplace/listings/:id", async (req, res) => {
       ORDER BY l.created_at DESC LIMIT 8`,
     [listing.seller_user_id, id]
   );
-  return res.json({ listing, recommended: recommended.rows });
+  const publicListing = {
+    id: listing.id,
+    title: listing.title,
+    description: listing.description,
+    condition: listing.condition,
+    useDescription: listing.use_description,
+    usageInstructions: listing.usage_instructions,
+    category: listing.category,
+    deliveryFeeMinor: Number(listing.delivery_fee_minor),
+    finalPriceMinor: Number(listing.final_price_minor),
+    currency: listing.currency,
+    deliveryMode: listing.delivery_mode,
+    stockQuantity: Number(listing.stock_quantity),
+    createdAt: listing.created_at,
+    seller: {
+      id: listing.seller_id,
+      displayName: listing.seller_name,
+      bio: listing.seller_bio,
+      locationLabel: listing.seller_location
+    },
+    media: listing.media
+  };
+  return res.json({ listing: publicListing, recommended: recommended.rows });
 });
 
 // Any authenticated SwiftDrop user may sell ordinary everyday goods.
