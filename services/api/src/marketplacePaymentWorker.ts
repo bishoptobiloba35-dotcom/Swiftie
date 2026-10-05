@@ -42,7 +42,14 @@ export async function reconcileCancelledMarketplacePayments(): Promise<void> {
           providerCurrency === String(payment.currency).trim();
         if (!amountMatches) {
           await pool.query(
-            "UPDATE marketplace_order_payments SET status='FAILED',provider_status='amount_mismatch_after_cancellation',updated_at=now() WHERE id=$1 AND status='PENDING'",
+            `UPDATE marketplace_order_payments
+                SET status=CASE WHEN status='PENDING' THEN 'FAILED' ELSE status END,
+                    provider_status='amount_mismatch_after_cancellation',
+                    refund_status=CASE WHEN status='AUTHORIZED' THEN 'RECONCILIATION_REQUIRED' ELSE refund_status END,
+                    refund_updated_at=CASE WHEN status='AUTHORIZED' THEN now() ELSE refund_updated_at END,
+                    updated_at=now()
+              WHERE id=$1
+                AND status IN ('PENDING','AUTHORIZED')`,
             [payment.id]
           );
           continue;
