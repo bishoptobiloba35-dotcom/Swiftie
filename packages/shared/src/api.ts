@@ -383,6 +383,20 @@ export class SwiftDropApi {
     return data;
   }
 
+  async errandPaymentStatus(errandId: string): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/buy-orders/" + encodeURIComponent(errandId) + "/payment/status", { headers: this.headers() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to read errand payment status");
+    return data;
+  }
+
+  async errand(errandId: string): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/errands/" + encodeURIComponent(errandId), { headers: this.headers() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to load errand");
+    return data;
+  }
+
   async initializeErrandPayment(errandId: string): Promise<{ payment: any; authorizationUrl?: string; accessCode?: string }> {
     const response = await fetch(this.baseUrl + "/api/buy-orders/" + encodeURIComponent(errandId) + "/payment/initialize", {
       method: "POST",
