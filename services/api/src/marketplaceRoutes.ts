@@ -51,6 +51,11 @@ const checkoutSchema = z.object({
   idempotencyKey: z.string().trim().min(16).max(100)
 });
 
+const sellerReadinessSchema = z.object({
+  preparationMinutes: z.number().int().min(0).max(1440).default(0),
+  busyMode: z.boolean().default(false)
+});
+
 router.get("/marketplace/my-listings", requireAuth(), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool.query(
@@ -224,7 +229,9 @@ router.get("/marketplace/sales", requireAuth(), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool.query(
     `SELECT mo.id,mo.listing_id,mo.quantity,mo.unit_final_price_minor,mo.total_minor,mo.currency,
-            mo.status,mo.fulfillment_status,mo.delivery_id,mo.requested_delivery_at,mo.created_at,mo.updated_at,
+            mo.status,mo.fulfillment_status,mo.delivery_id,mo.requested_delivery_at,
+            mo.seller_preparation_minutes,mo.seller_ready_at,mo.seller_busy_mode,
+            mo.created_at,mo.updated_at,
             l.title,l.condition,l.delivery_mode,
             u.email AS buyer_email,
             d.tracking_code,d.status AS delivery_status,d.receiver_name,d.receiver_phone
@@ -408,18 +415,86 @@ router.post("/marketplace/orders/:id/fulfill", requireAuth(), async (req, res) =
     );
     const updatedOrder = (await client.query(
       `UPDATE marketplace_orders
-          SET delivery_id=$2, fulfillment_status='READY', status='PROCESSING', updated_at=now()
+          SET delivery_id=$2, fulfillment_status='PREPARING', status='PROCESSING',
+              seller_ready_at=NULL, updated_at=now()
         WHERE id=$1 AND fulfillment_status='NOT_STARTED'
         RETURNING *`,
       [orderId,deliveryId]
     )).rows[0];
     if (!updatedOrder) throw new Error("Marketplace fulfillment state changed concurrently");
     await client.query("COMMIT");
-    return res.status(201).json({ order: updatedOrder, deliveryId, trackingCode, fulfillmentStatus: "READY" });
+    return res.status(201).json({
+      order: updatedOrder,
+      deliveryId,
+      trackingCode,
+      fulfillmentStatus: "PREPARING",
+      message: "Seller preparation is pending. The seller must mark the order ready before courier pickup."
+    });
   } catch (error) {
     await client.query("ROLLBACK");
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to initialize marketplace fulfillment" });
   } finally { client.release(); }
+});
+
+router.post("/marketplace/orders/:id/mark-ready", requireAuth(), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const parsed = sellerReadinessSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const order = (await client.query(
+      `SELECT mo.id,mo.status,mo.fulfillment_status,mo.delivery_id,mo.seller_user_id
+         FROM marketplace_orders mo
+        WHERE mo.id=$1 AND mo.seller_user_id=$2
+        FOR UPDATE`,
+      [String(req.params.id), identity(req)]
+    )).rows[0];
+    if (!order) { await client.query("ROLLBACK"); return res.status(404).json({ error: "Marketplace sale not found" }); }
+    if (order.status !== "PROCESSING" || !order.delivery_id) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "The paid marketplace order is not awaiting seller readiness" });
+    }
+    if (order.fulfillment_status === "FULFILLED" || order.fulfillment_status === "CANCELLED") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "This order can no longer be marked ready" });
+    }
+    const updated = (await client.query(
+      `UPDATE marketplace_orders
+          SET fulfillment_status='READY',
+              seller_preparation_minutes=$2,
+              seller_ready_at=now(),
+              seller_busy_mode=$3,
+              updated_at=now()
+        WHERE id=$1
+        RETURNING id,fulfillment_status,seller_preparation_minutes,seller_ready_at,seller_busy_mode,delivery_id`,
+      [order.id, parsed.data.preparationMinutes, parsed.data.busyMode]
+    )).rows[0];
+    await client.query(
+      `INSERT INTO marketplace_order_events (marketplace_order_id,event_type,payload)
+       VALUES ($1,'SELLER_MARKED_READY',$2::jsonb)`,
+      [order.id, JSON.stringify({
+        actorUserId: identity(req),
+        preparationMinutes: parsed.data.preparationMinutes,
+        busyMode: parsed.data.busyMode
+      })]
+    );
+    await client.query(
+      `INSERT INTO delivery_events (delivery_id,event_type,actor_user_id,metadata)
+       VALUES ($1,'MARKETPLACE_ORDER_READY',$2,$3::jsonb)`,
+      [order.delivery_id, identity(req), JSON.stringify({
+        preparationMinutes: parsed.data.preparationMinutes,
+        busyMode: parsed.data.busyMode
+      })]
+    );
+    await client.query("COMMIT");
+    return res.json({ order: updated, message: "Order marked ready for courier pickup." });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to mark order ready" });
+  } finally {
+    client.release();
+  }
 });
 
 router.get("/marketplace/listings/:id/media/:mediaId", async (req, res) => {
