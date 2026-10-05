@@ -58,6 +58,13 @@ async function premiumAction(req: any, res: any, action: string): Promise<Plan |
   return plan;
 }
 
+const buyOrderItemSchema = z.object({
+  description: z.string().trim().min(1).max(500),
+  quantity: z.number().int().positive().max(1000).default(1),
+  maxAuthorizedMinor: z.number().int().nonnegative().max(100000000).optional(),
+  replacementPolicy: z.enum(["EXACT_ONLY", "BEST_MATCH", "APPROVED_ALTERNATIVES", "REFUND_IF_UNAVAILABLE"]).optional()
+});
+
 const buyOrderSchema = z.object({
   errandType: z.enum(["GENERAL_ERRAND", "PURCHASE_AND_DELIVER", "SHOP_FOR_ME"]).default("GENERAL_ERRAND"),
   itemDescription: z.string().trim().min(3).max(500),
@@ -67,7 +74,14 @@ const buyOrderSchema = z.object({
   notes: z.string().trim().max(1000).optional(),
   replacementPolicy: z.enum(["EXACT_ONLY", "BEST_MATCH", "APPROVED_ALTERNATIVES", "REFUND_IF_UNAVAILABLE"]).default("EXACT_ONLY"),
   maxPriceDeltaMinor: z.number().int().nonnegative().max(100000000).default(0),
-  businessId: z.string().uuid().optional()
+  businessId: z.string().uuid().optional(),
+  items: z.array(buyOrderItemSchema).min(1).max(50).default([])
+}).superRefine((value, ctx) => {
+  for (const [index, item] of value.items.entries()) {
+    if ((item.maxAuthorizedMinor ?? value.purchaseBudgetMinor) > value.purchaseBudgetMinor) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["items", index, "maxAuthorizedMinor"], message: "Item authorization cannot exceed the errand spending ceiling" });
+    }
+  }
 });
 
 const businessSchema = z.object({
@@ -166,6 +180,21 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
     try {
       await client.query("BEGIN");
       let businessMemberRow: any = null;
+      const items = parsed.data.items.length ? parsed.data.items : [{
+        description: parsed.data.itemDescription,
+        quantity: 1,
+        maxAuthorizedMinor: parsed.data.purchaseBudgetMinor,
+        replacementPolicy: parsed.data.replacementPolicy
+      }];
+      for (const item of items) {
+        await client.query(
+          `INSERT INTO buy_order_items
+            (buy_order_id,requested_description,quantity,max_authorized_minor,replacement_policy)
+           VALUES ($1,$2,$3,$4,$5)`,
+          [result.rows[0].id, item.description, item.quantity, item.maxAuthorizedMinor ?? parsed.data.purchaseBudgetMinor, item.replacementPolicy ?? parsed.data.replacementPolicy]
+        );
+      }
+
       if (parsed.data.businessId) {
         await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [parsed.data.businessId]);
         const memberResult = await client.query(
