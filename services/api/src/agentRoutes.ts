@@ -627,7 +627,7 @@ router.post("/buy-orders/:id/create-delivery", requireAuth("AGENT"), async (req,
     if(!order||order.agent_id!==agent.id){await client.query("ROLLBACK");return res.status(404).json({error:"Buy & Deliver order not found"});}
     if(order.status!=="PURCHASED"){await client.query("ROLLBACK");return res.status(409).json({error:"The order must be purchased before delivery is created"});}
     if(order.payment_status!=="HELD"){await client.query("ROLLBACK");return res.status(409).json({error:"Customer payment is not held"});}
-    if(order.delivery_id){const existing=(await client.query("SELECT id,tracking_code,status FROM deliveries WHERE id=$1",[order.delivery_id])).rows[0];await client.query("COMMIT");return res.json({delivery:existing,buyOrder:order});}
+    if(order.delivery_id){const existing=(await client.query("SELECT id,tracking_code,status FROM deliveries WHERE id=$1",[order.delivery_id])).rows[0];await client.query("COMMIT");return res.json({delivery:existing,buyOrder:publicAgentBuyOrder(order)});}
     if(!order.receiver_name||!order.receiver_phone||!order.receiver_pin_hash||!order.destination_address||order.destination_lat==null||order.destination_lng==null){
       await client.query("ROLLBACK");return res.status(409).json({error:"Receiver and delivery destination details are incomplete",code:"DESTINATION_INCOMPLETE"});
     }
