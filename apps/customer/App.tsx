@@ -519,6 +519,17 @@ export default function App() {
     }
   }
 
+  async function refreshErrand(errandId: string) {
+    try {
+      const detail = await api.errand(errandId);
+      setMyErrands(prev => prev.map(item => item.id === errandId ? detail.errand : item));
+      return detail;
+    } catch (error) {
+      Alert.alert("Errand", error instanceof Error ? error.message : "Unable to refresh errand");
+      return null;
+    }
+  }
+
   async function createErrand() {
     try {
       const d = errandDraft;
@@ -1082,6 +1093,51 @@ export default function App() {
   }
 
   if (homeSection === "ERRAND") {
+    const d = errandDraft;
+    return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}>
+      <View style={styles.header}><View><Text style={styles.logo}>Hire an Errand</Text><Text style={styles.subtitle}>General errands, Purchase & Deliver, and Shop for Me — with spending controls.</Text></View><Pressable onPress={() => setHomeSection("HOME")}><Text style={styles.link}>Home</Text></Pressable></View>
+      {myErrands.length > 0 && <View style={styles.card}>
+        <Text style={styles.homeHeading}>Your errand requests</Text>
+        {myErrands.slice(0,5).map(item => <Pressable key={item.id} style={styles.locationCard} onPress={() => void refreshErrand(item.id)}>
+          <View style={styles.rowBetween}><Text style={styles.photoTitle}>{String(item.errand_type ?? "").replaceAll("_"," ")}</Text><Text style={styles.status}>{String(item.status ?? "").replaceAll("_"," ")}</Text></View>
+          <Text style={styles.muted}>{item.item_description}</Text>
+          <Text>Spending ceiling: ₦{(Number(item.purchase_budget_minor ?? 0)/100).toLocaleString()}</Text>
+          {item.agent_id && <Text style={styles.muted}>Agent assigned</Text>}
+          {item.delivery_id && <Text style={styles.done}>Delivery created · tracking available</Text>}
+        </Pressable>)}
+      </View>}
+      <View style={styles.card}>
+        <Text style={styles.homeHeading}>What do you need?</Text>
+        <View style={styles.row}>
+          {([["GENERAL_ERRAND","General errand"],["PURCHASE_AND_DELIVER","Purchase & Deliver"],["SHOP_FOR_ME","Shop for Me"]] as const).map(([value,label]) =>
+            <Pressable key={value} style={[styles.choice, d.errandType === value && styles.choiceActive]} onPress={() => updateErrand({ errandType: value })}><Text style={styles.photoTitle}>{label}</Text></Pressable>
+          )}
+        </View>
+        <TextInput style={[styles.input, styles.multiline]} placeholder="Describe the errand" value={d.description} onChangeText={v => updateErrand({ description: v })} multiline maxLength={2000} />
+        <TextInput style={styles.input} placeholder="Exact item or shopping target (optional for general errands)" value={d.itemDescription} onChangeText={v => updateErrand({ itemDescription: v })} />
+        <TextInput style={styles.input} placeholder="Spending ceiling (₦)" keyboardType="decimal-pad" value={d.spendingCeiling} onChangeText={v => updateErrand({ spendingCeiling: v })} />
+        {d.errandType !== "GENERAL_ERRAND" && <><TextInput style={styles.input} placeholder="Original / expected item price (₦, optional)" keyboardType="decimal-pad" value={d.requestedPrice} onChangeText={v => updateErrand({ requestedPrice: v })} /><TextInput style={styles.input} placeholder="Maximum price difference allowed (₦)" keyboardType="decimal-pad" value={d.maxPriceDelta} onChangeText={v => updateErrand({ maxPriceDelta: v })} /><Text style={styles.hint}>No silent overcharging or unauthorized substitutions.</Text>
+          <View style={styles.row}>{([["EXACT_ONLY","Exact only"],["BEST_MATCH","Best match"],["APPROVED_ALTERNATIVES","Approved alternatives"],["REFUND_IF_UNAVAILABLE","Refund if unavailable"]] as const).map(([value,label]) => <Pressable key={value} style={[styles.choice, d.replacementPolicy === value && styles.choiceActive]} onPress={() => updateErrand({ replacementPolicy: value })}><Text style={styles.muted}>{label}</Text></Pressable>)}</View></>}
+        <TextInput style={styles.input} placeholder="Preferred shop / merchant (optional)" value={d.merchantName} onChangeText={v => updateErrand({ merchantName: v })} />
+        <TextInput style={styles.input} placeholder="Shop address (optional)" value={d.merchantAddress} onChangeText={v => updateErrand({ merchantAddress: v })} />
+        <TextInput style={[styles.input, styles.multiline]} placeholder="Errand instructions" value={d.instructions} onChangeText={v => updateErrand({ instructions: v })} multiline maxLength={2000} />
+        <TextInput style={styles.input} placeholder="Requested completion time (ISO 8601)" value={d.requestedCompletionAt} onChangeText={v => updateErrand({ requestedCompletionAt: v })} />
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.homeHeading}>Receiver & destination</Text>
+        <TextInput style={styles.input} placeholder="Receiver full name" value={d.receiverName} onChangeText={v => updateErrand({ receiverName: v })} />
+        <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={d.receiverPhone} onChangeText={v => updateErrand({ receiverPhone: v })} />
+        <TextInput style={styles.input} placeholder="4-6 digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={d.receiverPin} onChangeText={v => updateErrand({ receiverPin: v })} />
+        <TextInput style={styles.input} placeholder="Destination address" value={d.destinationAddress} onChangeText={v => updateErrand({ destinationAddress: v })} />
+        <View style={styles.row}><TextInput style={styles.half} placeholder="Latitude" keyboardType="decimal-pad" value={d.destinationLat} onChangeText={v => updateErrand({ destinationLat: v })} /><TextInput style={styles.half} placeholder="Longitude" keyboardType="decimal-pad" value={d.destinationLng} onChangeText={v => updateErrand({ destinationLng: v })} /></View>
+        <Pressable style={styles.primary} disabled={errandBusy} onPress={() => void createErrand()}><Text style={styles.primaryText}>{errandBusy ? "Creating errand…" : "Place errand request"}</Text></Pressable>
+      </View>
+      <Text style={styles.hint}>After payment authorization, an approved errand agent can accept the request. Shopping remains constrained by your spending ceiling and replacement policy. Delivery becomes a tracked delivery with the existing proof-of-delivery and receiver-PIN controls.</Text>
+      <Pressable style={styles.secondary} onPress={() => setHomeSection("HOME")}><Text style={styles.secondaryText}>Back to home</Text></Pressable>
+    </ScrollView></SafeAreaView>;
+  }
+
+
     const d = errandDraft;
     return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}>
       <View style={styles.header}><View><Text style={styles.logo}>Hire an Errand</Text><Text style={styles.subtitle}>One errand service for general tasks, Purchase & Deliver, and Shop for Me.</Text></View><Pressable onPress={() => setHomeSection("HOME")}><Text style={styles.link}>Home</Text></Pressable></View>
