@@ -612,7 +612,9 @@ router.post("/marketplace/orders/:id/payment/initialize", requireAuth(), async (
   if (!secret) return res.status(503).json({ error: "Paystack is not configured" });
 
   const existing = await pool.query(
-    `SELECT mop.*, mo.buyer_user_id, mo.status AS order_status
+    `SELECT mop.id,mop.marketplace_order_id,mop.amount_minor,mop.currency,mop.status,mop.provider_status,
+            mop.provider_reference,mop.authorization_url,mop.created_at,mop.updated_at,
+            mo.buyer_user_id, mo.status AS order_status
        FROM marketplace_order_payments mop
        JOIN marketplace_orders mo ON mo.id=mop.marketplace_order_id
       WHERE mop.marketplace_order_id=$1 AND mo.buyer_user_id=$2
@@ -631,10 +633,19 @@ router.post("/marketplace/orders/:id/payment/initialize", requireAuth(), async (
     reusableProviderStatuses.has(String(current.provider_status ?? "").toLowerCase())
   ) {
     return res.status(200).json({
-      payment: current,
+      payment: {
+        id: current.id,
+        marketplaceOrderId: current.marketplace_order_id,
+        amountMinor: current.amount_minor,
+        currency: current.currency,
+        status: current.status,
+        providerStatus: current.provider_status,
+        authorizationUrl: current.authorization_url,
+        createdAt: current.created_at,
+        updatedAt: current.updated_at
+      },
       authorizationUrl: current.authorization_url,
       accessCode: null,
-      reference: current.provider_reference,
       reused: true
     });
   }
@@ -667,7 +678,18 @@ router.post("/marketplace/orders/:id/payment/initialize", requireAuth(), async (
      RETURNING *`,
     [orderId, userId, reference, amountMinor, payload.data.authorization_url]
   );
-  return res.status(201).json({ payment: payment.rows[0], authorizationUrl: payload.data.authorization_url, accessCode: payload.data.access_code ?? null, reference });
+  const publicPayment = {
+    id: payment.rows[0].id,
+    marketplaceOrderId: payment.rows[0].marketplace_order_id,
+    amountMinor: payment.rows[0].amount_minor,
+    currency: payment.rows[0].currency,
+    status: payment.rows[0].status,
+    providerStatus: payment.rows[0].provider_status,
+    authorizationUrl: payment.rows[0].authorization_url,
+    createdAt: payment.rows[0].created_at,
+    updatedAt: payment.rows[0].updated_at
+  };
+  return res.status(201).json({ payment: publicPayment, authorizationUrl: payload.data.authorization_url, accessCode: payload.data.access_code ?? null });
 });
 
 router.post("/marketplace/orders/:id/payment/verify", requireAuth(), async (req, res) => {
@@ -799,7 +821,7 @@ router.post("/marketplace/orders/:id/payment/verify", requireAuth(), async (req,
 router.get("/marketplace/orders/:id/payment", requireAuth(), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool.query(
-    `SELECT mop.id,mop.marketplace_order_id,mop.amount_minor,mop.currency,mop.status,mop.provider_status,mop.provider_reference,mop.created_at,mop.updated_at
+    `SELECT mop.id,mop.marketplace_order_id,mop.amount_minor,mop.currency,mop.status,mop.provider_status,mop.created_at,mop.updated_at
        FROM marketplace_order_payments mop
        JOIN marketplace_orders mo ON mo.id=mop.marketplace_order_id
       WHERE mop.marketplace_order_id=$1 AND mo.buyer_user_id=$2`,
