@@ -94,7 +94,7 @@ router.get("/marketplace/my-listings", requireAuth(), async (req, res) => {
       LIMIT 100`,
     [identity(req)]
   );
-  return res.json({ listings: result.rows });
+  return res.json({ listings: result.rows.map((row) => ({ id: row.id, sellerId: row.seller_id, title: row.title, description: row.description, condition: row.condition, useDescription: row.use_description, usageInstructions: row.usage_instructions, category: row.category, priceMinor: Number(row.price_minor), currency: row.currency, stockQuantity: Number(row.stock_quantity), deliveryOptions: row.delivery_options, media: row.media, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at })) });
 });
 
 router.patch("/marketplace/listings/:id", requireAuth(), async (req, res) => {
