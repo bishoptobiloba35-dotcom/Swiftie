@@ -196,7 +196,29 @@ router.get("/marketplace/listings", async (req, res) => {
       LIMIT 100`,
     params
   );
-  return res.json({ listings: result.rows });
+  return res.json({ listings: result.rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    condition: row.condition,
+    useDescription: row.use_description,
+    usageInstructions: row.usage_instructions,
+    category: row.category,
+    deliveryFeeMinor: Number(row.delivery_fee_minor),
+    finalPriceMinor: Number(row.final_price_minor),
+    currency: row.currency,
+    deliveryMode: row.delivery_mode,
+    stockQuantity: Number(row.stock_quantity),
+    isPerishable: Boolean(row.is_perishable),
+    createdAt: row.created_at,
+    seller: {
+      id: row.seller_id,
+      displayName: row.seller_name,
+      bio: row.seller_bio,
+      locationLabel: row.seller_location
+    },
+    media: row.media
+  })) });
 });
 
 router.get("/marketplace/sellers/:sellerId", async (req, res) => {
