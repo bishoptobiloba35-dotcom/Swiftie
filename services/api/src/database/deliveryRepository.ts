@@ -209,6 +209,18 @@ export async function updatePaymentStatus(
   return result.rows[0] ? paymentFromRow(result.rows[0]) : null;
 }
 
+export type DeliveryProofType = "PHOTO" | "SIGNATURE" | "BARCODE" | "ID";
+export type DeliveryProofPhase = "PICKUP" | "DROPOFF";
+
+function proofRequirementsForDeclaredValue(declaredValueMinor: number): { pickup: string[]; dropoff: string[] } {
+  const photoThreshold = Number(process.env.SWIFTDROP_PROOF_PHOTO_THRESHOLD_MINOR ?? 500000);
+  const signatureThreshold = Number(process.env.SWIFTDROP_PROOF_SIGNATURE_THRESHOLD_MINOR ?? 1000000);
+  const dropoff = ["PIN"];
+  if (Number.isFinite(photoThreshold) && photoThreshold > 0 && declaredValueMinor >= photoThreshold) dropoff.push("PHOTO");
+  if (Number.isFinite(signatureThreshold) && signatureThreshold > 0 && declaredValueMinor >= signatureThreshold) dropoff.push("SIGNATURE");
+  return { pickup: ["PHOTO"], dropoff };
+}
+
 export type StoredDelivery = {
   id: string;
   trackingCode: string;
@@ -225,6 +237,7 @@ export type StoredDelivery = {
   nextDeliveryAt?: string | null;
   driverId?: string;
   pickupPhotoUrl?: string;
+  proofRequirements: { pickup: string[]; dropoff: string[] };
   receiverPinHash: string;
   weightKg?: number;
   dimensionsCm?: { length: number; width: number; height: number };
@@ -267,6 +280,7 @@ function rowToDelivery(row: any): StoredDelivery {
     nextDeliveryAt: row.next_delivery_at ? new Date(row.next_delivery_at).toISOString() : null,
     driverId: row.driver_id ?? undefined,
     pickupPhotoUrl: row.pickup_photo_url ?? undefined,
+    proofRequirements: row.proof_requirements ?? { pickup: ["PHOTO"], dropoff: ["PIN"] },
     receiverPinHash: row.receiver_pin_hash,
     weightKg: row.weight_kg == null ? undefined : Number(row.weight_kg),
     dimensionsCm: row.length_cm == null ? undefined : { length: Number(row.length_cm), width: Number(row.width_cm), height: Number(row.height_cm) },
@@ -356,14 +370,16 @@ export async function createPersistentDelivery(input: {
       (id, tracking_code, sender_id, receiver_name, receiver_phone,
        payment_mode, pickup_address, pickup_lat, pickup_lng, pickup_instructions, dropoff_address, dropoff_lat, dropoff_lng, dropoff_instructions, status, receiver_pin_hash,
        weight_kg, length_cm, width_cm, height_cm, is_perishable, declared_value_minor,
-       quote_distance_meters, quote_duration_seconds, quote_base_fare_minor,
+       proof_requirements, quote_distance_meters, quote_duration_seconds, quote_base_fare_minor,
        quote_distance_fare_minor, quote_weight_fare_minor, quote_size_fare_minor, quote_perishable_surcharge_minor, quote_fuel_reference_minor, quote_protection_reserve_minor, quote_pricing_version, quote_service_fee_minor, quote_total_minor, quote_currency)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'CREATED',$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'CREATED',$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
      RETURNING *`,
     [id, code, input.senderId, input.receiverName, input.receiverPhone, input.paymentMode ?? "SENDER_ESCROW",
       input.pickup.formattedAddress, input.pickup.location.latitude, input.pickup.location.longitude, input.pickupInstructions?.trim() || null,
       input.dropoff.formattedAddress, input.dropoff.location.latitude, input.dropoff.location.longitude, input.dropoffInstructions?.trim() || null,
-      hashPin(input.receiverPin), input.weightKg ?? null, input.dimensionsCm?.length ?? null, input.dimensionsCm?.width ?? null, input.dimensionsCm?.height ?? null, input.isPerishable ?? false, input.declaredValueMinor, input.quote?.distanceMeters ?? null, input.quote?.durationSeconds ?? null,
+      hashPin(input.receiverPin), input.weightKg ?? null, input.dimensionsCm?.length ?? null, input.dimensionsCm?.width ?? null, input.dimensionsCm?.height ?? null, input.isPerishable ?? false, input.declaredValueMinor,
+      JSON.stringify(proofRequirementsForDeclaredValue(input.declaredValueMinor)),
+      input.quote?.distanceMeters ?? null, input.quote?.durationSeconds ?? null,
       input.quote?.baseFareMinor ?? null, input.quote?.distanceFareMinor ?? null,
       input.quote?.weightFareMinor ?? null, input.quote?.sizeFareMinor ?? null, input.quote?.perishableSurchargeMinor ?? null,
       input.quote?.fuelReferenceMinor ?? null, input.quote?.protectionReserveMinor ?? null, input.quote?.pricingVersion ?? null,
@@ -1223,6 +1239,56 @@ export async function transitionDelivery(id: string, from: string, to: string, d
   return result.rows[0] ? rowToDelivery(result.rows[0]) : null;
 }
 
+export async function listDeliveryProofs(deliveryId: string, phase?: DeliveryProofPhase): Promise<Array<{ id: string; deliveryId: string; proofType: DeliveryProofType; phase: DeliveryProofPhase; storageKey?: string; proofValue?: string; metadata: Record<string, unknown>; capturedByUserId?: string; createdAt: string }>> {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT id,delivery_id,proof_type,phase,storage_key,proof_value,metadata,captured_by_user_id,created_at
+       FROM delivery_proofs WHERE delivery_id=$1 AND ($2::text IS NULL OR phase=$2)
+      ORDER BY created_at ASC`,
+    [deliveryId, phase ?? null]
+  );
+  return result.rows.map(row => ({
+    id: row.id, deliveryId: row.delivery_id, proofType: row.proof_type, phase: row.phase,
+    storageKey: row.storage_key ?? undefined, proofValue: row.proof_value ?? undefined,
+    metadata: row.metadata ?? {}, capturedByUserId: row.captured_by_user_id ?? undefined,
+    createdAt: new Date(row.created_at).toISOString()
+  }));
+}
+
+export async function saveDeliveryProof(input: {
+  deliveryId: string;
+  phase: DeliveryProofPhase;
+  proofType: DeliveryProofType;
+  storageKey?: string;
+  proofValue?: string;
+  metadata?: Record<string, unknown>;
+  capturedByUserId?: string;
+}): Promise<boolean> {
+  if (!pool) return false;
+  const result = await pool.query(
+    `INSERT INTO delivery_proofs (delivery_id,phase,proof_type,storage_key,proof_value,metadata,captured_by_user_id)
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)
+     ON CONFLICT (delivery_id,phase,proof_type) DO UPDATE
+       SET storage_key=EXCLUDED.storage_key, proof_value=EXCLUDED.proof_value,
+           metadata=EXCLUDED.metadata, captured_by_user_id=EXCLUDED.captured_by_user_id
+     RETURNING id`,
+    [input.deliveryId,input.phase,input.proofType,input.storageKey ?? null,input.proofValue ?? null,JSON.stringify(input.metadata ?? {}),input.capturedByUserId ?? null]
+  );
+  return Boolean(result.rows[0]);
+}
+
+export async function hasRequiredDropoffProofs(deliveryId: string, requirements: string[]): Promise<boolean> {
+  const required = requirements.filter(type => type !== "PIN");
+  if (!required.length) return true;
+  if (!pool) return false;
+  const result = await pool.query(
+    `SELECT proof_type FROM delivery_proofs WHERE delivery_id=$1 AND phase='DROPOFF' AND proof_type = ANY($2::text[])`,
+    [deliveryId, required]
+  );
+  const present = new Set(result.rows.map(row => row.proof_type));
+  return required.every(type => present.has(type));
+}
+
 export async function savePickupPhoto(id: string, driverId: string, photoUrl: string): Promise<StoredDelivery | null> {
   if (!pool) return null;
   const result = await pool.query(
@@ -1246,7 +1312,8 @@ export async function confirmReceiverAndReleaseEscrow(id: string, receiverPhone:
     await client.query('BEGIN');
     const result = await client.query(`SELECT d.*, p.amount_minor, p.currency AS payment_currency, p.status AS payment_status, p.refund_status, p.collection_mode FROM deliveries d JOIN payments p ON p.delivery_id=d.id WHERE d.id=$1 FOR UPDATE`, [id]);
     const row = result.rows[0];
-    if (!row || row.collection_mode !== "SENDER_ESCROW" || row.receiver_phone !== receiverPhone || row.status !== 'ARRIVED' || row.payment_status !== 'HELD' || ['pending','processing','needs-attention'].includes(String(row.refund_status ?? '')) || !verifyPin(pin, row.receiver_pin_hash) || !row.driver_id) {
+    if (!row || row.collection_mode !== "SENDER_ESCROW" || row.receiver_phone !== receiverPhone || row.status !== 'ARRIVED' || row.payment_status !== 'HELD' || ['pending','processing','needs-attention'].includes(String(row.refund_status ?? '')) || !verifyPin(pin, row.receiver_pin_hash) || !row.driver_id ||
+        !(await hasRequiredDropoffProofs(id, Array.isArray(row.proof_requirements?.dropoff) ? row.proof_requirements.dropoff : ["PIN"]))) {
       await client.query('ROLLBACK');
       return null;
     }

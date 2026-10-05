@@ -7,7 +7,7 @@ import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
-import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, confirmReceiverOnDeliveryPaymentDue, settleReceiverPaymentAndReleasePayout, reservePaymentInitialization, savePaymentCheckoutSession, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout, flagPayoutReconciliationMismatch } from "./database/deliveryRepository.js";
+import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, listDeliveryProofs, saveDeliveryProof, hasRequiredDropoffProofs, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, confirmReceiverOnDeliveryPaymentDue, settleReceiverPaymentAndReleasePayout, reservePaymentInitialization, savePaymentCheckoutSession, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout, flagPayoutReconciliationMismatch } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
 import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, listSupportTicketMessages, recordAdminSupportReply, prepareRefund, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
@@ -100,7 +100,7 @@ type MemoryDelivery = {
   id: string; trackingCode: string; senderId: string; receiverName: string; receiverPhone: string;
   pickup: { label: string; formattedAddress: string; location: DeliveryLocation };
   dropoff: { label: string; formattedAddress: string; location: DeliveryLocation };
-  status: Status; paymentMode: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY"; driverId?: string; pickupPhotoUrl?: string; receiverPin: string;
+  status: Status; paymentMode: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY"; driverId?: string; pickupPhotoUrl?: string; proofRequirements?: { pickup: string[]; dropoff: string[] }; receiverPin: string;
   quote?: DeliveryQuote; createdAt: string; updatedAt: string;
 };
 const deliveries = new Map<string, MemoryDelivery>();
@@ -2154,6 +2154,79 @@ app.get("/api/track/:trackingCode/pickup-photo", async (req, res) => {
     return res.send(stored.body);
   } catch {
     return res.status(404).json({ error: "Pickup photo not found" });
+  }
+});
+
+app.post("/api/deliveries/:id/dropoff-proof", requireAuth("DRIVER"), async (req, res) => {
+  const deliveryId = routeParam(req.params.id, "id");
+  const driverId = await authenticatedDriverId(req);
+  if (!driverId) return res.status(403).json({ error: "Authenticated driver profile not found" });
+  const delivery = databaseEnabled() ? await findDelivery(deliveryId) : await getOne(deliveryId);
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  if (delivery.driverId !== driverId || delivery.status !== "ARRIVED") {
+    return res.status(409).json({ error: "Only the assigned driver may capture drop-off proof after arrival" });
+  }
+  const proofType = String(req.body?.proofType ?? "").trim().toUpperCase();
+  if (!["PHOTO","SIGNATURE","BARCODE"].includes(proofType)) {
+    return res.status(400).json({ error: "proofType must be PHOTO, SIGNATURE, or BARCODE" });
+  }
+  const required = Array.isArray(delivery.proofRequirements?.dropoff) ? delivery.proofRequirements.dropoff : ["PIN"];
+  if (!required.includes(proofType)) {
+    return res.status(409).json({ error: "This proof type is not required for this delivery" });
+  }
+
+  if (proofType === "BARCODE") {
+    const value = String(req.body?.value ?? "").trim();
+    if (!value || value.length > 256) return res.status(400).json({ error: "A valid barcode value is required" });
+    if (databaseEnabled()) await saveDeliveryProof({ deliveryId, phase: "DROPOFF", proofType: "BARCODE", proofValue: value, metadata: { source: "driver" }, capturedByUserId: identity(req) });
+    return res.status(201).json({ proofType, saved: true });
+  }
+
+  const dataUrl = String(req.body?.image ?? "");
+  const match = dataUrl.match(/^data:image\/(jpeg|jpg|png);base64,(.+)$/i);
+  if (!match) return res.status(400).json({ error: "A JPEG or PNG data URL is required" });
+  const extension = match[1].toLowerCase() === "png" ? "png" : "jpg";
+  const contentType = extension === "png" ? "image/png" : "image/jpeg";
+  const buffer = Buffer.from(match[2], "base64");
+  if (!buffer.length) return res.status(400).json({ error: "Image is empty" });
+  if (buffer.length > 8 * 1024 * 1024) return res.status(413).json({ error: "Image is too large" });
+  if (!objectStorageEnabled) {
+    if (process.env.NODE_ENV === "production") return res.status(503).json({ error: "Private object storage is not configured" });
+    return res.status(503).json({ error: "Proof image storage is not configured" });
+  }
+  const key = "proofs/" + deliveryId + "/" + proofType.toLowerCase() + "." + extension;
+  await putPrivateObject(key, buffer, contentType);
+  if (databaseEnabled()) await saveDeliveryProof({ deliveryId, phase: "DROPOFF", proofType: proofType as "PHOTO" | "SIGNATURE", storageKey: key, metadata: { contentType }, capturedByUserId: identity(req) });
+  await recordDeliveryEvent({ deliveryId, eventType: "DROPOFF_PROOF_CAPTURED", actorUserId: identity(req), metadata: { proofType } });
+  return res.status(201).json({ proofType, url: "/api/deliveries/" + encodeURIComponent(deliveryId) + "/proofs/" + proofType.toLowerCase() });
+});
+
+app.get("/api/deliveries/:id/proofs", requireAuth("CUSTOMER", "DRIVER", "ADMIN"), async (req, res) => {
+  const user = (req as typeof req & { user?: { userId: string; role: "CUSTOMER" | "DRIVER" | "ADMIN" } }).user!;
+  const deliveryId = routeParam(req.params.id, "id");
+  const delivery = databaseEnabled() ? await findDeliveryForUser(deliveryId, user.userId, user.role) : await getOne(deliveryId);
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  const proofs = databaseEnabled() ? await listDeliveryProofs(deliveryId) : [];
+  return res.json({ required: delivery.proofRequirements, proofs: proofs.map(proof => ({ id: proof.id, phase: proof.phase, proofType: proof.proofType, metadata: proof.metadata, createdAt: proof.createdAt, url: proof.storageKey ? "/api/deliveries/" + encodeURIComponent(deliveryId) + "/proofs/" + proof.proofType.toLowerCase() : undefined, proofValue: proof.proofType === "BARCODE" ? proof.proofValue : undefined })) });
+});
+
+app.get("/api/deliveries/:id/proofs/:type", requireAuth("CUSTOMER", "DRIVER", "ADMIN"), async (req, res) => {
+  const user = (req as typeof req & { user?: { userId: string; role: "CUSTOMER" | "DRIVER" | "ADMIN" } }).user!;
+  const deliveryId = routeParam(req.params.id, "id");
+  const proofType = String(req.params.type ?? "").trim().toUpperCase();
+  const delivery = databaseEnabled() ? await findDeliveryForUser(deliveryId, user.userId, user.role) : await getOne(deliveryId);
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  if (!["PHOTO","SIGNATURE"].includes(proofType)) return res.status(400).json({ error: "Only image proofs can be retrieved" });
+  const proof = (await listDeliveryProofs(deliveryId, "DROPOFF")).find(item => item.proofType === proofType);
+  if (!proof?.storageKey) return res.status(404).json({ error: "Proof not found" });
+  if (!objectStorageEnabled && process.env.NODE_ENV === "production") return res.status(503).json({ error: "Private object storage is not configured" });
+  try {
+    const stored = await getPrivateObject(proof.storageKey);
+    res.setHeader("content-type", stored.contentType ?? "image/jpeg");
+    res.setHeader("cache-control", "private, no-store");
+    return res.send(stored.body);
+  } catch {
+    return res.status(404).json({ error: "Proof not found" });
   }
 });
 
