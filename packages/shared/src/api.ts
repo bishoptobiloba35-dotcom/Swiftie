@@ -353,6 +353,61 @@ export class SwiftDropApi {
     return data.payment;
   }
 
+  async createErrand(input: {
+    errandType: "GENERAL_ERRAND" | "PURCHASE_AND_DELIVER" | "SHOP_FOR_ME";
+    description: string;
+    items: Array<{ description: string; quantity?: number; maxAuthorizedMinor?: number; requestedPriceMinor?: number; replacementPolicy?: "EXACT_ONLY" | "BEST_MATCH" | "APPROVED_ALTERNATIVES" | "REFUND_IF_UNAVAILABLE" }>;
+    spendingCeilingMinor: number;
+    merchantName?: string;
+    merchantAddress?: string;
+    merchantLat?: number;
+    merchantLng?: number;
+    replacementPolicy?: "EXACT_ONLY" | "BEST_MATCH" | "APPROVED_ALTERNATIVES" | "REFUND_IF_UNAVAILABLE";
+    maxPriceDeltaMinor?: number;
+    instructions?: string;
+    requestedCompletionAt?: string;
+    receiverName: string;
+    receiverPhone: string;
+    receiverPin: string;
+    destinationAddress: string;
+    destinationLat: number;
+    destinationLng: number;
+  }): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/errands", {
+      method: "POST",
+      headers: this.headers(true),
+      body: JSON.stringify(input)
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error?.formErrors?.[0] ?? data.error ?? "Unable to create errand");
+    return data;
+  }
+
+  async errands(): Promise<any[]> {
+    const response = await fetch(this.baseUrl + "/api/errands", { headers: this.headers() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to load errands");
+    return data.errands ?? [];
+  }
+
+  async errandReplacements(errandId: string): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/errands/" + encodeURIComponent(errandId) + "/replacements", { headers: this.headers() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to load errand replacement requests");
+    return data;
+  }
+
+  async decideErrandReplacement(errandId: string, replacementId: string, decision: "APPROVE" | "REFUND"): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/buy-orders/" + encodeURIComponent(errandId) + "/replacement/" + encodeURIComponent(replacementId) + "/decision", {
+      method: "POST",
+      headers: this.headers(true),
+      body: JSON.stringify({ decision })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to save replacement decision");
+    return data;
+  }
+
   async health(): Promise<{ ok: boolean }> {
     const response = await fetch(this.baseUrl + "/health");
     if (!response.ok) throw new Error("API health check failed");
