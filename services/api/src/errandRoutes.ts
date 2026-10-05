@@ -185,7 +185,15 @@ router.get("/errands/:id", requireAuth("CUSTOMER", "ADMIN", "AGENT"), async (req
     },
     items: items.rows,
     events: events.rows,
-    payment: payment.rows[0] ?? null
+    payment: payment.rows[0] ? {
+      id: payment.rows[0].id,
+      status: payment.rows[0].status,
+      paymentStatus: payment.rows[0].payment_status,
+      amountMinor: Number(payment.rows[0].amount_minor),
+      currency: payment.rows[0].currency,
+      refundStatus: payment.rows[0].refund_status,
+      refundAmountMinor: payment.rows[0].refund_amount_minor == null ? null : Number(payment.rows[0].refund_amount_minor)
+    } : null
   });
 });
 
