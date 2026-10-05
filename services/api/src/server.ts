@@ -295,7 +295,7 @@ app.post("/api/deliveries/:id/rating/receiver", async (req, res) => {
        RETURNING id, delivery_id, driver_id, stars, comment, created_at`,
       [delivery.id, delivery.driverId, receiverPhone, parsed.data.stars, parsed.data.comment?.trim() || null]
     );
-    return res.status(201).json({ rating: result.rows[0] });
+    return res.status(201).json({ rating: { id: result.rows[0].id, deliveryId: result.rows[0].delivery_id, driverId: result.rows[0].driver_id, stars: Number(result.rows[0].stars), comment: result.rows[0].comment, createdAt: result.rows[0].created_at } });
   } catch (error) {
     if ((error as { code?: string })?.code === "23505") return res.status(409).json({ error: "This delivery has already been rated by the receiver" });
     return res.status(500).json({ error: "Unable to save receiver rating" });
@@ -493,7 +493,7 @@ app.post("/api/deliveries/:id/rating/driver", requireAuth("DRIVER"), async (req,
       [delivery.id, userId, parsed.data.stars, parsed.data.comment?.trim() || null]
     );
     if (!result.rows[0]) return res.status(409).json({ error: "Sender could not be found" });
-    return res.status(201).json({ rating: result.rows[0] });
+    return res.status(201).json({ rating: { id: result.rows[0].id, deliveryId: result.rows[0].delivery_id, raterUserId: result.rows[0].rater_user_id, ratedUserId: result.rows[0].rated_user_id, stars: Number(result.rows[0].stars), comment: result.rows[0].comment, createdAt: result.rows[0].created_at } });
   } catch (error) {
     if ((error as { code?: string })?.code === "23505") return res.status(409).json({ error: "This delivery has already been rated" });
     return res.status(500).json({ error: "Unable to save rating" });
