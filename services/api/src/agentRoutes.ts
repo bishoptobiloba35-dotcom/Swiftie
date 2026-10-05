@@ -76,7 +76,7 @@ router.get("/agents", requireAuth("ADMIN"), async (_req, res) => {
       ORDER BY ap.created_at DESC
       LIMIT 200`
   );
-  res.json({ agents: result.rows });
+  res.json({ agents: result.rows.map((row) => ({ id: row.id, userId: row.user_id, status: row.status, fullName: row.full_name, phone: row.phone, email: row.email, createdAt: row.created_at, updatedAt: row.updated_at })) });
 });
 
 router.post("/agents/:id/status", requireAuth("ADMIN"), async (req, res) => {
