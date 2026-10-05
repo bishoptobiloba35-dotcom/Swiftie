@@ -228,6 +228,18 @@ export class SwiftDropApi {
     const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Unable to load SwiftDrop marketplace");
     return data.listings ?? [];
   }
+  async marketplaceSeller(sellerId: string): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/marketplace/sellers/" + encodeURIComponent(sellerId));
+    const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Unable to load seller profile");
+    return data.seller;
+  }
+  async marketplaceSellerReview(orderId: string, stars: number, comment?: string): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/marketplace/orders/" + encodeURIComponent(orderId) + "/review", {
+      method: "POST", headers: this.headers(true), body: JSON.stringify({ stars, comment })
+    });
+    const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Unable to save seller review");
+    return data.review;
+  }
   async marketplaceListing(id: string): Promise<{ listing: any; recommended: any[] }> {
     const response = await fetch(this.baseUrl + "/api/marketplace/listings/" + encodeURIComponent(id));
     const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Unable to load marketplace listing");
