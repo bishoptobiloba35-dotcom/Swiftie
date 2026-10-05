@@ -242,7 +242,7 @@ if (!db) {
     assert.ok(receiverConfirmed);
     assert.equal(receiverConfirmed.status, "ARRIVED");
     assert.ok(receiverConfirmed.receiverConfirmedAt);
-    // The legacy generic helper must not be able to convert receiver confirmation
+    // The legacy generic helper must not be able to convert receiver confirmation before settlement.
     // into delivery completion before the Paystack payment is actually settled.
     assert.equal(await confirmReceiverDelivery(receiverPaidDelivery.id, "+2349020000003", "333444"), null);
     const beforeLegacyCompletion = (await db.query(
