@@ -217,6 +217,8 @@ export type StoredDelivery = {
   receiverPhone: string;
   pickup: { label: string; formattedAddress: string; location: { latitude: number; longitude: number } };
   dropoff: { label: string; formattedAddress: string; location: { latitude: number; longitude: number } };
+  pickupInstructions?: string;
+  dropoffInstructions?: string;
   status: string;
   paymentMode: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
   exceptionStatus?: string;
