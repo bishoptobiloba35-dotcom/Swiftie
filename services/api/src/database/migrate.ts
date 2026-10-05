@@ -48,6 +48,7 @@ const migrations = [
   { id: "049_business_payment_authorizations", file: "049_business_payment_authorizations.sql" },
   { id: "050_business_payment_authorization_metadata", file: "050_business_payment_authorization_metadata.sql" },
   { id: "052_delivery_instructions", file: "052_delivery_instructions.sql" },
+  { id: "053_marketplace_seller_reviews", file: "053_marketplace_seller_reviews.sql" },
   { id: "051_shareable_tracking_links", file: "051_shareable_tracking_links.sql" },
 ];
 export async function runMigrations(): Promise<void> {
