@@ -7,9 +7,17 @@ import { hashPin } from "./security.js";
 
 const router = Router();
 
+const errandItemSchema = z.object({
+  description: z.string().trim().min(1).max(500),
+  quantity: z.number().int().positive().max(1000).default(1),
+  maxAuthorizedMinor: z.number().int().nonnegative().max(2_000_000_000).optional(),
+  replacementPolicy: z.enum(["EXACT_ONLY", "BEST_MATCH", "APPROVED_ALTERNATIVES", "REFUND_IF_UNAVAILABLE"]).optional()
+});
+
 const errandSchema = z.object({
   errandType: z.enum(["GENERAL_ERRAND", "PURCHASE_AND_DELIVER", "SHOP_FOR_ME"]),
   description: z.string().trim().min(3).max(2000),
+  items: z.array(errandItemSchema).min(1).max(50).default([]),
   spendingCeilingMinor: z.number().int().nonnegative().max(2_000_000_000).default(0),
   merchantName: z.string().trim().max(200).optional(),
   merchantAddress: z.string().trim().max(500).optional(),
@@ -69,7 +77,11 @@ router.post("/errands", requireAuth("CUSTOMER"), async (req, res) => {
     "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'ERRAND_CREATED',$3::jsonb)",
     [errand.id, identity(req), JSON.stringify({ errandType: data.errandType, replacementPolicy: data.replacementPolicy })]
   );
-  return res.status(201).json({ errand });
+  const createdItems = await pool.query(
+    "SELECT id,requested_description,quantity,max_authorized_minor,replacement_policy,status FROM buy_order_items WHERE buy_order_id=$1 ORDER BY created_at",
+    [errand.id]
+  );
+  return res.status(201).json({ errand, items: createdItems.rows });
 });
 
 
