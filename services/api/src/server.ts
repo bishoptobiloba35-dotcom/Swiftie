@@ -23,6 +23,7 @@ import marketplaceRoutes from "./marketplaceRoutes.js";
 import { processSupportAiBatch } from "./supportAiAgent.js";
 import recurringDispatchRoutes from "./recurringDispatchRoutes.js";
 import deliveryExceptionRoutes from "./deliveryExceptionRoutes.js";
+import errandRoutes from "./errandRoutes.js";
 import { processRecurringDispatches } from "./recurringDispatchWorker.js";
 import { getActivePricingConfig } from "./pricing.js";
 import { reconcileProcessingBuyOrderSettlements } from "./buyOrderSettlementWorker.js";
@@ -78,6 +79,7 @@ app.use("/api", agentRoutes);
 app.use("/api", marketplaceRoutes);
 app.use("/api", recurringDispatchRoutes);
 app.use("/api", deliveryExceptionRoutes);
+app.use("/api", errandRoutes);
 
 type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED" | "RETURNED";
 type DeliveryLocation = { latitude: number; longitude: number; recordedAt?: string };
@@ -755,6 +757,16 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
           await pool!.query("UPDATE buy_order_payments SET refund_status='FAILED',updated_at=now() WHERE id=$1",[buyPayment.id]);
         }else{
           await pool!.query("UPDATE buy_order_payments SET refund_status=$2,updated_at=now() WHERE id=$1",[buyPayment.id,refundStatus.toUpperCase()]);
+        }
+        if (refundReference) {
+          await pool!.query(
+            `UPDATE buy_order_item_refunds
+                SET status=$2,
+                    failure_reason=CASE WHEN $2='FAILED' THEN COALESCE(failure_reason,'Paystack reported refund failure') ELSE NULL END,
+                    updated_at=now()
+              WHERE provider_ref=$1`,
+            [refundReference, refundStatus === "processed" ? "PROCESSED" : refundStatus === "failed" ? "FAILED" : refundStatus.toUpperCase()]
+          );
         }
         await pool!.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,$3,$4::jsonb)",[buyPayment.buy_order_id,buyPayment.customer_user_id,"REFUND_"+refundStatus.toUpperCase(),JSON.stringify({transactionReference,refundReference,amountMinor})]);
         return res.status(200).json({received:true});

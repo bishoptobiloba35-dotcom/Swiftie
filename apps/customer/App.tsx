@@ -15,7 +15,29 @@ const api = new SwiftDropApi(API_URL);
 
 export default function App() {
   const [signedIn, setSignedIn] = React.useState(false);
-  const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "TRACK" | "SHOP" | "LOCATIONS">("HOME");
+  const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS">("HOME");
+  const [errandDraft, setErrandDraft] = React.useState({
+    errandType: "GENERAL_ERRAND" as "GENERAL_ERRAND" | "PURCHASE_AND_DELIVER" | "SHOP_FOR_ME",
+    description: "",
+    itemDescription: "",
+    spendingCeiling: "",
+    requestedPrice: "",
+    replacementPolicy: "EXACT_ONLY" as "EXACT_ONLY" | "BEST_MATCH" | "APPROVED_ALTERNATIVES" | "REFUND_IF_UNAVAILABLE",
+    maxPriceDelta: "0",
+    merchantName: "",
+    merchantAddress: "",
+    instructions: "",
+    requestedCompletionAt: "",
+    receiverName: "",
+    receiverPhone: "",
+    receiverPin: "",
+    destinationAddress: "",
+    destinationLat: "",
+    destinationLng: ""
+  });
+  const [errandBusy, setErrandBusy] = React.useState(false);
+  const [myErrands, setMyErrands] = React.useState<any[]>([]);
+  const updateErrand = (patch: Partial<typeof errandDraft>) => setErrandDraft(prev => ({ ...prev, ...patch }));
   const [marketplaceListings, setMarketplaceListings] = React.useState<any[]>([]);
   const [marketplaceSales, setMarketplaceSales] = React.useState<any[]>([]);
   const [marketplaceMyListings, setMarketplaceMyListings] = React.useState<any[]>([]);
@@ -205,6 +227,17 @@ export default function App() {
       Alert.alert("Listing updated", "Your marketplace listing has been updated.");
     } catch (error) {
       Alert.alert("Listing update failed", error instanceof Error ? error.message : "Unable to update listing");
+    }
+  }
+
+  async function markMarketplaceSaleReady(sale: any) {
+    const preparation = Number(sale.seller_preparation_minutes ?? 0);
+    try {
+      await api.markMarketplaceOrderReady(String(sale.id), preparation, Boolean(sale.seller_busy_mode));
+      await loadMarketplaceSales();
+      Alert.alert("Order ready", "The courier can now proceed with pickup.");
+    } catch (error) {
+      Alert.alert("Mark ready failed", error instanceof Error ? error.message : "Unable to mark the order ready");
     }
   }
 
@@ -483,6 +516,54 @@ export default function App() {
       Alert.alert("Swift AI action", error instanceof Error ? error.message : "Unable to complete the AI action");
     } finally {
       setSwiftAiBusy(false);
+    }
+  }
+
+  async function createErrand() {
+    try {
+      const d = errandDraft;
+      if (!d.description.trim() || !d.receiverName.trim() || !d.receiverPhone.trim() || !/^\d{4,6}$/.test(d.receiverPin)) {
+        throw new Error("Complete the errand description and receiver details, including a 4-6 digit PIN.");
+      }
+      if (d.errandType !== "GENERAL_ERRAND" && !(Number(d.spendingCeiling) > 0)) {
+        throw new Error("Shopping errands require a positive spending ceiling.");
+      }
+      const lat = Number(d.destinationLat), lng = Number(d.destinationLng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        throw new Error("Enter valid destination coordinates.");
+      }
+      setErrandBusy(true);
+      const result = await api.createErrand({
+        errandType: d.errandType,
+        description: d.description.trim(),
+        items: [{
+          description: d.itemDescription.trim() || d.description.trim(),
+          quantity: 1,
+          maxAuthorizedMinor: Math.round(Number(d.spendingCeiling || 0) * 100),
+          requestedPriceMinor: d.requestedPrice.trim() ? Math.round(Number(d.requestedPrice) * 100) : undefined,
+          replacementPolicy: d.replacementPolicy
+        }],
+        spendingCeilingMinor: Math.round(Number(d.spendingCeiling || 0) * 100),
+        merchantName: d.merchantName.trim() || undefined,
+        merchantAddress: d.merchantAddress.trim() || undefined,
+        replacementPolicy: d.replacementPolicy,
+        maxPriceDeltaMinor: Math.round(Number(d.maxPriceDelta || 0) * 100),
+        instructions: d.instructions.trim() || undefined,
+        requestedCompletionAt: d.requestedCompletionAt.trim() || undefined,
+        receiverName: d.receiverName.trim(),
+        receiverPhone: d.receiverPhone.trim(),
+        receiverPin: d.receiverPin,
+        destinationAddress: d.destinationAddress.trim(),
+        destinationLat: lat,
+        destinationLng: lng
+      });
+      setMyErrands(prev => [result.errand, ...prev]);
+      Alert.alert("Errand created", "Your errand request is now in SwiftDrop's errand workflow.");
+      setErrandDraft(prev => ({ ...prev, description: "", itemDescription: "", instructions: "", receiverPin: "" }));
+    } catch (error) {
+      Alert.alert("Errand failed", error instanceof Error ? error.message : "Unable to create errand.");
+    } finally {
+      setErrandBusy(false);
     }
   }
 
@@ -773,7 +854,7 @@ export default function App() {
         <Text style={styles.homeHeading}>Place your order</Text>
         <View style={styles.actionGrid}>
           <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>📦</Text><Text style={styles.tileTitle}>Send within Nigeria</Text></Pressable>
-          <Pressable style={styles.actionTile} onPress={() => { setHomeSection("ORDER"); }}><Text style={styles.tileEmoji}>🛵</Text><Text style={styles.tileTitle}>Hire an Errand</Text></Pressable>
+          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ERRAND")}><Text style={styles.tileEmoji}>🛵</Text><Text style={styles.tileTitle}>Hire an Errand</Text><Text style={styles.tileSub}>Errand · Purchase · Shop for me</Text></Pressable>
           <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>⚡</Text><Text style={styles.tileTitle}>Express drop off</Text></Pressable>
           <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>💳</Text><Text style={styles.tileTitle}>Pay Shipment</Text></Pressable>
           <Pressable style={styles.actionTile} onPress={() => void openNearbyDropOffLocations()}><Text style={styles.tileEmoji}>📍</Text><Text style={styles.tileTitle}>Drop-off locations</Text><Text style={styles.tileSub}>Merchant & partner points</Text></Pressable>
@@ -831,6 +912,13 @@ export default function App() {
           <Text>₦{(Number(sale.total_minor) / 100).toLocaleString()} · {String(sale.status).replaceAll("_"," ")}</Text>
           <Text style={styles.muted}>{sale.fulfillment_status?.replaceAll("_"," ")}{sale.delivery_status ? " · Delivery " + sale.delivery_status.replaceAll("_"," ") : ""}</Text>
           {sale.tracking_code && <Text style={styles.code}>Tracking: {sale.tracking_code}</Text>}
+          {sale.fulfillment_status === "PREPARING" && sale.status === "PROCESSING" && (
+            <View style={styles.row}>
+              <Pressable style={styles.primary} onPress={() => void markMarketplaceSaleReady(sale)}>
+                <Text style={styles.primaryText}>Mark ready for courier</Text>
+              </Pressable>
+            </View>
+          )}
         </View>)}
       </View>}
       {signedIn && <View style={styles.card}>
@@ -979,6 +1067,49 @@ export default function App() {
           {Array.isArray(item.media) && item.media.length > 0 ? <Image source={{ uri: String(item.media[0].url).startsWith("http") ? String(item.media[0].url) : API_URL + String(item.media[0].url) }} style={styles.listingImage} resizeMode="cover" /> : <Text style={styles.productEmoji}>🛍️</Text>}<Text style={styles.productName}>{item.title}</Text><Text style={styles.muted}>{item.category}</Text><Text style={styles.productPrice}>₦{(Number(item.final_price_minor)/100).toLocaleString()}</Text><Text style={styles.priceNote}>Delivery included · {String(item.delivery_mode).replaceAll("_"," ")}</Text><Text style={styles.muted}>Seller: {item.seller_name}</Text>
         </Pressable>)}
       </View>}
+      <Pressable style={styles.secondary} onPress={() => setHomeSection("HOME")}><Text style={styles.secondaryText}>Back to home</Text></Pressable>
+    </ScrollView></SafeAreaView>;
+  }
+
+  if (homeSection === "ERRAND") {
+    const d = errandDraft;
+    return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}>
+      <View style={styles.header}><View><Text style={styles.logo}>Hire an Errand</Text><Text style={styles.subtitle}>One errand service for general tasks, Purchase & Deliver, and Shop for Me.</Text></View><Pressable onPress={() => setHomeSection("HOME")}><Text style={styles.link}>Home</Text></Pressable></View>
+      <View style={styles.card}>
+        <Text style={styles.homeHeading}>What do you need?</Text>
+        <View style={styles.row}>
+          {([["GENERAL_ERRAND","General errand"],["PURCHASE_AND_DELIVER","Purchase & Deliver"],["SHOP_FOR_ME","Shop for Me"]] as const).map(([value,label]) =>
+            <Pressable key={value} style={[styles.choice, d.errandType === value && styles.choiceActive]} onPress={() => updateErrand({ errandType: value })}><Text style={styles.photoTitle}>{label}</Text></Pressable>
+          )}
+        </View>
+        <TextInput style={[styles.input, styles.multiline]} placeholder="Describe the errand" value={d.description} onChangeText={v => updateErrand({ description: v })} multiline maxLength={2000} />
+        <TextInput style={styles.input} placeholder="Exact item or shopping target (optional for general errands)" value={d.itemDescription} onChangeText={v => updateErrand({ itemDescription: v })} />
+        <TextInput style={styles.input} placeholder="Spending ceiling (₦)" keyboardType="decimal-pad" value={d.spendingCeiling} onChangeText={v => updateErrand({ spendingCeiling: v })} />
+        {d.errandType !== "GENERAL_ERRAND" && <>
+          <TextInput style={styles.input} placeholder="Original / expected item price (₦, optional)" keyboardType="decimal-pad" value={d.requestedPrice} onChangeText={v => updateErrand({ requestedPrice: v })} />
+          <TextInput style={styles.input} placeholder="Maximum price difference allowed (₦)" keyboardType="decimal-pad" value={d.maxPriceDelta} onChangeText={v => updateErrand({ maxPriceDelta: v })} />
+          <Text style={styles.hint}>SwiftDrop will not silently exceed your spending ceiling or your authorized price difference.</Text>
+          <View style={styles.row}>
+            {([["EXACT_ONLY","Exact only"],["BEST_MATCH","Best match"],["APPROVED_ALTERNATIVES","Approved alternatives"],["REFUND_IF_UNAVAILABLE","Refund if unavailable"]] as const).map(([value,label]) =>
+              <Pressable key={value} style={[styles.choice, d.replacementPolicy === value && styles.choiceActive]} onPress={() => updateErrand({ replacementPolicy: value })}><Text style={styles.muted}>{label}</Text></Pressable>
+            )}
+          </View>
+        </>}
+        <TextInput style={styles.input} placeholder="Preferred shop / merchant (optional)" value={d.merchantName} onChangeText={v => updateErrand({ merchantName: v })} />
+        <TextInput style={styles.input} placeholder="Shop address (optional)" value={d.merchantAddress} onChangeText={v => updateErrand({ merchantAddress: v })} />
+        <TextInput style={[styles.input, styles.multiline]} placeholder="Errand instructions" value={d.instructions} onChangeText={v => updateErrand({ instructions: v })} multiline maxLength={2000} />
+        <TextInput style={styles.input} placeholder="Requested completion time, e.g. 2026-10-05T14:00:00+01:00" value={d.requestedCompletionAt} onChangeText={v => updateErrand({ requestedCompletionAt: v })} />
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.homeHeading}>Receiver & destination</Text>
+        <TextInput style={styles.input} placeholder="Receiver full name" value={d.receiverName} onChangeText={v => updateErrand({ receiverName: v })} />
+        <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={d.receiverPhone} onChangeText={v => updateErrand({ receiverPhone: v })} />
+        <TextInput style={styles.input} placeholder="4-6 digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={d.receiverPin} onChangeText={v => updateErrand({ receiverPin: v })} />
+        <TextInput style={styles.input} placeholder="Destination address" value={d.destinationAddress} onChangeText={v => updateErrand({ destinationAddress: v })} />
+        <View style={styles.row}><TextInput style={styles.half} placeholder="Latitude" keyboardType="decimal-pad" value={d.destinationLat} onChangeText={v => updateErrand({ destinationLat: v })} /><TextInput style={styles.half} placeholder="Longitude" keyboardType="decimal-pad" value={d.destinationLng} onChangeText={v => updateErrand({ destinationLng: v })} /></View>
+        <Text style={styles.hint}>Payment and agent assignment remain subject to SwiftDrop's existing authorization, payment and approved-agent controls.</Text>
+        <Pressable style={styles.primary} disabled={errandBusy} onPress={() => void createErrand()}><Text style={styles.primaryText}>{errandBusy ? "Creating errand…" : "Place errand request"}</Text></Pressable>
+      </View>
       <Pressable style={styles.secondary} onPress={() => setHomeSection("HOME")}><Text style={styles.secondaryText}>Back to home</Text></Pressable>
     </ScrollView></SafeAreaView>;
   }

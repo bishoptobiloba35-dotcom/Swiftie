@@ -83,6 +83,229 @@ router.get("/agent/settlements", requireAuth("AGENT"), async(req,res)=>{
   res.json({settlements:result.rows});
 });
 
+
+
+router.post("/agent/buy-orders/:id/replacement", requireAuth("AGENT"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const agent = await getAgent(identity(req));
+  if (!agent || agent.status !== "APPROVED") return res.status(403).json({ error: "Approved agent status is required" });
+  const parsed = z.object({
+    itemId: z.string().uuid(),
+    proposedDescription: z.string().trim().min(1).max(500),
+    proposedQuantity: z.number().int().positive().max(1000).default(1),
+    proposedPriceMinor: z.number().int().nonnegative(),
+    evidenceFile: z.string().optional(),
+    shopperNote: z.string().trim().max(1000).optional()
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const order = await getOrder(orderId(req));
+  if (!order || order.agent_id !== agent.id) return res.status(404).json({ error: "Errand not found" });
+  if (!["AGENT_ASSIGNED","PURCHASING"].includes(order.status)) return res.status(409).json({ error: "Errand is not in a shopping state" });
+
+  const item = (await pool.query("SELECT * FROM buy_order_items WHERE id=$1 AND buy_order_id=$2 FOR UPDATE", [parsed.data.itemId, order.id])).rows[0];
+  if (!item) return res.status(404).json({ error: "Errand item not found" });
+
+  let evidenceKey: string | null = null;
+  if (parsed.data.evidenceFile) {
+    const match = parsed.data.evidenceFile.match(/^data:(image\/(?:jpeg|jpg|png));base64,(.+)$/i);
+    if (!match) return res.status(400).json({ error: "Replacement evidence must be a JPEG or PNG data URL" });
+    const buffer = Buffer.from(match[2], "base64");
+    if (!buffer.length || buffer.length > 8 * 1024 * 1024) return res.status(400).json({ error: "Replacement evidence must be between 1 byte and 8MB" });
+    const extension = match[1].includes("png") ? "png" : "jpg";
+    evidenceKey = `buy-orders/${order.id}/replacements/${randomUUID()}.${extension}`;
+    await putPrivateObject(evidenceKey, buffer, match[1]);
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const locked = (await client.query("SELECT * FROM buy_order_items WHERE id=$1 AND buy_order_id=$2 FOR UPDATE", [item.id, order.id])).rows[0];
+    if (!locked || locked.status === "PURCHASED" || locked.status === "REFUNDED") {
+      await client.query("ROLLBACK");
+      if (evidenceKey) await deletePrivateObject(evidenceKey).catch(() => undefined);
+      return res.status(409).json({ error: "Errand item can no longer be changed" });
+    }
+    const authorizedMax = Number(locked.max_authorized_minor ?? order.purchase_budget_minor);
+    const maxDelta = Number(order.max_price_delta_minor ?? 0);
+    const requestedPrice = locked.requested_price_minor == null ? null : Number(locked.requested_price_minor);
+    const withinPriceRules = parsed.data.proposedPriceMinor <= authorizedMax
+      && parsed.data.proposedPriceMinor <= Number(order.purchase_budget_minor)
+      && (requestedPrice == null || parsed.data.proposedPriceMinor <= requestedPrice + maxDelta);
+    const automatic = locked.replacement_policy === "BEST_MATCH" && withinPriceRules;
+
+    if (locked.replacement_policy === "EXACT_ONLY") {
+      if (evidenceKey) await deletePrivateObject(evidenceKey).catch(() => undefined);
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Exact-only errand items cannot be substituted", code: "EXACT_ITEM_UNAVAILABLE" });
+    }
+    if (locked.replacement_policy === "REFUND_IF_UNAVAILABLE") {
+      if (evidenceKey) await deletePrivateObject(evidenceKey).catch(() => undefined);
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Customer selected refund if unavailable; do not substitute this item", code: "REFUND_IF_UNAVAILABLE" });
+    }
+
+    const status = automatic ? "APPROVED" : "PENDING";
+    const inserted = await client.query(
+      `INSERT INTO buy_order_replacement_options
+        (item_id, proposed_description, proposed_quantity, proposed_price_minor, currency, evidence_key, shopper_note, status, proposed_by_agent_id, approved_by_user_id, approved_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       RETURNING id, item_id, proposed_description, proposed_quantity, proposed_price_minor, currency, shopper_note, status, created_at`,
+      [locked.id, parsed.data.proposedDescription, parsed.data.proposedQuantity, parsed.data.proposedPriceMinor, order.currency ?? "NGN", evidenceKey, parsed.data.shopperNote ?? null, status, agent.id, automatic ? order.customer_user_id : null, automatic ? new Date() : null]
+    );
+    await client.query(
+      "UPDATE buy_order_items SET status=$2,updated_at=now() WHERE id=$1",
+      [locked.id, automatic ? "APPROVED" : "REPLACEMENT_PENDING"]
+    );
+    await client.query(
+      "UPDATE buy_orders SET replacement_review_required=$2,replacement_review_deadline=$3,updated_at=now() WHERE id=$1",
+      [order.id, !automatic, automatic ? null : new Date(Date.now() + 15 * 60 * 1000)]
+    );
+    await client.query(
+      "INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,$3,$4::jsonb)",
+      [order.id, identity(req), automatic ? "REPLACEMENT_AUTO_APPROVED" : "REPLACEMENT_PROPOSED", JSON.stringify({ itemId: locked.id, replacementId: inserted.rows[0].id, priceMinor: parsed.data.proposedPriceMinor })]
+    );
+    await client.query("COMMIT");
+    return res.status(201).json({ replacement: inserted.rows[0], approvalRequired: !automatic });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    if (evidenceKey) await deletePrivateObject(evidenceKey).catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+router.post("/buy-orders/:id/replacement/:replacementId/decision", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Database is not configured" });
+  const decision = z.object({ decision: z.enum(["APPROVE","REFUND"]) }).safeParse(req.body);
+  if (!decision.success) return res.status(400).json({ error: decision.error.flatten() });
+  const id = orderId(req);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = (await client.query(
+      `SELECT r.*, i.buy_order_id, i.replacement_policy, i.status AS item_status, i.requested_price_minor,
+             bo.customer_user_id, bo.purchase_budget_minor, bo.max_price_delta_minor
+         FROM buy_order_replacement_options r
+         JOIN buy_order_items i ON i.id=r.item_id
+         JOIN buy_orders bo ON bo.id=i.buy_order_id
+        WHERE r.id=$1 AND bo.id=$2
+        FOR UPDATE OF r,i,bo`,
+      [String(req.params.replacementId), id]
+    )).rows[0];
+    if (!result || result.customer_user_id !== identity(req)) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Replacement request not found" });
+    }
+    if (result.status !== "PENDING") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Replacement request is no longer pending" });
+    }
+    if (decision.data.decision === "APPROVE") {
+      const approvedMax = Number(result.purchase_budget_minor);
+      const approvedDelta = Number(result.max_price_delta_minor ?? 0);
+      const requestedPrice = result.requested_price_minor == null ? null : Number(result.requested_price_minor);
+      if (Number(result.proposed_price_minor) > approvedMax ||
+          (requestedPrice != null && Number(result.proposed_price_minor) > requestedPrice + approvedDelta)) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Approved replacement exceeds the errand price authorization", code: "PRICE_AUTHORIZATION_EXCEEDED" });
+      }
+      await client.query("UPDATE buy_order_replacement_options SET status='APPROVED',approved_by_user_id=$2,approved_at=now(),updated_at=now() WHERE id=$1",[result.id,identity(req)]);
+      await client.query("UPDATE buy_order_items SET status='APPROVED',updated_at=now() WHERE id=$1",[result.item_id]);
+      await client.query("UPDATE buy_orders SET replacement_review_required=false,replacement_review_deadline=NULL,updated_at=now() WHERE id=$1",[id]);
+      await client.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'REPLACEMENT_APPROVED',$3::jsonb)",[id,identity(req),JSON.stringify({replacementId:result.id,itemId:result.item_id})]);
+    } else {
+      const refundAmountMinor = Number(result.requested_price_minor ?? result.max_authorized_minor ?? 0);
+      if (!Number.isSafeInteger(refundAmountMinor) || refundAmountMinor <= 0) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "This item has no refundable authorized amount", code: "REFUND_AMOUNT_UNAVAILABLE" });
+      }
+      const payment = (await client.query(
+        "SELECT id,provider_reference,amount_minor,total_refunded_minor,currency,status FROM buy_order_payments WHERE buy_order_id=$1 FOR UPDATE",
+        [id]
+      )).rows[0];
+      if (!payment || !["HELD","AUTHORIZED"].includes(payment.status)) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Customer payment is not available for item refund", code: "PAYMENT_NOT_REFUNDABLE" });
+      }
+      const remaining = Number(payment.amount_minor) - Number(payment.total_refunded_minor ?? 0);
+      if (refundAmountMinor > remaining) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Item refund exceeds the remaining payment authorization", code: "REFUND_EXCEEDS_REMAINING_AUTHORIZATION" });
+      }
+      const existingRefund = (await client.query(
+        "SELECT id,status,provider_ref,amount_minor FROM buy_order_item_refunds WHERE item_id=$1 FOR UPDATE",
+        [result.item_id]
+      )).rows[0];
+      if (existingRefund && ["REQUESTED","PENDING","PROCESSING","PROCESSED"].includes(existingRefund.status)) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "A refund for this item has already been initiated", code: "REFUND_ALREADY_REQUESTED" });
+      }
+      const refundRow = (await client.query(
+        `INSERT INTO buy_order_item_refunds
+          (buy_order_id,item_id,payment_id,amount_minor,currency,status)
+         VALUES ($1,$2,$3,$4,$5,'REQUESTED')
+         ON CONFLICT (item_id) DO UPDATE SET
+           payment_id=EXCLUDED.payment_id,amount_minor=EXCLUDED.amount_minor,currency=EXCLUDED.currency,
+           status='REQUESTED',failure_reason=NULL,updated_at=now()
+         RETURNING id,amount_minor,currency,status`,
+        [id,result.item_id,payment.id,refundAmountMinor,payment.currency ?? "NGN"]
+      )).rows[0];
+      await client.query("UPDATE buy_order_replacement_options SET status='REFUNDED',approved_by_user_id=$2,approved_at=now(),updated_at=now() WHERE id=$1",[result.id,identity(req)]);
+      await client.query("UPDATE buy_order_items SET status='REFUNDED',updated_at=now() WHERE id=$1",[result.item_id]);
+      await client.query("UPDATE buy_orders SET replacement_review_required=false,replacement_review_deadline=NULL,updated_at=now() WHERE id=$1",[id]);
+      await client.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'ITEM_REFUND_REQUESTED',$3::jsonb)",[id,identity(req),JSON.stringify({replacementId:result.id,itemId:result.item_id,amountMinor:refundAmountMinor,refundId:refundRow.id})]);
+      await client.query("COMMIT");
+
+      if (!payment.provider_reference || !process.env.PAYSTACK_SECRET_KEY) {
+        await pool.query("UPDATE buy_order_item_refunds SET status='RECONCILIATION_REQUIRED',failure_reason='Paystack payment reference or secret is unavailable',updated_at=now() WHERE id=$1",[refundRow.id]);
+        return res.status(202).json({ ok: true, decision: "REFUND", refundStatus: "RECONCILIATION_REQUIRED", refundId: refundRow.id });
+      }
+
+      try {
+        const refundResponse = await fetch("https://api.paystack.co/refund", {
+          method: "POST",
+          headers: { authorization: "Bearer " + process.env.PAYSTACK_SECRET_KEY, "content-type": "application/json" },
+          body: JSON.stringify({
+            transaction: payment.provider_reference,
+            amount: refundAmountMinor,
+            currency: payment.currency ?? "NGN",
+            customer_note: "Unavailable errand item refund",
+            merchant_note: "SwiftDrop errand item refund " + refundRow.id
+          })
+        });
+        const refundPayload = await refundResponse.json() as any;
+        if (!refundResponse.ok || !refundPayload.status) {
+          await pool.query("UPDATE buy_order_item_refunds SET status='FAILED',failure_reason=$2,updated_at=now() WHERE id=$1",[refundRow.id,String(refundPayload.message ?? "Paystack refund request failed").slice(0,500)]);
+          return res.status(502).json({ error: "Refund initiation failed", code: "REFUND_INITIATION_FAILED", refundId: refundRow.id });
+        }
+        const providerRef = refundPayload.data?.id == null ? null : String(refundPayload.data.id);
+        const providerStatus = String(refundPayload.data?.status ?? "pending").toUpperCase();
+        await pool.query(
+          "UPDATE buy_order_item_refunds SET status=$2,provider_ref=$3,updated_at=now() WHERE id=$1",
+          [refundRow.id, ["PENDING","PROCESSING","NEEDS-ATTENTION"].includes(providerStatus) ? providerStatus : "PENDING", providerRef]
+        );
+        await pool.query(
+          "UPDATE buy_order_payments SET refund_status=$2,refund_reference=COALESCE(refund_reference,$3),refund_amount_minor=GREATEST(refund_amount_minor,$4),updated_at=now() WHERE id=$1",
+          [payment.id, providerStatus, providerRef, refundAmountMinor]
+        );
+        return res.status(202).json({ ok: true, decision: "REFUND", refundStatus: providerStatus, refundId: refundRow.id, providerReference: providerRef });
+      } catch (error) {
+        await pool.query("UPDATE buy_order_item_refunds SET status='FAILED',failure_reason=$2,updated_at=now() WHERE id=$1",[refundRow.id,String(error instanceof Error ? error.message : "Paystack refund request failed").slice(0,500)]);
+        return res.status(502).json({ error: "Refund initiation failed", code: "REFUND_INITIATION_FAILED", refundId: refundRow.id });
+      }
+    }
+    await client.query("COMMIT");
+    return res.json({ ok: true, decision: decision.data.decision });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
 router.get("/agent/buy-orders", requireAuth("AGENT"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const agent = await getAgent(identity(req));
@@ -192,6 +415,11 @@ router.post("/buy-orders/:id/purchase", requireAuth("AGENT"), async (req, res) =
   const order = await getOrder(id);
   if (!order || order.agent_id !== agent.id) return res.status(404).json({ error: "Buy & Deliver order not found" });
   if (order.status !== "PURCHASING") return res.status(409).json({ error: "Order must be in purchasing state" });
+  if (order.errand_type && order.replacement_review_required) return res.status(409).json({ error: "Customer replacement decision is required before purchase can continue", code: "REPLACEMENT_REVIEW_REQUIRED" });
+  if (order.errand_type) {
+    const pendingItems = await pool.query("SELECT count(*)::int AS count FROM buy_order_items WHERE buy_order_id=$1 AND status='REPLACEMENT_PENDING'", [id]);
+    if (Number(pendingItems.rows[0]?.count ?? 0) > 0) return res.status(409).json({ error: "One or more errand items are awaiting customer replacement decisions", code: "ITEM_REPLACEMENT_PENDING" });
+  }
   if (order.payment_status !== "HELD") return res.status(409).json({ error: "Customer payment must be held before purchase", code: "PAYMENT_NOT_HELD" });
   if (parsed.data.actualPurchaseMinor > Number(order.purchase_budget_minor)) {
     return res.status(409).json({ error: "Actual purchase amount exceeds the authorized budget", code: "PURCHASE_BUDGET_EXCEEDED" });
