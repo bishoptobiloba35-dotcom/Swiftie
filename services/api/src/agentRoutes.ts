@@ -96,7 +96,8 @@ router.get("/agent/settlement-account", requireAuth("AGENT"), async (req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const agent=await getAgent(identity(req)); if(!agent)return res.status(404).json({error:"Agent profile not found"});
   const result=await pool.query("SELECT id,bank_code,bank_name,account_name,account_last4,currency,active,verified_at,created_at,updated_at FROM agent_settlement_accounts WHERE agent_id=$1",[agent.id]);
-  res.json({account:result.rows[0]??null});
+  const account = result.rows[0];
+  res.json({account: account ? { id: account.id, bankCode: account.bank_code, bankName: account.bank_name, accountName: account.account_name, accountLast4: account.account_last4, currency: account.currency, active: account.active, verifiedAt: account.verified_at, createdAt: account.created_at, updatedAt: account.updated_at } : null});
 });
 router.post("/agent/settlement-account", requireAuth("AGENT"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
