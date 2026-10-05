@@ -76,7 +76,7 @@ router.get("/agents", requireAuth("ADMIN"), async (_req, res) => {
       ORDER BY ap.created_at DESC
       LIMIT 200`
   );
-  res.json({ agents: result.rows });
+  res.json({ agents: result.rows.map((row) => ({ id: row.id, userId: row.user_id, status: row.status, fullName: row.full_name, phone: row.phone, email: row.email, createdAt: row.created_at, updatedAt: row.updated_at })) });
 });
 
 router.post("/agents/:id/status", requireAuth("ADMIN"), async (req, res) => {
@@ -96,7 +96,8 @@ router.get("/agent/settlement-account", requireAuth("AGENT"), async (req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const agent=await getAgent(identity(req)); if(!agent)return res.status(404).json({error:"Agent profile not found"});
   const result=await pool.query("SELECT id,bank_code,bank_name,account_name,account_last4,currency,active,verified_at,created_at,updated_at FROM agent_settlement_accounts WHERE agent_id=$1",[agent.id]);
-  res.json({account:result.rows[0]??null});
+  const account = result.rows[0];
+  res.json({account: account ? { id: account.id, bankCode: account.bank_code, bankName: account.bank_name, accountName: account.account_name, accountLast4: account.account_last4, currency: account.currency, active: account.active, verifiedAt: account.verified_at, createdAt: account.created_at, updatedAt: account.updated_at } : null});
 });
 router.post("/agent/settlement-account", requireAuth("AGENT"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
@@ -115,13 +116,14 @@ router.post("/agent/settlement-account", requireAuth("AGENT"), async(req,res)=>{
     ON CONFLICT(agent_id) DO UPDATE SET recipient_code=EXCLUDED.recipient_code,bank_code=EXCLUDED.bank_code,bank_name=EXCLUDED.bank_name,account_name=EXCLUDED.account_name,account_last4=EXCLUDED.account_last4,currency='NGN',active=true,verified_at=now(),updated_at=now()
     RETURNING id,bank_code,bank_name,account_name,account_last4,currency,active,verified_at,created_at,updated_at`,
     [agent.id,recipient.data.recipient_code,parsed.data.bankCode,recipient.data.details?.bank_name??null,resolved.data.account_name,parsed.data.accountNumber.slice(-4)]);
-  res.status(201).json({account:result.rows[0]});
+  const account = result.rows[0];
+  res.status(201).json({account:{id:account.id,bankCode:account.bank_code,bankName:account.bank_name,accountName:account.account_name,accountLast4:account.account_last4,currency:account.currency,active:account.active,verifiedAt:account.verified_at,createdAt:account.created_at,updatedAt:account.updated_at}});
 });
 router.get("/agent/settlements", requireAuth("AGENT"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const agent=await getAgent(identity(req));if(!agent)return res.status(404).json({error:"Agent profile not found"});
   const result=await pool.query("SELECT bos.id,bos.buy_order_id,bos.amount_minor,bos.currency,bos.status,bos.provider_status,bos.failure_reason,bos.paid_at,bos.created_at,bos.updated_at FROM buy_order_settlements bos WHERE bos.agent_id=$1 ORDER BY bos.created_at DESC LIMIT 100",[agent.id]);
-  res.json({settlements:result.rows});
+  res.json({settlements:result.rows.map((row) => ({ id: row.id, buyOrderId: row.buy_order_id, amountMinor: Number(row.amount_minor), currency: row.currency, status: row.status, providerStatus: row.provider_status, failureReason: row.failure_reason, paidAt: row.paid_at, createdAt: row.created_at, updatedAt: row.updated_at }))});
 });
 
 
