@@ -215,7 +215,7 @@ router.post("/deliveries/:id/return/start", requireAuth("DRIVER"), async (req, r
     "INSERT INTO delivery_exception_events(delivery_id,actor_user_id,event_type,metadata) VALUES($1,$2,'RETURN_STARTED',$3::jsonb)",
     [id, identity(req), JSON.stringify({ driverId: driver.id })]
   );
-  return res.json({ delivery: updated.rows[0] });
+  return res.json({ delivery: { id: updated.rows[0].id, exceptionStatus: updated.rows[0].exception_status, status: updated.rows[0].status } });
 });
 
 router.post("/deliveries/:id/return/complete", requireAuth("DRIVER"), async (req, res) => {
@@ -262,7 +262,7 @@ router.post("/deliveries/:id/return/complete", requireAuth("DRIVER"), async (req
       );
     }
     await client.query("COMMIT");
-    return res.json({ delivery: updated.rows[0] });
+    return res.json({ delivery: { id: updated.rows[0].id, exceptionStatus: updated.rows[0].exception_status, status: updated.rows[0].status, returnedAt: updated.rows[0].returned_at } });
   } catch (error) {
     try { await client.query("ROLLBACK"); } catch {}
     throw error;
