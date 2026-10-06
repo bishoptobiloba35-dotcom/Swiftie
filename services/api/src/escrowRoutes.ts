@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { pool, databaseEnabled } from "./database/db.js";
-import { verifyReceiverPin } from "./database/deliveryRepository.js";
+import { verifyPin } from "./security.js";
 import { requireAuth } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
 
@@ -138,7 +138,7 @@ router.post("/escrow/:orderId/pin", requireAuth(), async (req,res)=>{
       await client.query("ROLLBACK");
       return res.status(429).json({error:"Too many PIN attempts. Try again later.",retryAfterMs:new Date(pinState.pin_locked_until).getTime()-Date.now()});
     }
-    const valid=await verifyReceiverPin(order.id, parsed.data.pin);
+    const valid=verifyPin(parsed.data.pin, order.receiver_pin_hash);
     if(!valid){
       const failures=Number(pinState?.pin_failed_attempts ?? 0)+1;
       if(failures>=3){
