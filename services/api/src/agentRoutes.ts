@@ -516,7 +516,8 @@ router.post("/buy-orders/:id/purchase", requireAuth("AGENT"), async (req, res) =
   if (order.errand_type && order.replacement_review_required) return res.status(409).json({ error: "Customer replacement decision is required before purchase can continue", code: "REPLACEMENT_REVIEW_REQUIRED" });
   if (order.errand_type && !parsed.data.receiptFile) {
     return res.status(400).json({ error: "Purchase receipt evidence is required for errand purchases", code: "PURCHASE_RECEIPT_REQUIRED" });
-  }\n  if (order.errand_type) {
+  }
+  if (order.errand_type) {
     const pendingItems = await pool.query("SELECT count(*)::int AS count FROM buy_order_items WHERE buy_order_id=$1 AND status='REPLACEMENT_PENDING'", [id]);
     if (Number(pendingItems.rows[0]?.count ?? 0) > 0) return res.status(409).json({ error: "One or more errand items are awaiting customer replacement decisions", code: "ITEM_REPLACEMENT_PENDING" });
   }
