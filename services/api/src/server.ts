@@ -2475,7 +2475,7 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
         return res.status(409).json({ error: "Buy & Deliver order changed before receiver confirmation" });
       }
       const updatedDelivery = (await client.query(
-        "UPDATE deliveries SET status='DELIVERED', updated_at=now() WHERE id=$1 AND status='ARRIVED' RETURNING *",
+        "UPDATE deliveries SET status='DELIVERED', updated_at=now() WHERE id=$1 AND status='ARRIVED' RETURNING id,status,updated_at",
         [locked.delivery_id]
       )).rows[0];
       if (!updatedDelivery) {

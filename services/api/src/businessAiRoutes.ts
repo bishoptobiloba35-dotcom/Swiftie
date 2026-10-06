@@ -440,7 +440,7 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
         `INSERT INTO business_accounts
           (owner_user_id, legal_name, display_name, registration_number, monthly_spend_limit_minor, per_order_limit_minor, requires_approval, status)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-         RETURNING *`,
+         RETURNING id,owner_user_id,legal_name,display_name,registration_number,monthly_spend_limit_minor,per_order_limit_minor,requires_approval,status,created_at,updated_at`,
         [userId, parsed.data.legalName, parsed.data.displayName, parsed.data.registrationNumber ?? null, parsed.data.monthlySpendLimitMinor, parsed.data.perOrderLimitMinor, parsed.data.requiresApproval, (req as any).user?.role === "ADMIN" ? "ACTIVE" : "PENDING"]
       );
       await client.query(
@@ -1260,7 +1260,7 @@ router.post("/admin/business/accounts/:id/status", requireAuth("ADMIN"), async(r
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const parsed=z.object({status:z.enum(["PENDING","ACTIVE","SUSPENDED"])}).safeParse(req.body);
   if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
-  const result=await pool.query("UPDATE business_accounts SET status=$2,updated_at=now() WHERE id=$1 RETURNING *",[String(req.params.id),parsed.data.status]);
+  const result=await pool.query("UPDATE business_accounts SET status=$2,updated_at=now() WHERE id=$1 RETURNING id,owner_user_id,legal_name,display_name,registration_number,monthly_spend_limit_minor,per_order_limit_minor,requires_approval,status,created_at,updated_at",[String(req.params.id),parsed.data.status]);
   if(!result.rows[0])return res.status(404).json({error:"Business account not found"});
   await pool.query("INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES((SELECT owner_user_id FROM business_accounts WHERE id=$1),(SELECT ai_plan FROM users WHERE id=(SELECT owner_user_id FROM business_accounts WHERE id=$1)),'ADMIN_BUSINESS_STATUS','UPDATE',true,'Admin status update',$2::jsonb)",[String(req.params.id),JSON.stringify({businessId:String(req.params.id),status:parsed.data.status})]);
   const business = result.rows[0];
