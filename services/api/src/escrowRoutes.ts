@@ -132,9 +132,24 @@ router.post("/escrow/:orderId/pin", requireAuth(), async (req,res)=>{
       order.escrow_payment_state="arrived";
     }
     if(order.escrow_payment_state!=="arrived"){await client.query("ROLLBACK");return res.status(409).json({error:"Order is not awaiting PIN confirmation"});}
-    if(!order.receiver_pin_hash)return res.status(409).json({error:"Receiver PIN is not configured"});
+    if(!order.receiver_pin_hash){await client.query("ROLLBACK");return res.status(409).json({error:"Receiver PIN is not configured"});}
+    const pinState=(await client.query("SELECT pin_failed_attempts,pin_locked_until FROM deliveries WHERE id=$1 FOR UPDATE",[order.id])).rows[0];
+    if(pinState?.pin_locked_until && new Date(pinState.pin_locked_until).getTime()>Date.now()){
+      await client.query("ROLLBACK");
+      return res.status(429).json({error:"Too many PIN attempts. Try again later.",retryAfterMs:new Date(pinState.pin_locked_until).getTime()-Date.now()});
+    }
     const valid=await verifyReceiverPin(order.id, parsed.data.pin);
-    if(!valid){await client.query("ROLLBACK");return res.status(401).json({error:"Invalid PIN"});}
+    if(!valid){
+      const failures=Number(pinState?.pin_failed_attempts ?? 0)+1;
+      if(failures>=3){
+        await client.query("UPDATE deliveries SET pin_failed_attempts=0,pin_locked_until=now()+interval '15 minutes' WHERE id=$1",[order.id]);
+      }else{
+        await client.query("UPDATE deliveries SET pin_failed_attempts=$2 WHERE id=$1",[order.id,failures]);
+      }
+      await client.query("ROLLBACK");
+      return res.status(401).json({error:failures>=3?"Too many PIN attempts. Try again later.":"Invalid PIN",retryAfterMs:failures>=3?15*60*1000:undefined});
+    }
+    await client.query("UPDATE deliveries SET pin_failed_attempts=0,pin_locked_until=NULL WHERE id=$1",[order.id]);
     const disputeUntil=new Date(Date.now()+ESCROW_DISPUTE_HOURS*3600000);
     await client.query(
       `UPDATE escrow_ledgers SET state='dispute_window',pin_confirmed_at=now(),dispute_window_until=$2,stakeholder_release_at=now()+interval '72 hours',updated_at=now()
