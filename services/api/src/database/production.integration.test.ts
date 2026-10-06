@@ -67,7 +67,7 @@ if (!db) {
       declaredValueMinor: 250000,
       pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.0765, longitude: 7.3986 } },
       dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.4 } },
-      receiverPin: "123456",
+      receiverPin: "1234",
       weightKg: 2,
       dimensionsCm: { length: 20, width: 20, height: 20 },
       isPerishable: false,
@@ -132,7 +132,7 @@ if (!db) {
       declaredValueMinor: 100000,
       pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.0765, longitude: 7.3986 } },
       dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.4 } },
-      receiverPin: "654321",
+      receiverPin: "6543",
       weightKg: 1,
       dimensionsCm: { length: 15, width: 15, height: 15 },
       isPerishable: false,
@@ -173,7 +173,7 @@ if (!db) {
       declaredValueMinor: 150000,
       pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.0765, longitude: 7.3986 } },
       dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.4 } },
-      receiverPin: "111222",
+      receiverPin: "1122",
       weightKg: 1,
       dimensionsCm: { length: 15, width: 15, height: 15 },
       isPerishable: false,
@@ -217,86 +217,24 @@ if (!db) {
     )).rows[0];
     assert.equal(raceState.status, "ARRIVED");
     assert.equal(raceState.payment_status, "HELD");
-    const receiverPaidDelivery = await createPersistentDelivery({
-      senderId: customer.id,
-      receiverName: "Receiver Pays Customer",
-      receiverPhone: "+2349020000003",
-      declaredValueMinor: 200000,
-      paymentMode: "RECEIVER_ON_DELIVERY",
-      pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.0765, longitude: 7.3986 } },
-      dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.4 } },
-      receiverPin: "333444",
-      weightKg: 2,
-      dimensionsCm: { length: 20, width: 20, height: 20 },
-      isPerishable: false,
-      quote: { currency: "NGN", distanceMeters: 1000, durationSeconds: 450, baseFareMinor: 50000, distanceFareMinor: 18000, weightFareMinor: 10000, sizeFareMinor: 0, perishableSurchargeMinor: 0, fuelReferenceMinor: 50000, protectionReserveMinor: 20000, pricingVersion: 1, serviceFeeMinor: 7800, totalMinor: 105800 }
-    });
-    await createPayment({ deliveryId: receiverPaidDelivery.id, provider: "paystack", amountMinor: 105800, collectionMode: "RECEIVER_ON_DELIVERY" });
-    assert.equal(receiverPaidDelivery.paymentMode, "RECEIVER_ON_DELIVERY");
-    assert.equal((await transitionDelivery(receiverPaidDelivery.id, "CREATED", "DRIVER_ASSIGNED", driver.id))?.driverId, driver.id);
-    assert.equal((await transitionDelivery(receiverPaidDelivery.id, "DRIVER_ASSIGNED", "DRIVER_AT_PICKUP", driver.id))?.status, "DRIVER_AT_PICKUP");
-    assert.equal((await savePickupPhoto(receiverPaidDelivery.id, driver.id, "supabase://receiver-paid/pickup"))?.status, "PICKED_UP");
-    assert.equal((await transitionDelivery(receiverPaidDelivery.id, "PICKED_UP", "IN_TRANSIT", driver.id))?.status, "IN_TRANSIT");
-    assert.equal((await transitionDelivery(receiverPaidDelivery.id, "IN_TRANSIT", "ARRIVED", driver.id))?.status, "ARRIVED");
-    const receiverConfirmed = await confirmReceiverOnDeliveryPaymentDue(receiverPaidDelivery.id, "+2349020000003", "333444");
-    assert.ok(receiverConfirmed);
-    assert.equal(receiverConfirmed.status, "ARRIVED");
-    assert.ok(receiverConfirmed.receiverConfirmedAt);
-    // The legacy generic helper must not be able to convert receiver confirmation before settlement.
-    // into delivery completion before the Paystack payment is actually settled.
-    assert.equal(await confirmReceiverDelivery(receiverPaidDelivery.id, "+2349020000003", "333444"), null);
-    const beforeLegacyCompletion = (await db.query(
-      "SELECT d.status, d.receiver_confirmed_at, p.status AS payment_status FROM deliveries d JOIN payments p ON p.delivery_id=d.id WHERE d.id=$1",
-      [receiverPaidDelivery.id]
-    )).rows[0];
-    assert.equal(beforeLegacyCompletion.status, "ARRIVED");
-    assert.ok(beforeLegacyCompletion.receiver_confirmed_at);
-    assert.equal(beforeLegacyCompletion.payment_status, "PENDING");
-    const beforeReceiverPayment = (await db.query(
-      "SELECT p.status AS payment_status, p.escrow_status, d.status AS delivery_status FROM payments p JOIN deliveries d ON d.id=p.delivery_id WHERE p.delivery_id=$1",
-      [receiverPaidDelivery.id]
-    )).rows[0];
-    assert.equal(beforeReceiverPayment.payment_status, "PENDING");
-    assert.equal(beforeReceiverPayment.escrow_status, "NOT_APPLICABLE");
-    assert.equal(beforeReceiverPayment.delivery_status, "ARRIVED");
-    assert.equal(await settleReceiverPaymentAndReleasePayout(receiverPaidDelivery.id, "SD-RECEIVER-PAYMENT-1", 105799, "NGN", 90), null);
-    const settledReceiver = await settleReceiverPaymentAndReleasePayout(receiverPaidDelivery.id, "SD-RECEIVER-PAYMENT-1", 105800, "NGN", 90);
-    assert.ok(settledReceiver);
-    assert.equal(settledReceiver.delivery.status, "DELIVERED");
-    assert.equal(settledReceiver.payoutAmountMinor, 77220);
-    const receiverFinancial = (await db.query(
-      "SELECT p.status AS payment_status, p.escrow_status, p.collection_mode, d.status AS delivery_status, po.status AS payout_status FROM payments p JOIN deliveries d ON d.id=p.delivery_id LEFT JOIN payouts po ON po.delivery_id=d.id WHERE p.delivery_id=$1",
-      [receiverPaidDelivery.id]
-    )).rows[0];
-    assert.equal(receiverFinancial.payment_status, "RELEASED");
-    assert.equal(receiverFinancial.escrow_status, "NOT_APPLICABLE");
-    assert.equal(receiverFinancial.collection_mode, "RECEIVER_ON_DELIVERY");
-    assert.equal(receiverFinancial.delivery_status, "DELIVERED");
-    assert.equal(receiverFinancial.payout_status, "ELIGIBLE");
+    await assert.rejects(
+      createPersistentDelivery({
+        senderId: customer.id,
+        receiverName: "Legacy Cash Receiver",
+        receiverPhone: "+2349020000003",
+        declaredValueMinor: 200000,
+        paymentMode: "RECEIVER_ON_DELIVERY",
+        pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.0765, longitude: 7.3986 } },
+        dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.4 } },
+        receiverPin: "3344",
+        weightKg: 2,
+        dimensionsCm: { length: 20, width: 20, height: 20 },
+        isPerishable: false,
+        quote: { currency: "NGN", distanceMeters: 1000, durationSeconds: 450, baseFareMinor: 50000, distanceFareMinor: 18000, weightFareMinor: 10000, sizeFareMinor: 0, perishableSurchargeMinor: 0, fuelReferenceMinor: 50000, protectionReserveMinor: 20000, pricingVersion: 1, serviceFeeMinor: 7800, totalMinor: 105800 }
+      }),
+      /payment mode|cash|constraint/i
+    );
 
-    await db.query(
-      `UPDATE payouts
-          SET status='PROCESSING', provider='paystack', provider_reference='SD-PAYOUT-MISMATCH-1', updated_at=now()
-        WHERE delivery_id=$1`,
-      [receiverPaidDelivery.id]
-    );
-    const mismatchedPayout = await updatePayoutProviderStatus(
-      "SD-PAYOUT-MISMATCH-1",
-      "RELEASED",
-      null,
-      105799,
-      "NGN"
-    );
-    assert.ok(mismatchedPayout);
-    assert.equal(mismatchedPayout.status, "FAILED");
-    assert.equal(mismatchedPayout.providerStatus, "amount_mismatch");
-    const mismatchState = (await db.query(
-      `SELECT status, provider_status, failure_reason
-         FROM payouts
-        WHERE provider_reference='SD-PAYOUT-MISMATCH-1'`
-    )).rows[0];
-    assert.equal(mismatchState.status, "FAILED");
-    assert.equal(mismatchState.provider_status, "amount_mismatch");
     const agentUser = await db.query(
       `INSERT INTO users(full_name,phone,email,password_hash,role)
        VALUES('Marketplace Agent','+2349020000099','marketplace-agent@example.test','integration-hash','AGENT')
