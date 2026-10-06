@@ -40,7 +40,7 @@ router.post("/escrow/create", requireAuth(), async (req, res) => {
   try{
     await client.query("BEGIN");
     const order=(await client.query(
-      "SELECT id,customer_id,payment_on_delivery,quote_total_minor,quote_base_fare_minor,quote_service_fee_minor,quote_protection_reserve_minor FROM deliveries WHERE id=$1 FOR UPDATE",
+      "SELECT id,sender_id AS customer_id,merchant_user_id,payment_on_delivery,quote_total_minor,quote_base_fare_minor,quote_service_fee_minor,quote_protection_reserve_minor FROM deliveries WHERE id=$1 FOR UPDATE",
       [parsed.data.orderId]
     )).rows[0];
     if(!order){ await client.query("ROLLBACK"); return res.status(404).json({error:"Order not found"}); }
