@@ -1558,7 +1558,7 @@ router.post("/drop-off/parcels/:id/collect", requireAuth("DRIVER"), async(req,re
   const updated=await pool.query("UPDATE drop_off_parcels SET status='COURIER_COLLECTED',courier_driver_id=$2,courier_collected_at=now(),updated_at=now() WHERE id=$1 AND status='READY_FOR_COURIER' RETURNING *",[parcel.id,driver.id]);
   if(!updated.rows[0])return res.status(409).json({error:"Parcel collection changed concurrently"});
   await pool.query("INSERT INTO drop_off_events(parcel_id,actor_user_id,event_type,metadata) VALUES($1,$2,'COURIER_COLLECTED',$3::jsonb)",[parcel.id,identity(req),JSON.stringify({driverId:driver.id})]);
-  res.json({parcel:updated.rows[0]});
+  res.json({parcel:publicDropOffParcel(updated.rows[0])});
 });
 
 router.get("/drop-off/locations/:id/commission", requireAuth("AGENT","ADMIN"), async(req,res)=>{
@@ -1566,7 +1566,7 @@ router.get("/drop-off/locations/:id/commission", requireAuth("AGENT","ADMIN"), a
   const locationId=String(req.params.id);
   if((req as any).user?.role!=="ADMIN"&&!await managesDropOff(identity(req),locationId))return res.status(403).json({error:"Not authorized"});
   const result=await pool.query("SELECT status,currency,count(*)::int AS parcels,sum(amount_minor)::bigint AS amount_minor FROM drop_off_commission_ledger WHERE location_id=$1 GROUP BY status,currency ORDER BY status",[locationId]);
-  res.json({commission:result.rows});
+  res.json({commission:result.rows.map((row)=>({status:row.status,currency:row.currency,parcels:Number(row.parcels),amountMinor:Number(row.amount_minor)}))});
 });
 
 
