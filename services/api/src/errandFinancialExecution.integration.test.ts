@@ -116,14 +116,14 @@ test("Hire an Errand HTTP boundary executes authorized purchase through delivery
     const overBudget = await fetch(`http://127.0.0.1:${API_PORT}/api/buy-orders/${buyOrderId}/purchase`, {
       method: "POST",
       headers: { authorization: agentToken, "content-type": "application/json" },
-      body: JSON.stringify({ actualPurchaseMinor: 500001 })
+      body: JSON.stringify({ actualPurchaseMinor: 500001, receiptFile: "data:application/pdf;base64,JVBERi0xLjQKJQ==" })
     });
     assert.equal(overBudget.status, 409);
 
     const purchased = await fetch(`http://127.0.0.1:${API_PORT}/api/buy-orders/${buyOrderId}/purchase`, {
       method: "POST",
       headers: { authorization: agentToken, "content-type": "application/json" },
-      body: JSON.stringify({ actualPurchaseMinor: 300000 })
+      body: JSON.stringify({ actualPurchaseMinor: 300000, receiptFile: "data:application/pdf;base64,JVBERi0xLjQKJQ==" })
     });
     assert.equal(purchased.status, 201);
     const purchasedBody = await purchased.json() as { buyOrder: { actual_purchase_minor?: number; unused_authorization_minor?: number } };
