@@ -144,7 +144,7 @@ if (db) {
     );
     await db.query(
       `INSERT INTO delivery_proofs(delivery_id,phase,proof_type,proof_value,metadata,captured_by_user_id)
-       VALUES($1,'DROPOFF','PIN','676767','{"source":"integration"}'::jsonb,$2)`,
+       VALUES($1,'DROPOFF','BARCODE','676767','{"source":"integration"}'::jsonb,$2)`,
       [escrowDelivery.id, driverUser.id]
     );
     const escrowResult = await confirmReceiverAndReleaseEscrow(escrowDelivery.id, "+2349070000010", "676767", 100);
