@@ -6,6 +6,7 @@ import { pool } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
 import { createPersistentDelivery, transitionDelivery, createDispute, createSupportTicket, listSupportTicketMessages, recordAdminSupportReply, createEligiblePayout, updatePayoutProviderStatus, confirmReceiverAndReleaseEscrow, confirmReceiverOnDeliveryPaymentDue, settleReceiverPaymentAndReleasePayout } from "./database/deliveryRepository.js";
 import { readFile } from "node:fs/promises";
+import { enqueueNotification } from "./notificationOutbox.js";
 
 const db = pool;
 
@@ -216,6 +217,38 @@ if (db) {
     assert.ok(mismatched);
     assert.equal(mismatched?.status, "FAILED");
     assert.equal(mismatched?.providerStatus, "amount_mismatch");
+
+    await db.query(
+      `UPDATE payouts SET status='PROCESSING',provider='paystack',provider_reference='COVERAGE-PAYOUT-2',updated_at=now() WHERE id=$1`,
+      [payout!.id]
+    );
+    const released = await updatePayoutProviderStatus("COVERAGE-PAYOUT-2", "RELEASED", null, 50000, "NGN");
+    assert.ok(released);
+    assert.equal(released?.status, "RELEASED");
+    assert.equal(released?.providerStatus, "released");
+
+    await enqueueNotification({
+      userId: customer.id,
+      deliveryId: delivery.id,
+      title: "Delivery update",
+      body: "Your Swiftie delivery has moved.",
+      type: "DELIVERY_STATUS"
+    });
+    const outbox = (await db.query(
+      `SELECT n.user_id, n.delivery_id, n.type, ob.attempts, ob.sent_at, ob.failed_at
+         FROM notification_outbox ob
+         JOIN notifications n ON n.id=ob.notification_id
+        WHERE n.user_id=$1 AND n.delivery_id=$2
+        ORDER BY ob.created_at DESC LIMIT 1`,
+      [customer.id, delivery.id]
+    )).rows[0];
+    assert.ok(outbox);
+    assert.equal(outbox.user_id, customer.id);
+    assert.equal(outbox.delivery_id, delivery.id);
+    assert.equal(outbox.type, "DELIVERY_STATUS");
+    assert.equal(Number(outbox.attempts), 0);
+    assert.equal(outbox.sent_at, null);
+    assert.equal(outbox.failed_at, null);
   });
 }
 
