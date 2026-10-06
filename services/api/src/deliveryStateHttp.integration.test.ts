@@ -93,7 +93,7 @@ test("delivery transition routes enforce the production state machine at the HTT
       senderId,
       receiverName: "Receiver",
       receiverPhone: "+2349020000099",
-      receiverPin: "654321",
+      receiverPin: "6543",
       declaredValueMinor: 100000,
       pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.07, longitude: 7.40 } },
       dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
