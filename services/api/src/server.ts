@@ -1129,7 +1129,79 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   }
 
   if (databaseEnabled() && (event?.event === "charge.success" || event?.event === "charge.failed")) {
-    const receiverDeliveryId = String(event?.data?.metadata?.deliveryId ?? "");
+    const escrowReference = String(event?.data?.reference ?? "");
+    if (escrowReference) {
+      const attempt = (await pool!.query(
+        `SELECT epa.id, epa.order_id, epa.amount_minor, d.customer_id
+           FROM escrow_payment_attempts epa
+           JOIN deliveries d ON d.id=epa.order_id
+          WHERE epa.provider_reference=$1
+          FOR UPDATE`,
+        [escrowReference]
+      )).rows[0];
+      if (attempt) {
+        const providerAmount = Number(event?.data?.amount);
+        const providerCurrency = String(event?.data?.currency ?? "");
+        const amountMatches = Number.isSafeInteger(providerAmount) &&
+          providerAmount === Number(attempt.amount_minor) &&
+          providerCurrency === "NGN";
+        if (event.event === "charge.failed" || !amountMatches) {
+          await pool!.query(
+            `UPDATE escrow_payment_attempts SET status='FAILED',updated_at=now()
+             WHERE id=$1 AND status='PENDING'`,
+            [attempt.id]
+          );
+          await pool!.query(
+            `UPDATE escrow_ledgers SET state='pending_payment',provider_reference=$2,updated_at=now()
+             WHERE order_id=$1 AND state='pending_payment'`,
+            [attempt.order_id, escrowReference]
+          );
+          await recordDeliveryEvent({deliveryId:attempt.order_id,eventType:"ESCROW_PAYMENT_FAILED",metadata:{provider:"paystack",reference:escrowReference,amountMatches}});
+          return res.status(200).json({received:true,duplicate:duplicateWebhook});
+        }
+        const client=await pool!.connect();
+        try {
+          await client.query("BEGIN");
+          await client.query(
+            `UPDATE escrow_payment_attempts SET status='SUCCESS',updated_at=now()
+             WHERE id=$1 AND status='PENDING'`,
+            [attempt.id]
+          );
+          await client.query(
+            `UPDATE escrow_ledgers
+                SET state='paid_escrow',provider='paystack',provider_reference=$2,
+                    funded_at=COALESCE(funded_at,now()),updated_at=now()
+              WHERE order_id=$1 AND state='pending_payment'`,
+            [attempt.order_id,escrowReference]
+          );
+          await client.query(
+            `UPDATE deliveries
+                SET escrow_payment_state='paid_escrow',escrow_paid_at=COALESCE(escrow_paid_at,now())
+              WHERE id=$1 AND escrow_payment_state='pending_payment'`,
+            [attempt.order_id]
+          );
+          await client.query(
+            `UPDATE payments
+                SET status='HELD',escrow_status='HELD',provider_reference=COALESCE(provider_reference,$2),updated_at=now()
+              WHERE delivery_id=$1 AND collection_mode='SENDER_ESCROW'`,
+            [attempt.order_id,escrowReference]
+          );
+          await client.query("COMMIT");
+        } catch (error) {
+          await client.query("ROLLBACK");
+          console.error(JSON.stringify({event:"escrow_payment_webhook_failed",orderId:attempt.order_id,reference:escrowReference,error:error instanceof Error?error.message:"unknown"}));
+          return res.status(500).json({error:"Escrow payment processing failed"});
+        } finally {
+          client.release();
+        }
+        await recordDeliveryEvent({deliveryId:attempt.order_id,eventType:"ESCROW_PAYMENT_FUNDED",metadata:{provider:"paystack",reference:escrowReference,amountMinor:providerAmount}});
+        return res.status(200).json({received:true,duplicate:duplicateWebhook,escrow:"paid_escrow"});
+      }
+    }
+  }
+
+  if (databaseEnabled() && (event?.event === "charge.success" || event?.event === "charge.failed")) {
+    const receiverDeliveryId = String(event?.data?.metadata?.deliveryId ?? "");    const receiverDeliveryId = String(event?.data?.metadata?.deliveryId ?? "");
     const receiverReference = String(event?.data?.reference ?? "");
     if (receiverDeliveryId && receiverReference) {
       const receiverPayment = await findPayment(receiverDeliveryId);
