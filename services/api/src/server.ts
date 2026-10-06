@@ -30,6 +30,7 @@ import { reconcileProcessingBuyOrderSettlements } from "./buyOrderSettlementWork
 import { reconcileProcessingDropOffCommissions } from "./dropOffCommissionWorker.js";
 import { reconcileCancelledMarketplacePayments } from "./marketplacePaymentWorker.js";
 import { reconcilePendingBuyOrderPayments } from "./buyOrderPaymentWorker.js";
+import { recordHttpMetric, renderPrometheusMetrics } from "./metrics.js";
 
 const app = express();
 
@@ -62,7 +63,7 @@ app.use((req, res, next) => {
   res.setHeader("x-request-id", requestId);
   res.on("finish", () => {
     const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
-    console.log(JSON.stringify({
+    recordHttpMetric(req.method, req.path, res.statusCode, durationMs);\n    console.log(JSON.stringify({
       event: "http_request",
       requestId,
       method: req.method,
@@ -225,7 +226,7 @@ async function getOne(id: string) {
   return databaseEnabled() ? await findDelivery(id) : deliveries.get(id) ?? null;
 }
 
-app.get("/health", async (_req, res) => {
+app.get("/metrics", (req, res) => {\n  const configuredToken = process.env.METRICS_TOKEN?.trim();\n  const suppliedToken = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : "";\n  if (!configuredToken || suppliedToken !== configuredToken) return res.status(404).json({ error: "Not found" });\n  res.type("text/plain; version=0.0.4").send(renderPrometheusMetrics());\n});\n\napp.get("/health", async (_req, res) => {
   let database = false;
   try { database = await pingDatabase(); } catch {}
   res.json({ ok: true, service: "swiftdrop-api", database });
