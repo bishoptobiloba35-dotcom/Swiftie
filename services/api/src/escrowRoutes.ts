@@ -108,7 +108,12 @@ router.post("/escrow/:orderId/pin", requireAuth, async (req,res)=>{
     )).rows[0];
     if(!order)return res.status(404).json({error:"Order not found"});
     if(userId!==order.customer_id && userId!==order.courier_user_id)return res.status(403).json({error:"PIN confirmation not authorized"});
-    if(order.escrow_payment_state!=="arrived")return res.status(409).json({error:"Order is not awaiting PIN confirmation"});
+    if(order.escrow_payment_state==="paid_escrow"){
+      await client.query("UPDATE escrow_ledgers SET state='arrived',updated_at=now() WHERE order_id=$1 AND state='paid_escrow'",[order.id]);
+      await client.query("UPDATE deliveries SET escrow_payment_state='arrived' WHERE id=$1 AND status='ARRIVED'",[order.id]);
+      order.escrow_payment_state="arrived";
+    }
+    if(order.escrow_payment_state!=="arrived"){await client.query("ROLLBACK");return res.status(409).json({error:"Order is not awaiting PIN confirmation"});}
     if(!order.receiver_pin_hash)return res.status(409).json({error:"Receiver PIN is not configured"});
     const valid=await verifyReceiverPin(order.id, parsed.data.pin);
     if(!valid){await client.query("ROLLBACK");return res.status(401).json({error:"Invalid PIN"});}
