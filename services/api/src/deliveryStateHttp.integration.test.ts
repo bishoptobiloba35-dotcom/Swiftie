@@ -8,6 +8,7 @@ import { createPersistentDelivery } from "./database/deliveryRepository.js";
 import { signAccessToken } from "./auth.js";
 
 const API_PORT = 4800 + (process.pid % 100);
+const TEST_JWT_SECRET = process.env.JWT_SECRET ?? "development-only-change-me";
 let server: ChildProcess | null = null;
 
 async function waitForReady(): Promise<void> {
@@ -47,7 +48,7 @@ test("delivery transition routes enforce the production state machine at the HTT
       ...process.env,
       NODE_ENV: "test",
       API_PORT: String(API_PORT),
-      JWT_SECRET: process.env.JWT_SECRET ?? "integration-test-secret"
+      JWT_SECRET: TEST_JWT_SECRET
     },
     stdio: "ignore"
   });
@@ -107,7 +108,6 @@ test("delivery transition routes enforce the production state machine at the HTT
     const driverToken = auth(driverUserId, "DRIVER");
     const otherDriverToken = auth(otherDriverUserId, "DRIVER");
 
-    // A driver cannot skip assignment/pickup states.
     const illegalFromAssigned = await request(`/api/deliveries/${delivery.id}/start-trip`, driverToken, {});
     assert.equal(illegalFromAssigned.status, 409);
 
@@ -115,11 +115,9 @@ test("delivery transition routes enforce the production state machine at the HTT
     assert.equal(atPickup.status, 200);
     assert.equal((await atPickup.json()).status, "DRIVER_AT_PICKUP");
 
-    // Assignment ownership is enforced independently of the delivery state.
     const wrongDriver = await request(`/api/deliveries/${delivery.id}/pickup`, otherDriverToken, { pickupPhotoUrl: "supabase://pickup/unauthorized" });
     assert.equal(wrongDriver.status, 403);
 
-    // Pickup evidence is mandatory before the state can advance.
     const missingEvidence = await request(`/api/deliveries/${delivery.id}/pickup`, driverToken, {});
     assert.equal(missingEvidence.status, 400);
 
@@ -127,7 +125,6 @@ test("delivery transition routes enforce the production state machine at the HTT
     assert.equal(pickup.status, 200);
     assert.equal((await pickup.json()).status, "PICKED_UP");
 
-    // Pickup cannot be repeated once the state has advanced.
     const pickupReplay = await request(`/api/deliveries/${delivery.id}/pickup`, driverToken, { pickupPhotoUrl: "supabase://pickup/replay" });
     assert.equal(pickupReplay.status, 409);
 
@@ -148,7 +145,6 @@ test("delivery transition routes enforce the production state machine at the HTT
     const arrivedReplay = await request(`/api/deliveries/${delivery.id}/arrived`, driverToken, {});
     assert.equal(arrivedReplay.status, 409);
 
-    // Courier completion is intentionally blocked: receiver confirmation owns ARRIVED -> DELIVERED.
     const driverComplete = await request(`/api/deliveries/${delivery.id}/complete`, driverToken, {});
     assert.equal(driverComplete.status, 409);
 
@@ -160,7 +156,6 @@ test("delivery transition routes enforce the production state machine at the HTT
     assert.equal(persisted.driver_id, driver.id);
     assert.equal(persisted.pickup_photo_url, "supabase://pickup/state-http");
 
-    // The API must never allow an unrelated approved driver to operate the delivery.
     assert.notEqual(otherDriver.id, driver.id);
   } finally {
     server?.kill("SIGTERM");
