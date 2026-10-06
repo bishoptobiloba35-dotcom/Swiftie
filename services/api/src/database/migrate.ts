@@ -60,6 +60,7 @@ const migrations = [
   { id: "061_notification_dead_letter", file: "061_notification_dead_letter.sql" },
   { id: "062_legal_acceptance", file: "062_legal_acceptance.sql" },
   { id: "063_swiftdrop_business_trust_rules", file: "063_swiftdrop_business_trust_rules.sql" },
+  { id: "064_swiftdrop_operational_controls", file: "064_swiftdrop_operational_controls.sql" },
 ];
 
 export async function runMigrations(): Promise<void> {
