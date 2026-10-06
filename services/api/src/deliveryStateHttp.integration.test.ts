@@ -126,7 +126,7 @@ test("delivery transition routes enforce the production state machine at the HTT
     const missingEvidence = await request(`/api/deliveries/${delivery.id}/pickup`, driverToken, {});
     assert.equal(missingEvidence.status, 400);
 
-    const pickup = await request(`/api/deliveries/${delivery.id}/pickup`, driverToken, { pickupPhotoUrl: "/api/deliveries/${delivery.id}/pickup-photo" });
+    const pickup = await request(`/api/deliveries/${delivery.id}/pickup`, driverToken, { pickupPhotoUrl: `/api/deliveries/${delivery.id}/pickup-photo` });
     assert.equal(pickup.status, 200);
     assert.equal((await pickup.json()).status, "PICKED_UP");
 
