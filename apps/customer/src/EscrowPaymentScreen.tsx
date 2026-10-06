@@ -1,4 +1,5 @@
 import React from "react";
+import * as WebBrowser from "expo-web-browser";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SwiftDropApi } from "../../../packages/shared/src/api";
 
