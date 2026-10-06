@@ -48,7 +48,7 @@ test("receiver confirmation route verifies PIN and atomically releases escrow fo
       senderId: sender,
       receiverName: "Receiver",
       receiverPhone: "+2349020000042",
-      receiverPin: "654321",
+      receiverPin: "6543",
       declaredValueMinor: 100000,
       pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.07, longitude: 7.40 } },
       dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
@@ -72,7 +72,7 @@ test("receiver confirmation route verifies PIN and atomically releases escrow fo
 
     const confirmed = await fetch(endpoint, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ receiverPhone: "+2349020000042", receiverPin: "654321" })
+      body: JSON.stringify({ receiverPhone: "+2349020000042", receiverPin: "6543" })
     });
     assert.equal(confirmed.status, 200);
     const payload = await confirmed.json() as { escrowStatus: string; payoutAmountMinor: number; delivery: { status: string } };
@@ -95,7 +95,7 @@ test("receiver confirmation route verifies PIN and atomically releases escrow fo
 
     const replay = await fetch(endpoint, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ receiverPhone: "+2349020000042", receiverPin: "654321" })
+      body: JSON.stringify({ receiverPhone: "+2349020000042", receiverPin: "6543" })
     });
     assert.equal(replay.status, 409);
   } finally {
