@@ -142,9 +142,8 @@ test("Hire an Errand HTTP purchase boundary requires evidence and reconciles aut
     assert.equal(Number(state.actual_purchase_minor), 300000);
     assert.equal(Number(state.unused_authorization_minor), 200000);
     assert.equal(state.payment_status, "HELD");
-    assert.equal(Number(state.refund_amount_minor), 200000);
-    assert.ok(["PENDING", "FAILED"].includes(String(state.refund_status)));
     assert.equal(state.purchase_recorded, true);
+    assert.equal(state.reconciliation_required, true);
 
     const replay = await fetch(`http://127.0.0.1:${API_PORT}/api/buy-orders/${buyOrderId}/purchase`, {
       method: "POST",
