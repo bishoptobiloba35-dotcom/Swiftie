@@ -5,7 +5,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View, useColorScheme } from "r
 type Props = {
   delivery: any;
   notifications: any[];
-  setHomeSection: (section: "HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS") => void;
+  setHomeSection: (section: "HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS" | "HISTORY") => void;
   openNotifications: () => void;
   signOut: () => void;
 };
@@ -42,7 +42,7 @@ export default function Phase1Home({ delivery, notifications, setHomeSection, op
   };
 
   const isDark = appearance === "dark" || (appearance === "system" && systemScheme === "dark");
-  const go = (key: "HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS") => setHomeSection(key);
+  const go = (key: "HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS" | "HISTORY") => setHomeSection(key);
   const c = isDark ? palette.dark : palette.light;
 
   return (
@@ -146,11 +146,11 @@ export default function Phase1Home({ delivery, notifications, setHomeSection, op
       <View style={[styles.tabBar, { backgroundColor: c.card, borderTopColor: c.line }]}>
         {[
           ["HOME", "Home", "⌂"],
-          ["ORDER", "Shipment", "↗"],
+          ["HISTORY", "Shipment", "↗"],
           ["TRACK", "Track", "◎"],
           ["SHOP", "Wallet", "₦"]
         ].map(([key, label, icon]) => (
-          <Pressable key={key} onPress={() => go(key as "HOME" | "ORDER" | "TRACK" | "SHOP")} style={styles.tab}>
+          <Pressable key={key} onPress={() => go(key as "HOME" | "HISTORY" | "TRACK" | "SHOP")} style={styles.tab}>
             <Text style={[styles.tabIcon, { color: key === "HOME" ? c.primary : c.mut }]}>{icon}</Text>
             <Text style={[styles.tabLabel, { color: key === "HOME" ? c.primary : c.mut }]}>{label}</Text>
           </Pressable>
