@@ -146,7 +146,7 @@ router.post("/escrow/:orderId/pin", requireAuth(), async (req,res)=>{
       }else{
         await client.query("UPDATE deliveries SET pin_failed_attempts=$2 WHERE id=$1",[order.id,failures]);
       }
-      await client.query("ROLLBACK");
+      await client.query("COMMIT");
       return res.status(401).json({error:failures>=3?"Too many PIN attempts. Try again later.":"Invalid PIN",retryAfterMs:failures>=3?15*60*1000:undefined});
     }
     await client.query("UPDATE deliveries SET pin_failed_attempts=0,pin_locked_until=NULL WHERE id=$1",[order.id]);
