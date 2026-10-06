@@ -423,7 +423,7 @@ router.post("/buy-orders/:id/claim", requireAuth("AGENT"), async (req, res) => {
       `UPDATE buy_orders
           SET agent_id=$2, status='AGENT_ASSIGNED', assigned_at=now(), updated_at=now()
         WHERE id=$1 AND agent_id IS NULL
-        RETURNING *`,
+        RETURNING id,business_id,agent_id,status,item_description,merchant_name,merchant_address,merchant_lat,merchant_lng,purchase_budget_minor,actual_purchase_minor,delivery_fee_minor,total_authorized_minor,currency,notes,errand_type,replacement_policy,max_price_delta_minor,errand_instructions,requested_completion_at,receiver_name,receiver_phone,destination_address,destination_lat,destination_lng,delivery_id,replacement_review_required,replacement_review_deadline,payment_status,unused_authorization_minor,refunded_minor,purchased_at,assigned_at,created_at,updated_at`,
       [id, agent.id]
     );
     if (!updated.rows[0]) {
@@ -457,7 +457,7 @@ router.post("/buy-orders/:id/accept", requireAuth("AGENT"), async (req, res) => 
     `UPDATE buy_orders
         SET status='PURCHASING', updated_at=now()
       WHERE id=$1 AND agent_id=$2 AND status='AGENT_ASSIGNED'
-      RETURNING *`,
+      RETURNING id,business_id,agent_id,status,item_description,merchant_name,merchant_address,merchant_lat,merchant_lng,purchase_budget_minor,actual_purchase_minor,delivery_fee_minor,total_authorized_minor,currency,notes,errand_type,replacement_policy,max_price_delta_minor,errand_instructions,requested_completion_at,receiver_name,receiver_phone,destination_address,destination_lat,destination_lng,delivery_id,replacement_review_required,replacement_review_deadline,payment_status,unused_authorization_minor,refunded_minor,purchased_at,assigned_at,created_at,updated_at`,
     [id, agent.id]
   );
   if (!result.rows[0]) return res.status(409).json({ error: "Order is not assigned to this agent or cannot be accepted" });
@@ -538,7 +538,7 @@ router.post("/buy-orders/:id/purchase", requireAuth("AGENT"), async (req, res) =
               unused_authorization_minor=$5,
               purchased_at=now(), status='PURCHASED', updated_at=now()
         WHERE id=$1 AND agent_id=$4 AND status='PURCHASING' AND payment_status='HELD'
-        RETURNING *`,
+        RETURNING id,business_id,agent_id,status,item_description,merchant_name,merchant_address,merchant_lat,merchant_lng,purchase_budget_minor,actual_purchase_minor,delivery_fee_minor,total_authorized_minor,currency,notes,errand_type,replacement_policy,max_price_delta_minor,errand_instructions,requested_completion_at,receiver_name,receiver_phone,destination_address,destination_lat,destination_lng,delivery_id,replacement_review_required,replacement_review_deadline,payment_status,unused_authorization_minor,refunded_minor,purchased_at,assigned_at,created_at,updated_at`,
       [id, parsed.data.actualPurchaseMinor, receiptKey, agent.id, unusedAuthorizationMinor]
     );
   } catch (error) {
@@ -685,7 +685,7 @@ router.post("/buy-orders/:id/cancel", requireAuth("CUSTOMER"), async (req, res) 
           SET status='CANCELLED', updated_at=now()
         WHERE id=$1 AND customer_user_id=$2
           AND status IN ('REQUESTED','APPROVED','AGENT_ASSIGNED')
-        RETURNING *`,
+        RETURNING id,business_id,agent_id,status,item_description,merchant_name,merchant_address,merchant_lat,merchant_lng,purchase_budget_minor,actual_purchase_minor,delivery_fee_minor,total_authorized_minor,currency,notes,errand_type,replacement_policy,max_price_delta_minor,errand_instructions,requested_completion_at,receiver_name,receiver_phone,destination_address,destination_lat,destination_lng,delivery_id,replacement_review_required,replacement_review_deadline,payment_status,unused_authorization_minor,refunded_minor,purchased_at,assigned_at,created_at,updated_at`,
       [orderId(req), identity(req)]
     );
     if (!result.rows[0]) {

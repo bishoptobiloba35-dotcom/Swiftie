@@ -545,7 +545,7 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
         `INSERT INTO business_dispatch_plans
           (business_id, created_by_user_id, status, delivery_window_start, delivery_window_end, estimated_total_minor, approval_required, plan)
          VALUES ($1,$2,'PREPARED',$3,$4,$5,$6,$7::jsonb)
-         RETURNING *`,
+         RETURNING id,business_id,created_by_user_id,status,delivery_window_start,delivery_window_end,estimated_total_minor,approval_required,approved_by_user_id,approved_at,executed_at,plan,created_at,updated_at`,
         [
           parsed.data.businessId,
           userId,
@@ -654,7 +654,7 @@ router.post("/business/dispatch-plans/:id/approve", requireAuth("CUSTOMER", "ADM
   }
   if (current.status !== "PREPARED") return res.status(409).json({ error: "Only prepared dispatch plans can be approved" });
   const result = await pool.query(
-    "UPDATE business_dispatch_plans SET status='APPROVED',approved_by_user_id=$2,approved_at=now(),updated_at=now() WHERE id=$1 AND status='PREPARED' RETURNING *",
+    "UPDATE business_dispatch_plans SET status='APPROVED',approved_by_user_id=$2,approved_at=now(),updated_at=now() WHERE id=$1 AND status='PREPARED' RETURNING id,business_id,created_by_user_id,status,delivery_window_start,delivery_window_end,estimated_total_minor,approval_required,approved_by_user_id,approved_at,executed_at,plan,created_at,updated_at",
     [id, identity(req)]
   );
   if (!result.rows[0]) return res.status(409).json({ error: "Dispatch plan changed concurrently" });
@@ -675,7 +675,7 @@ router.post("/business/dispatch-plans/:id/execute", requireAuth("CUSTOMER", "ADM
       await client.query("ROLLBACK");
       return res.status(403).json({ error: "Business dispatch authorization required" });
     }
-    if (plan.status === "EXECUTED") { await client.query("COMMIT"); return res.json({ dispatchPlan: plan, idempotent: true }); }
+    if (plan.status === "EXECUTED") { await client.query("COMMIT"); return res.json({ dispatchPlan: publicDispatchPlan(plan), idempotent: true }); }
     if (plan.status === "CANCELLED") { await client.query("ROLLBACK"); return res.status(409).json({ error: "Cancelled dispatch plan cannot be executed" }); }
     if (plan.approval_required && plan.status !== "APPROVED") {
       await client.query("ROLLBACK");
@@ -726,7 +726,7 @@ router.post("/business/dispatch-plans/:id/execute", requireAuth("CUSTOMER", "ADM
     }
 
     const updated = await client.query(
-      "UPDATE business_dispatch_plans SET status='EXECUTED',executed_at=now(),updated_at=now() WHERE id=$1 AND status IN ('PREPARED','APPROVED') RETURNING *",
+      "UPDATE business_dispatch_plans SET status='EXECUTED',executed_at=now(),updated_at=now() WHERE id=$1 AND status IN ('PREPARED','APPROVED') RETURNING id,business_id,created_by_user_id,status,delivery_window_start,delivery_window_end,estimated_total_minor,approval_required,approved_by_user_id,approved_at,executed_at,plan,created_at,updated_at",
       [id]
     );
     if (!updated.rows[0]) { await client.query("ROLLBACK"); return res.status(409).json({ error: "Dispatch plan changed concurrently" }); }

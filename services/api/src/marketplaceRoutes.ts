@@ -475,7 +475,7 @@ router.post("/marketplace/orders/:id/fulfill", requireAuth(), async (req, res) =
          weight_kg,length_cm,width_cm,height_cm,is_perishable,declared_value_minor,
          quote_distance_meters,quote_duration_seconds,quote_base_fare_minor,quote_distance_fare_minor,quote_weight_fare_minor,quote_size_fare_minor,quote_perishable_surcharge_minor,quote_service_fee_minor,quote_total_minor,quote_currency)
        VALUES ($1,$2,$3,$4,$5,'SENDER_ESCROW',$6,$7,$8,$9,$10,$11,'PAYMENT_AUTHORIZED',$12,$13,$14,$15,$16,$17,$18,0,0,0,0,0,0,0,0, $19,'NGN')
-       RETURNING *`,
+       RETURNING id,tracking_code,status`,
       [deliveryId,trackingCode,order.seller_user_id,parsed.data.receiverName,parsed.data.receiverPhone,
        order.pickup_address,Number(order.pickup_lat),Number(order.pickup_lng),parsed.data.dropoffAddress,parsed.data.dropoffLatitude,parsed.data.dropoffLongitude,
        pinHash,Number(order.weight_kg),Number(order.length_cm),Number(order.width_cm),Number(order.height_cm),Boolean(order.is_perishable),Number(order.unit_final_price_minor)*Number(order.quantity),deliveryFeeMinor]
@@ -499,7 +499,7 @@ router.post("/marketplace/orders/:id/fulfill", requireAuth(), async (req, res) =
           SET delivery_id=$2, fulfillment_status='PREPARING', status='PROCESSING',
               seller_ready_at=NULL, updated_at=now()
         WHERE id=$1 AND fulfillment_status='NOT_STARTED'
-        RETURNING *`,
+        RETURNING id,listing_id,quantity,unit_final_price_minor,total_minor,currency,status,fulfillment_status,delivery_id,requested_delivery_at,created_at,updated_at`,
       [orderId,deliveryId]
     )).rows[0];
     if (!updatedOrder) throw new Error("Marketplace fulfillment state changed concurrently");
@@ -680,14 +680,14 @@ router.post("/marketplace/listings", requireAuth(), async (req, res) => {
       `INSERT INTO marketplace_seller_profiles(user_id,display_name,bio,location_label)
        VALUES($1,$2,$3,$4)
        ON CONFLICT(user_id) DO UPDATE SET display_name=EXCLUDED.display_name,bio=EXCLUDED.bio,location_label=EXCLUDED.location_label,updated_at=now()
-       RETURNING *`,
+       RETURNING id,display_name,bio,location_label,created_at`,
       [userId,p.displayName,p.bio,p.locationLabel ?? null]
     );
     const listing = await client.query(
       `INSERT INTO marketplace_listings
        (seller_user_id,seller_profile_id,title,description,condition,use_description,usage_instructions,category,price_minor,delivery_fee_minor,final_price_minor,currency,delivery_mode,stock_quantity,pickup_address,pickup_lat,pickup_lng,weight_kg,length_cm,width_cm,height_cm,is_perishable)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'NGN',$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
-       RETURNING *`,
+       RETURNING id,seller_user_id,seller_profile_id,title,description,condition,use_description,usage_instructions,category,price_minor,delivery_fee_minor,final_price_minor,currency,delivery_mode,stock_quantity,pickup_address,pickup_lat,pickup_lng,weight_kg,length_cm,width_cm,height_cm,is_perishable,created_at,updated_at,status,is_active`,
       [userId,seller.rows[0].id,p.title,p.description,p.condition,p.useDescription,p.usageInstructions ?? null,p.category,p.priceMinor,p.deliveryFeeMinor,finalPriceMinor,p.deliveryMode,p.stockQuantity,p.pickupAddress ?? null,p.pickupLatitude ?? null,p.pickupLongitude ?? null,p.weightKg ?? null,p.lengthCm ?? null,p.widthCm ?? null,p.heightCm ?? null,p.isPerishable]
     );
 
@@ -1021,7 +1021,7 @@ router.post("/marketplace/listings/:id/checkout", requireAuth(), async (req, res
     if (!stockUpdate.rows[0]) { await client.query("ROLLBACK"); return res.status(409).json({ error: "The requested quantity is no longer available" }); }
     const order = await client.query(
       `INSERT INTO marketplace_orders(listing_id,buyer_user_id,seller_user_id,quantity,unit_final_price_minor,total_minor,currency,requested_delivery_at,checkout_idempotency_key)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,listing_id,buyer_user_id,seller_user_id,quantity,unit_final_price_minor,total_minor,currency,status,fulfillment_status,delivery_id,requested_delivery_at,checkout_idempotency_key,created_at,updated_at`,
       [listing.id,identity(req),listing.seller_user_id,quantity,listing.final_price_minor,total,listing.currency,requestedDeliveryAt,idempotencyKey]
     );
     await client.query("COMMIT");
