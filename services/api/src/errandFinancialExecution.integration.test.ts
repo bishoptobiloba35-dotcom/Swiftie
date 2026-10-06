@@ -130,8 +130,9 @@ test("Hire an Errand HTTP purchase boundary requires evidence and reconciles aut
 
     const state = (await pool.query(
       `SELECT bo.status,bo.actual_purchase_minor,bo.unused_authorization_minor,
-              bop.status AS payment_status,bop.refund_status,bop.refund_amount_minor,
-              EXISTS(SELECT 1 FROM buy_order_events e WHERE e.buy_order_id=bo.id AND e.event_type='PURCHASE_RECORDED') AS purchase_recorded
+              bop.status AS payment_status,
+              EXISTS(SELECT 1 FROM buy_order_events e WHERE e.buy_order_id=bo.id AND e.event_type='PURCHASE_RECORDED') AS purchase_recorded,
+              EXISTS(SELECT 1 FROM buy_order_events e WHERE e.buy_order_id=bo.id AND e.event_type='UNUSED_AUTHORIZATION_RECONCILIATION_REQUIRED') AS reconciliation_required
          FROM buy_orders bo
          JOIN buy_order_payments bop ON bop.buy_order_id=bo.id
         WHERE bo.id=$1`,
