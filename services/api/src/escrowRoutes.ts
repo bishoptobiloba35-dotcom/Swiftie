@@ -15,7 +15,7 @@ const FLOAT_MIN_RESERVE_MINOR = 500000000;
 const FLOAT_TOPUP_THRESHOLD_MINOR = 300000000;
 
 function authUser(req: any): string {
-  const id = identity(req).userId;
+  const id = identity(req);
   if (!id) throw new Error("Authentication required");
   return id;
 }
@@ -104,11 +104,11 @@ router.post("/escrow/:orderId/pin", requireAuth, async (req,res)=>{
   try{
     await client.query("BEGIN");
     const order=(await client.query(
-      "SELECT id,customer_id,courier_id,escrow_total_paid_minor,escrow_courier_share_minor,escrow_payment_state,receiver_pin_hash FROM deliveries WHERE id=$1 FOR UPDATE",
+      "SELECT d.id,d.customer_id,d.driver_id,dr.user_id AS courier_user_id,d.escrow_total_paid_minor,d.escrow_courier_share_minor,d.escrow_payment_state,d.receiver_pin_hash FROM deliveries d LEFT JOIN drivers dr ON dr.id=d.driver_id WHERE d.id=$1 FOR UPDATE",
       [String(req.params.orderId)]
     )).rows[0];
     if(!order)return res.status(404).json({error:"Order not found"});
-    if(userId!==order.customer_id && userId!==order.courier_id)return res.status(403).json({error:"PIN confirmation not authorized"});
+    if(userId!==order.customer_id && userId!==order.courier_user_id)return res.status(403).json({error:"PIN confirmation not authorized"});
     if(order.escrow_payment_state!=="arrived")return res.status(409).json({error:"Order is not awaiting PIN confirmation"});
     if(!order.receiver_pin_hash)return res.status(409).json({error:"Receiver PIN is not configured"});
     const valid=await verifyReceiverPin(order.id, parsed.data.pin);
@@ -128,7 +128,7 @@ router.post("/escrow/:orderId/pin", requireAuth, async (req,res)=>{
         `INSERT INTO stakeholder_wallets(user_id,stakeholder_type,balance_minor)
          VALUES($1,'COURIER',$2)
          ON CONFLICT(user_id) DO UPDATE SET balance_minor=stakeholder_wallets.balance_minor+EXCLUDED.balance_minor,updated_at=now()`,
-        [order.courier_id,Number(order.escrow_courier_share_minor)]
+        [order.courier_user_id,Number(order.escrow_courier_share_minor)]
       );
       const wallet=(await client.query("SELECT id,balance_minor FROM stakeholder_wallets WHERE user_id=$1",[order.courier_id])).rows[0];
       await client.query(
@@ -177,9 +177,9 @@ router.post("/wallet/withdraw", requireAuth, async (req,res)=>{
     const wallet=(await client.query("SELECT * FROM stakeholder_wallets WHERE user_id=$1 FOR UPDATE",[userId])).rows[0];
     if(!wallet)return res.status(404).json({error:"Wallet not found"});
     if(Number(wallet.balance_minor)<parsed.data.amountMinor)return res.status(409).json({error:"Insufficient available balance"});
-    const duplicate=(await client.query("SELECT * FROM payout_requests WHERE user_id=$1 AND status IN ('PENDING','PROCESSING') AND id IN (SELECT id FROM payout_requests WHERE id=$1)",[parsed.data.idempotencyKey])).rows[0];
+    const duplicate=(await client.query("SELECT * FROM payout_requests WHERE idempotency_key=$1",[parsed.data.idempotencyKey])).rows[0];
     if(duplicate){await client.query("COMMIT");return res.json({payout:duplicate});}
-    const payout=(await client.query("INSERT INTO payout_requests(wallet_id,user_id,amount_minor) VALUES($1,$2,$3) RETURNING *",[wallet.id,userId,parsed.data.amountMinor])).rows[0];
+    const payout=(await client.query("INSERT INTO payout_requests(wallet_id,user_id,amount_minor,idempotency_key) VALUES($1,$2,$3,$4) ON CONFLICT(idempotency_key) DO NOTHING RETURNING *",[wallet.id,userId,parsed.data.amountMinor,parsed.data.idempotencyKey])).rows[0];
     await client.query("UPDATE stakeholder_wallets SET balance_minor=balance_minor-$2,updated_at=now() WHERE id=$1",[wallet.id,parsed.data.amountMinor]);
     await client.query("COMMIT");
     return res.status(201).json({payout,provider:"paystack_transfers"});
