@@ -261,7 +261,15 @@ router.post("/wallet/recipient", requireAuth(), async (req,res)=>{
   const recipientResponse=await fetch("https://api.paystack.co/transferrecipient",{method:"POST",headers,body:JSON.stringify({type:"nuban",name:resolved.data.account_name,account_number:parsed.data.accountNumber,bank_code:parsed.data.bankCode,currency:"NGN"})});
   const recipient=await recipientResponse.json() as any;
   if(!recipientResponse.ok||!recipient.status||!recipient.data?.recipient_code)return res.status(400).json({error:recipient.message ?? "Unable to create payout recipient"});
-  const wallet=await ensureWallet(userId,"CUSTOMER");
+  let wallet=(await pool!.query("SELECT * FROM stakeholder_wallets WHERE user_id=$1",[userId])).rows[0];
+  if(!wallet){
+    const user=(await pool!.query("SELECT business_role,role FROM users WHERE id=$1",[userId])).rows[0];
+    const stakeholderType=String(user?.business_role ?? "").toUpperCase()==="MERCHANT"?"MERCHANT":
+      String(user?.business_role ?? "").toUpperCase()==="AGENT"?"AGENT":
+      String(user?.business_role ?? "").toUpperCase()==="ERRAND"?"ERRAND_RUNNER":
+      String(user?.business_role ?? "").toUpperCase()==="COURIER" || String(user?.role ?? "").toUpperCase()==="DRIVER"?"COURIER":"CUSTOMER";
+    wallet=await ensureWallet(userId,stakeholderType);
+  }
   const saved=(await pool!.query("UPDATE stakeholder_wallets SET paystack_recipient_code=$2,bank_account_verified=true,updated_at=now() WHERE id=$1 RETURNING id,user_id,balance_minor,pending_minor,currency,paystack_recipient_code,bank_account_verified",[wallet.id,String(recipient.data.recipient_code)])).rows[0];
   return res.status(201).json({wallet:saved,accountName:resolved.data.account_name,bankCode:parsed.data.bankCode,accountLast4:parsed.data.accountNumber.slice(-4)});
 });
