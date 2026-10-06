@@ -53,7 +53,6 @@ test("private pickup objects are protected by delivery ownership at the route", 
         ...process.env,
         NODE_ENV: "test",
         API_PORT: String(API_PORT),
-        LOCAL_PRIVATE_STORAGE_DIR: "/tmp/swiftdrop-storage-route-auth"
       },
       stdio: "ignore"
     }
