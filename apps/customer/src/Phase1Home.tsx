@@ -41,6 +41,7 @@ export default function Phase1Home({ delivery, notifications, setHomeSection, op
   };
 
   const isDark = appearance === "dark";
+  const go = (key: "HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS") => setHomeSection(key);
   const c = isDark ? palette.dark : palette.light;
 
   return (
@@ -148,7 +149,7 @@ export default function Phase1Home({ delivery, notifications, setHomeSection, op
           ["TRACK", "Track", "◎"],
           ["SHOP", "Wallet", "₦"]
         ].map(([key, label, icon]) => (
-          <Pressable key={key} onPress={() => setHomeSection(key as Props["setHomeSection"] extends (x: infer U) => any ? U : never)} style={styles.tab}>
+          <Pressable key={key} onPress={() => go(key as "HOME" | "ORDER" | "TRACK" | "SHOP")} style={styles.tab}>
             <Text style={[styles.tabIcon, { color: key === "HOME" ? c.primary : c.mut }]}>{icon}</Text>
             <Text style={[styles.tabLabel, { color: key === "HOME" ? c.primary : c.mut }]}>{label}</Text>
           </Pressable>
