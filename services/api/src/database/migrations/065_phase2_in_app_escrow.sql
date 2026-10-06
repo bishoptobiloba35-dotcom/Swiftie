@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS escrow_ledgers (
   released_at TIMESTAMPTZ,
   stakeholder_release_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  idempotency_key TEXT NOT NULL UNIQUE
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_escrow_ledgers_provider_reference
