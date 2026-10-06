@@ -5,7 +5,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { pool } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
 import { signAccessToken } from "./auth.js";
-import { hashPin } from "./database/deliveryRepository.js";
+import { hashPin } from "./security.js";
 
 const API_PORT = 4950 + (process.pid % 50);
 let server: ChildProcess | null = null;
