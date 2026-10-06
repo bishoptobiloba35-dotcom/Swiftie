@@ -1443,7 +1443,23 @@ router.post("/admin/drop-off/locations/:id/review", requireAuth("ADMIN"), async(
     await client.query("UPDATE drop_off_location_documents SET status=$2,updated_at=now() WHERE location_id=$1 AND status='PENDING'",[locationId,verified?"APPROVED":"REJECTED"]);
     await client.query("INSERT INTO drop_off_application_audit(location_id,actor_user_id,old_status,new_status,note) VALUES($1,$2,$3,$4,$5)",[locationId,identity(req),current.rows[0].status,parsed.data.status,parsed.data.note??null]);
     await client.query("COMMIT");
-    res.json({location:updated.rows[0]});
+    const locationRow = updated.rows[0];
+    return res.json({location:{
+      id: locationRow.id,
+      businessId: locationRow.business_id,
+      name: locationRow.name,
+      address: locationRow.address,
+      latitude: Number(locationRow.latitude),
+      longitude: Number(locationRow.longitude),
+      phone: locationRow.phone,
+      operatingHours: locationRow.operating_hours,
+      capacity: Number(locationRow.capacity),
+      commissionMinor: Number(locationRow.commission_minor),
+      status: locationRow.status,
+      verificationStatus: locationRow.verification_status,
+      createdAt: locationRow.created_at,
+      updatedAt: locationRow.updated_at
+    }});
   }catch(e){await client.query("ROLLBACK");throw e}finally{client.release();}
 });
 
