@@ -110,7 +110,7 @@ export default function App() {
   const [widthCm, setWidthCm] = React.useState("");
   const [heightCm, setHeightCm] = React.useState("");
   const [isPerishable, setIsPerishable] = React.useState(false);
-  const [paymentMode, setPaymentMode] = React.useState<"SENDER_ESCROW" | "RECEIVER_ON_DELIVERY">("SENDER_ESCROW");
+  const paymentMode = "SENDER_ESCROW" as const;
   const [receiverConfirmPin, setReceiverConfirmPin] = React.useState("");
   const [receiverRatingStars, setReceiverRatingStars] = React.useState(0);
   const [receiverRatingComment, setReceiverRatingComment] = React.useState("");
