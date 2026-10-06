@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS escrow_ledgers (
   pin_confirmed_at TIMESTAMPTZ,
   dispute_window_until TIMESTAMPTZ,
   released_at TIMESTAMPTZ,
+  stakeholder_release_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -131,3 +132,11 @@ CREATE TABLE IF NOT EXISTS escrow_payment_attempts (
 CREATE INDEX IF NOT EXISTS idx_wallet_transactions_wallet_time ON wallet_transactions(wallet_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payout_requests_user_time ON payout_requests(user_id, requested_at DESC);
 CREATE INDEX IF NOT EXISTS idx_float_transactions_time ON float_transactions(created_at DESC);
+
+-- Retire the legacy cash collection mode from both new and existing records.
+ALTER TABLE deliveries DROP CONSTRAINT IF EXISTS deliveries_payment_mode_check;
+ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_collection_mode_check;
+UPDATE deliveries SET payment_mode='SENDER_ESCROW' WHERE payment_mode='RECEIVER_ON_DELIVERY';
+UPDATE payments SET collection_mode='SENDER_ESCROW', escrow_status='PENDING' WHERE collection_mode='RECEIVER_ON_DELIVERY';
+ALTER TABLE deliveries ADD CONSTRAINT deliveries_payment_mode_check CHECK (payment_mode='SENDER_ESCROW');
+ALTER TABLE payments ADD CONSTRAINT payments_collection_mode_check CHECK (collection_mode='SENDER_ESCROW');
