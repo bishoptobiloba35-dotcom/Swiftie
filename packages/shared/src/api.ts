@@ -484,6 +484,13 @@ export class SwiftDropApi {
     return response.json();
   }
 
+  async customerOrderHistory(status: "ALL" | "DELIVERED" | "IN_TRANSIT" | "CANCELLED" = "ALL"): Promise<{ deliveries: Array<{ id: string; trackingCode: string; status: string; receiverName: string; dropoffAddress: string; quoteTotalMinor: number; quoteCurrency: string; createdAt: string; updatedAt: string; latestLocation?: { latitude: number; longitude: number; recordedAt: string } | null }> }> {
+    const response = await fetch(this.baseUrl + "/api/customer/deliveries?status=" + encodeURIComponent(status), { headers: this.headers() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to load order history");
+    return data;
+  }
+
   async paymentStatus(deliveryId: string): Promise<{ payment: { status: string; escrowStatus?: string; amountMinor: number; currency: string; providerReference?: string | null } }> {
     const response = await fetch(this.baseUrl + `/api/deliveries/${deliveryId}/payment/status`, {
       headers: this.headers()
