@@ -552,6 +552,13 @@ export default function App() {
       if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
         throw new Error("Enter valid destination coordinates.");
       }
+      for (const [index, stop] of errandStops.entries()) {
+        const stopLat = Number(stop.latitude), stopLng = Number(stop.longitude);
+        if (!stop.label.trim() || !stop.address.trim() || !Number.isFinite(stopLat) || !Number.isFinite(stopLng) || stopLat < -90 || stopLat > 90 || stopLng < -180 || stopLng > 180) {
+          throw new Error("Complete the label, address and valid GPS coordinates for every errand stop.");
+        }
+        if (index >= 10) throw new Error("You can add up to 10 errand stops.");
+      }
       setErrandBusy(true);
       const result = await api.createErrand({
         errandType: d.errandType,
@@ -1120,6 +1127,7 @@ export default function App() {
         <View style={styles.row}><Pressable style={styles.primary} onPress={() => void api.decideErrandReplacement(e.id,r.id,"APPROVE").then(() => refreshErrand(e.id))}><Text style={styles.primaryText}>Approve</Text></Pressable><Pressable style={styles.dangerButton} onPress={() => void api.decideErrandReplacement(e.id,r.id,"REFUND").then(() => refreshErrand(e.id))}><Text style={styles.primaryText}>Refund</Text></Pressable></View>
       </View>))}</View>}
       <View style={styles.card}><Text style={styles.homeHeading}>Execution timeline</Text>{(errandDetail.events ?? []).map((event: any) => <View key={event.id} style={styles.notification}><Text style={styles.notificationTitle}>{String(event.eventType ?? "").replaceAll("_"," ")}</Text><Text style={styles.muted}>{new Date(event.createdAt).toLocaleString()}</Text></View>)}</View>
+      {Array.isArray(errandDetail.stops) && errandDetail.stops.length > 0 && <View style={styles.card}><Text style={styles.homeHeading}>Errand route</Text>{errandDetail.stops.map((stop:any)=><View key={stop.id} style={styles.notification}><Text style={styles.notificationTitle}>Stop {stop.order}: {stop.label}</Text><Text>{stop.address}</Text><Text style={styles.muted}>{String(stop.stopType).replaceAll("_"," ")} · {String(stop.status).replaceAll("_"," ")}</Text>{stop.instructions ? <Text style={styles.muted}>{stop.instructions}</Text> : null}</View>)}</View>}
       {errandDetail.payment && <View style={styles.card}><Text style={styles.homeHeading}>Payment</Text><Text>Status: {String(errandDetail.payment.status ?? "").replaceAll("_"," ")}</Text><Text>Authorization: {String(errandDetail.payment.payment_status ?? "").replaceAll("_"," ")}</Text>{errandDetail.payment.refund_status && <Text>Refund: {String(errandDetail.payment.refund_status).replaceAll("_"," ")}</Text>}</View>}
       <Pressable style={styles.secondary} disabled={errandDetailBusy} onPress={() => void refreshErrand(e.id)}><Text style={styles.secondaryText}>{errandDetailBusy ? "Refreshing…" : "Refresh status"}</Text></Pressable>
     </ScrollView></SafeAreaView>;
