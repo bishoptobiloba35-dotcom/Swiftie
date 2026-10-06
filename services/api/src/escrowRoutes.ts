@@ -3,7 +3,7 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { pool, databaseEnabled } from "./database/db.js";
 import { verifyReceiverPin } from "./database/deliveryRepository.js";
-import { requireAuth } from "./authMiddleware.js";
+import { requireAuth() } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
 
 const router = Router();
@@ -31,7 +31,7 @@ async function ensureWallet(userId: string, type: string) {
   return result.rows[0];
 }
 
-router.post("/escrow/create", requireAuth, async (req, res) => {
+router.post("/escrow/create", requireAuth(), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({error:"Database unavailable"});
   const parsed = z.object({ orderId:z.string().uuid() }).safeParse(req.body);
   if(!parsed.success) return res.status(400).json({error:"Invalid escrow payload"});
@@ -70,7 +70,7 @@ router.post("/escrow/create", requireAuth, async (req, res) => {
   finally{client.release();}
 });
 
-router.post("/escrow/:orderId/pay", requireAuth, async (req,res)=>{
+router.post("/escrow/:orderId/pay", requireAuth(), async (req,res)=>{
   if(!databaseEnabled()) return res.status(503).json({error:"Database unavailable"});
   const orderId=String(req.params.orderId);
   const parsed=z.object({method:z.enum(["PAYSTACK_CARD","BANK_TRANSFER","USSD","SMS_LINK"]),providerReference:z.string().max(200).optional(),idempotencyKey:z.string().min(8).max(120)}).safeParse(req.body);
@@ -112,7 +112,7 @@ router.post("/escrow/:orderId/pay", requireAuth, async (req,res)=>{
   finally{client.release();}
 });
 
-router.post("/escrow/:orderId/pin", requireAuth, async (req,res)=>{
+router.post("/escrow/:orderId/pin", requireAuth(), async (req,res)=>{
   if(!databaseEnabled())return res.status(503).json({error:"Database unavailable"});
   const parsed=z.object({pin:z.string().regex(/^\d{4}$/)}).safeParse(req.body);
   if(!parsed.success)return res.status(400).json({error:"PIN must be exactly 4 digits"});
@@ -176,7 +176,7 @@ router.post("/escrow/:orderId/pin", requireAuth, async (req,res)=>{
   finally{client.release();}
 });
 
-router.post("/virtual-account/create", requireAuth, async (req,res)=>{
+router.post("/virtual-account/create", requireAuth(), async (req,res)=>{
   if(!databaseEnabled())return res.status(503).json({error:"Database unavailable"});
   const parsed=z.object({orderId:z.string().uuid()}).safeParse(req.body);
   if(!parsed.success)return res.status(400).json({error:"Valid orderId is required"});
@@ -225,14 +225,14 @@ router.post("/virtual-account/create", requireAuth, async (req,res)=>{
   return res.status(201).json({virtualAccount:saved,displayMessage:`Transfer ₦${(Number(order.escrow_total_paid_minor)/100).toLocaleString()} to ${data.account_number} (${data.bank?.name ?? "Paystack bank"})`});
 });
 
-router.get("/wallet/balance", requireAuth, async (req,res)=>{
+router.get("/wallet/balance", requireAuth(), async (req,res)=>{
   if(!databaseEnabled())return res.status(503).json({error:"Database unavailable"});
   const userId=authUser(req);
   const row=(await pool!.query("SELECT * FROM stakeholder_wallets WHERE user_id=$1",[userId])).rows[0];
   return res.json({wallet:row ?? {balance_minor:0,pending_minor:0,currency:"NGN"}});
 });
 
-router.post("/wallet/withdraw", requireAuth, async (req,res)=>{
+router.post("/wallet/withdraw", requireAuth(), async (req,res)=>{
   if(!databaseEnabled())return res.status(503).json({error:"Database unavailable"});
   const parsed=z.object({amountMinor:z.number().int().min(MIN_WITHDRAWAL_MINOR),idempotencyKey:z.string().min(8).max(120)}).safeParse(req.body);
   if(!parsed.success)return res.status(400).json({error:"Minimum withdrawal is ₦1,000 and a valid idempotency key is required"});
@@ -275,7 +275,7 @@ router.post("/wallet/withdraw", requireAuth, async (req,res)=>{
   finally{client.release();}
 });
 
-router.get("/float/balance", requireAuth, async (req,res)=>{
+router.get("/float/balance", requireAuth(), async (req,res)=>{
   if(!databaseEnabled())return res.status(503).json({error:"Database unavailable"});
   const userId=authUser(req);
   const role=(await pool!.query("SELECT role FROM users WHERE id=$1",[userId])).rows[0]?.role;
