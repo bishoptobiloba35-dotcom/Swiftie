@@ -83,7 +83,8 @@ if (db) {
       dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
       weightKg: 1, dimensionsCm: { length: 10, width: 10, height: 10 }, isPerishable: false, paymentMode: "SENDER_ESCROW"
     });
-    assert.ok(await transitionDelivery(delivery.id, "CREATED", "DRIVER_ASSIGNED", driver.id));
+    assert.ok(await transitionDelivery(delivery.id, "CREATED", "PAYMENT_AUTHORIZED"));
+    assert.ok(await transitionDelivery(delivery.id, "PAYMENT_AUTHORIZED", "DRIVER_ASSIGNED", driver.id));
     assert.ok(await transitionDelivery(delivery.id, "DRIVER_ASSIGNED", "DRIVER_AT_PICKUP", driver.id));
     assert.ok(await transitionDelivery(delivery.id, "DRIVER_AT_PICKUP", "PICKED_UP", driver.id));
     assert.ok(await transitionDelivery(delivery.id, "PICKED_UP", "IN_TRANSIT", driver.id));
