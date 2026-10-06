@@ -65,7 +65,16 @@ router.post("/register", rateLimitAuth(5), async (req, res) => {
       await pool.query("INSERT INTO agent_profiles (user_id) VALUES ($1)", [user.id]);
     }
     const accessToken = signAccessToken({ userId: user.id, role: user.role });
-    res.status(201).json({ accessToken, user });
+    res.status(201).json({
+      accessToken,
+      user: {
+        id: user.id,
+        role: user.role,
+        fullName: user.full_name,
+        phone: user.phone,
+        email: user.email
+      }
+    });
   } catch (error: any) {
     if (error?.code === "23505") return res.status(409).json({ error: "Phone or email is already registered" });
     res.status(500).json({ error: "Unable to create account" });
