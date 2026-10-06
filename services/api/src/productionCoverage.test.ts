@@ -80,7 +80,7 @@ if (db) {
       declaredValueMinor: 100000,
       pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.07, longitude: 7.40 } },
       dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
-      weightKg: 1, dimensionsCm: { length: 10, width: 10, height: 10 }, isPerishable: false
+      weightKg: 1, dimensionsCm: { length: 10, width: 10, height: 10 }, isPerishable: false, paymentMode: "RECEIVER_ON_DELIVERY"
     });
     assert.ok(await transitionDelivery(delivery.id, "CREATED", "DRIVER_ASSIGNED", driver.id));
     assert.ok(await transitionDelivery(delivery.id, "DRIVER_ASSIGNED", "DRIVER_AT_PICKUP", driver.id));
