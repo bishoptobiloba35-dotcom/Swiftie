@@ -3,7 +3,7 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { pool, databaseEnabled } from "./database/db.js";
 import { verifyReceiverPin } from "./database/deliveryRepository.js";
-import { requireAuth() } from "./authMiddleware.js";
+import { requireAuth } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
 
 const router = Router();
