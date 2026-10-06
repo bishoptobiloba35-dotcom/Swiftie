@@ -2482,7 +2482,7 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Receiver confirmation requires the production database" });
   const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
   const receiverPin = String(req.body?.receiverPin ?? "").trim();
-  if (!receiverPhone || !/^\d{6}$/.test(receiverPin)) return res.status(400).json({ error: "Receiver phone and six-digit PIN are required" });
+  if (!receiverPhone || !/^\d{4}$/.test(receiverPin)) return res.status(400).json({ error: "Receiver phone and four-digit PIN are required" });
 
   // Buy & Deliver has its own escrow record; do not route it through the normal delivery payment table.
   const buyOrderResult = await pool!.query(
