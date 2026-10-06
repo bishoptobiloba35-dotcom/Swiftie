@@ -708,7 +708,7 @@ export default function App() {
 
   async function createDelivery() {
     try {
-      if (!pickup.trim() || !dropoff.trim() || !receiver.trim() || !phone.trim() || !/^\d{6}$/.test(receiverPin)) throw new Error("Complete the delivery details and enter a 6-digit receiver PIN.");
+      if (!pickup.trim() || !dropoff.trim() || !receiver.trim() || !phone.trim() || !/^\d{6}$/.test(receiverPin)) throw new Error("Complete the delivery details and enter a 4-digit receiver PIN.");
       if (paymentMode === "SENDER_ESCROW" && !email.trim()) throw new Error("Enter your payment email for sender-paid escrow.");
       const coords = coordinates();
       if (![weightKg, lengthCm, widthCm, heightCm].every(value => Number(value) > 0)) throw new Error("Enter parcel weight and all three dimensions.");
@@ -825,7 +825,7 @@ export default function App() {
       <Text style={styles.subtitle}>Confirm receipt with your PIN. If the sender selected receiver payment, you will pay the order amount immediately after confirmation.</Text>
       <TextInput style={styles.input} placeholder="Tracking code" value={trackingCode} onChangeText={setTrackingCode} autoCapitalize="characters" />
       <TextInput style={styles.input} placeholder="Receiver phone number" value={trackingPhone} onChangeText={setTrackingPhone} keyboardType="phone-pad" />
-      <TextInput style={styles.input} placeholder="Six-digit receiver PIN" value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} keyboardType="number-pad" secureTextEntry maxLength={6} />
+      <TextInput style={styles.input} placeholder="Six-digit receiver PIN" value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} keyboardType="number-pad" secureTextEntry maxLength={4} />
       <TextInput style={styles.input} placeholder="Payment email (required if receiver pays)" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
       <Pressable style={styles.primary} onPress={() => void (async () => {
         try {
@@ -983,7 +983,7 @@ export default function App() {
               <Text style={styles.muted}>Your payment is authorized. Add the receiver and drop-off details to create the real SwiftDrop delivery and enable tracking.</Text>
               <TextInput style={styles.input} placeholder="Receiver full name" value={marketplaceReceiverName} onChangeText={setMarketplaceReceiverName} />
               <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={marketplaceReceiverPhone} onChangeText={setMarketplaceReceiverPhone} />
-              <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
+              <TextInput style={styles.input} placeholder="4-digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
               <TextInput style={styles.input} placeholder="Drop-off address" value={marketplaceDropoffAddress} onChangeText={setMarketplaceDropoffAddress} />
               <View style={styles.row}>
                 <TextInput style={[styles.input, styles.half]} placeholder="Latitude" keyboardType="decimal-pad" value={marketplaceDropoffLat} onChangeText={setMarketplaceDropoffLat} />
@@ -1057,7 +1057,7 @@ export default function App() {
           <Text style={styles.muted}>These details create the real SwiftDrop delivery after Paystack confirms payment.</Text>
           <TextInput style={styles.input} placeholder="Receiver full name" value={marketplaceReceiverName} onChangeText={setMarketplaceReceiverName} />
           <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={marketplaceReceiverPhone} onChangeText={setMarketplaceReceiverPhone} />
-          <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
+          <TextInput style={styles.input} placeholder="4-digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
           <TextInput style={styles.input} placeholder="Drop-off address" value={marketplaceDropoffAddress} onChangeText={setMarketplaceDropoffAddress} />
           <View style={styles.row}><TextInput style={styles.half} placeholder="Drop-off latitude" keyboardType="decimal-pad" value={marketplaceDropoffLat} onChangeText={setMarketplaceDropoffLat} /><TextInput style={styles.half} placeholder="Drop-off longitude" keyboardType="decimal-pad" value={marketplaceDropoffLng} onChangeText={setMarketplaceDropoffLng} /></View>
         </View>}
@@ -1066,7 +1066,7 @@ export default function App() {
           <Text style={styles.muted}>These details are used to create the real SwiftDrop delivery after Paystack confirms payment.</Text>
           <TextInput style={styles.input} placeholder="Receiver full name" value={marketplaceReceiverName} onChangeText={setMarketplaceReceiverName} />
           <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={marketplaceReceiverPhone} onChangeText={setMarketplaceReceiverPhone} />
-          <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
+          <TextInput style={styles.input} placeholder="4-digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
           <TextInput style={styles.input} placeholder="Drop-off address" value={marketplaceDropoffAddress} onChangeText={setMarketplaceDropoffAddress} />
           <View style={styles.row}><TextInput style={styles.half} placeholder="Drop-off latitude" keyboardType="decimal-pad" value={marketplaceDropoffLat} onChangeText={setMarketplaceDropoffLat} /><TextInput style={styles.half} placeholder="Drop-off longitude" keyboardType="decimal-pad" value={marketplaceDropoffLng} onChangeText={setMarketplaceDropoffLng} /></View>
         </View>}
@@ -1157,7 +1157,7 @@ export default function App() {
         <Text style={styles.homeHeading}>Receiver & destination</Text>
         <TextInput style={styles.input} placeholder="Receiver full name" value={d.receiverName} onChangeText={v => updateErrand({ receiverName: v })} />
         <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={d.receiverPhone} onChangeText={v => updateErrand({ receiverPhone: v })} />
-        <TextInput style={styles.input} placeholder="4-6 digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={d.receiverPin} onChangeText={v => updateErrand({ receiverPin: v })} />
+        <TextInput style={styles.input} placeholder="4-6 digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={d.receiverPin} onChangeText={v => updateErrand({ receiverPin: v })} />
         <TextInput style={styles.input} placeholder="Destination address" value={d.destinationAddress} onChangeText={v => updateErrand({ destinationAddress: v })} />
         <View style={styles.row}><TextInput style={styles.half} placeholder="Latitude" keyboardType="decimal-pad" value={d.destinationLat} onChangeText={v => updateErrand({ destinationLat: v })} /><TextInput style={styles.half} placeholder="Longitude" keyboardType="decimal-pad" value={d.destinationLng} onChangeText={v => updateErrand({ destinationLng: v })} /></View>
         <Pressable style={styles.primary} disabled={errandBusy} onPress={() => void createErrand()}><Text style={styles.primaryText}>{errandBusy ? "Creating errand…" : "Place errand request"}</Text></Pressable>
@@ -1213,7 +1213,7 @@ export default function App() {
     <Text style={styles.hint}>Clear instructions help the courier find the right entrance and complete the handoff without relying on the address alone.</Text>
     <TextInput style={styles.input} placeholder="Receiver name" value={receiver} onChangeText={setReceiver} />
     <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
-    <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={receiverPin} onChangeText={setReceiverPin} />
+    <TextInput style={styles.input} placeholder="4-digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={receiverPin} onChangeText={setReceiverPin} />
     <Text style={styles.hint}>Give this PIN to the receiver. The receiver must use it to confirm receipt before courier payout is released.</Text>
     <TextInput style={styles.input} placeholder="Actual goods value (₦)" keyboardType="decimal-pad" value={declaredValue} onChangeText={setDeclaredValue} />
     <Text style={styles.hint}>Required for pricing, vehicle/risk planning and claims. Declare the genuine value of the goods. A damage claim is limited to the verified actual loss and cannot be increased by an inflated declaration.</Text>
@@ -1304,7 +1304,7 @@ export default function App() {
 {delivery.status === "ARRIVED" && <View style={styles.ratingBox}>
         <Text style={styles.photoTitle}>Receiver confirmation</Text>
         <Text style={styles.muted}>{delivery.paymentMode === "RECEIVER_ON_DELIVERY" ? "Only confirm after you have physically received the parcel. Your confirmation starts the receiver payment step." : "Only confirm after you have physically received the parcel. This releases the held courier payment."}</Text>
-        <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} />
+        <TextInput style={styles.input} placeholder="4-digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} />
         <Pressable style={styles.primary} onPress={() => void confirmReceipt()}><Text style={styles.primaryText}>I received the parcel & complete delivery</Text></Pressable>
       </View>}
       {delivery.status === "DELIVERED" && <Text style={styles.done}>✓ Delivered and PIN verified</Text>}
