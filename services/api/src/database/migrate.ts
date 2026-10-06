@@ -59,6 +59,7 @@ const migrations = [
   { id: "060_errand_multi_stop", file: "060_errand_multi_stop.sql" },
   { id: "061_notification_dead_letter", file: "061_notification_dead_letter.sql" },
   { id: "062_legal_acceptance", file: "062_legal_acceptance.sql" },
+  { id: "063_swiftdrop_business_trust_rules", file: "063_swiftdrop_business_trust_rules.sql" },
 ];
 
 export async function runMigrations(): Promise<void> {
