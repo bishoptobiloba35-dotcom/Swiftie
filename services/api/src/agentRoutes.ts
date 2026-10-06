@@ -84,7 +84,7 @@ router.post("/agents/:id/status", requireAuth("ADMIN"), async (req, res) => {
   const parsed = z.object({ status: z.enum(["APPROVED", "SUSPENDED", "PENDING"]) }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const result = await pool.query(
-    "UPDATE agent_profiles SET status=$2, updated_at=now() WHERE id=$1 RETURNING *",
+    "UPDATE agent_profiles SET status=$2, updated_at=now() WHERE id=$1 RETURNING id, user_id, status, created_at, updated_at",
     [orderId(req), parsed.data.status]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Agent profile not found" });
