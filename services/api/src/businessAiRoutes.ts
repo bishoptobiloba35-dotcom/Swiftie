@@ -1510,8 +1510,10 @@ router.get("/drop-off/parcels/:id", requireAuth("CUSTOMER","AGENT","DRIVER","ADM
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const parcelId=String(req.params.id);
   const row=(await pool.query(
-    `SELECT p.*, d.sender_id, d.driver_id, d.tracking_code, d.status AS delivery_status,
-            dl.name AS location_name, dl.address AS location_address, ba.display_name AS business_name
+    `SELECT p.id,p.delivery_id,p.location_id,p.endpoint,p.status,p.received_at,p.courier_driver_id,
+            p.courier_collected_at,p.completed_at,p.created_at,p.updated_at,
+            d.sender_id,d.driver_id,d.tracking_code,d.status AS delivery_status,
+            dl.name AS location_name,dl.address AS location_address,ba.display_name AS business_name
        FROM drop_off_parcels p
        JOIN deliveries d ON d.id=p.delivery_id
        JOIN drop_off_locations dl ON dl.id=p.location_id
@@ -1525,7 +1527,7 @@ router.get("/drop-off/parcels/:id", requireAuth("CUSTOMER","AGENT","DRIVER","ADM
   if(user?.role==="AGENT")authorized=await managesDropOff(identity(req),row.location_id);
   if(!authorized)return res.status(403).json({error:"Not authorized"});
   const events=await pool.query("SELECT id,event_type,actor_user_id,metadata,created_at FROM drop_off_events WHERE parcel_id=$1 ORDER BY created_at ASC",[parcelId]);
-  return res.json({parcel:row,events:events.rows});
+  return res.json({parcel:{...publicDropOffParcel(row),trackingCode:row.tracking_code,deliveryStatus:row.delivery_status,locationName:row.location_name,locationAddress:row.location_address,businessName:row.business_name},events:events.rows.map((event)=>({id:event.id,eventType:event.event_type,createdAt:event.created_at}))});
 });
 
 router.get("/drop-off/parcels/:id/photo", requireAuth("CUSTOMER","AGENT","DRIVER","ADMIN"), async(req,res)=>{
