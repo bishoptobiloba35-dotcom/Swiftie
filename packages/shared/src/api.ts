@@ -29,7 +29,7 @@ export type ApiDelivery = {
     totalMinor: number;
   };
   status: string;
-  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
+  paymentMode?: "SENDER_ESCROW";
   receiverConfirmedAt?: string;
   exceptionStatus?: "NONE" | "FAILED_ATTEMPT" | "RESCHEDULED" | "RETURN_REQUESTED" | "RETURN_IN_TRANSIT" | "RETURNED";
   nextDeliveryAt?: string | null;
@@ -56,7 +56,7 @@ export type ApiDelivery = {
 
 export type CreateDeliveryInput = {
   senderId?: string;
-  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
+  paymentMode?: "SENDER_ESCROW";
   receiverPin: string;
   receiverName: string;
   receiverPhone: string;
