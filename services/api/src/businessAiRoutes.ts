@@ -568,7 +568,7 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
         userId, plan, capability: "ACTION", action, allowed: true,
         metadata: { dispatchPlanId: planResult.rows[0].id, skippedBuyOrderIds, skippedDeliveryIds }
       });
-      return res.status(201).json({ dispatchPlan: planResult.rows[0], skippedBuyOrderIds, skippedDeliveryIds });
+      return res.status(201).json({ dispatchPlan: publicDispatchPlan(planResult.rows[0]), skippedBuyOrderIds, skippedDeliveryIds });
     } catch (error) {
       try { await client.query("ROLLBACK"); } catch {}
       throw error;
@@ -1222,7 +1222,7 @@ router.post("/drop-off/applications", requireAuth("CUSTOMER","AGENT","ADMIN"), a
     }
     const location=await client.query("INSERT INTO drop_off_locations(business_id,name,address,latitude,longitude,phone,operating_hours,capacity,commission_minor) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) RETURNING *",[businessId,d.name,d.address,d.latitude,d.longitude,d.phone,JSON.stringify(d.operatingHours),d.capacity,50000]);
     await client.query("INSERT INTO drop_off_application_audit(location_id,actor_user_id,new_status,note) VALUES($1,$2,'PENDING','Application submitted')",[location.rows[0].id,userId]);
-    await client.query("COMMIT"); res.status(201).json({location:location.rows[0]});
+    await client.query("COMMIT"); res.status(201).json({location:{id:location.rows[0].id,businessId:location.rows[0].business_id,name:location.rows[0].name,address:location.rows[0].address,latitude:Number(location.rows[0].latitude),longitude:Number(location.rows[0].longitude),phone:location.rows[0].phone,operatingHours:location.rows[0].operating_hours,capacity:Number(location.rows[0].capacity),commissionMinor:Number(location.rows[0].commission_minor),status:location.rows[0].status,verificationStatus:location.rows[0].verification_status,createdAt:location.rows[0].created_at,updatedAt:location.rows[0].updated_at}});
   } catch(e){await client.query("ROLLBACK");res.status(400).json({error:e instanceof Error?e.message:"Unable to submit application"});} finally{client.release();}
 });
 router.get("/drop-off/locations", requireAuth("CUSTOMER","AGENT","ADMIN"), async (req,res) => {
@@ -1252,7 +1252,7 @@ router.post("/drop-off/locations/:id/documents", requireAuth("CUSTOMER","AGENT",
   try{
     await putPrivateObject(key,bytes,m[1]);
     const saved=await pool.query("INSERT INTO drop_off_location_documents(location_id,document_type,storage_key,status) VALUES($1,$2,$3,'PENDING') RETURNING id,document_type,status,created_at",[locationId,parsed.data.documentType,key]);
-    res.status(201).json({document:saved.rows[0]});
+    res.status(201).json({document:{id:saved.rows[0].id,documentType:saved.rows[0].document_type,status:saved.rows[0].status,createdAt:saved.rows[0].created_at}});
   }catch(e){res.status(503).json({error:e instanceof Error?e.message:"Unable to store document"});}
 });
 
@@ -1312,7 +1312,7 @@ router.post("/drop-off/settlement-account/:id", requireAuth("CUSTOMER","AGENT","
     ON CONFLICT(location_id) DO UPDATE SET recipient_code=EXCLUDED.recipient_code,bank_code=EXCLUDED.bank_code,bank_name=EXCLUDED.bank_name,account_name=EXCLUDED.account_name,account_last4=EXCLUDED.account_last4,active=true,verified_at=now(),updated_at=now()
     RETURNING id,bank_code,bank_name,account_name,account_last4,currency,active,verified_at,created_at,updated_at`,
     [id,recipient.data.recipient_code,parsed.data.bankCode,recipient.data.details?.bank_name??null,resolved.data.account_name,parsed.data.accountNumber.slice(-4)]);
-  res.status(201).json({account:saved.rows[0]});
+  res.status(201).json({account:{id:saved.rows[0].id,bankCode:saved.rows[0].bank_code,bankName:saved.rows[0].bank_name,accountName:saved.rows[0].account_name,accountLast4:saved.rows[0].account_last4,currency:saved.rows[0].currency,active:saved.rows[0].active,verifiedAt:saved.rows[0].verified_at,createdAt:saved.rows[0].created_at,updatedAt:saved.rows[0].updated_at}});
 });
 router.post("/admin/buy-order-settlements/:id/pay", requireAuth("ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
