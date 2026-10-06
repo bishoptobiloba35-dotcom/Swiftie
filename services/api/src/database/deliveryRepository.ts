@@ -362,6 +362,9 @@ export async function createPersistentDelivery(input: {
   paymentMode?: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
   quote?: StoredDelivery["quote"];
 }): Promise<StoredDelivery> {
+  if (input.paymentMode && input.paymentMode !== "SENDER_ESCROW") {
+    throw new Error("Cash-on-delivery is retired. Every order must use in-app escrow.");
+  }
   if (!pool) throw new Error("DATABASE_URL is not configured");
   const id = randomUUID();
   const code = "SD-" + randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase();
