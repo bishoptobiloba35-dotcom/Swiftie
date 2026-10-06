@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { pool, databaseEnabled } from "./database/db.js";
+import { verifyReceiverPin } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
 
@@ -110,8 +111,7 @@ router.post("/escrow/:orderId/pin", requireAuth, async (req,res)=>{
     if(userId!==order.customer_id && userId!==order.courier_id)return res.status(403).json({error:"PIN confirmation not authorized"});
     if(order.escrow_payment_state!=="arrived")return res.status(409).json({error:"Order is not awaiting PIN confirmation"});
     if(!order.receiver_pin_hash)return res.status(409).json({error:"Receiver PIN is not configured"});
-    const bcrypt = await import("bcryptjs");
-    const valid=await bcrypt.compare(parsed.data.pin,order.receiver_pin_hash);
+    const valid=await verifyReceiverPin(order.id, parsed.data.pin);
     if(!valid){await client.query("ROLLBACK");return res.status(401).json({error:"Invalid PIN"});}
     const disputeUntil=new Date(Date.now()+ESCROW_DISPUTE_HOURS*3600000);
     await client.query(
