@@ -104,14 +104,21 @@ test("delivery transition routes enforce the production state machine at the HTT
 
     await pool.query(
       `UPDATE deliveries
-          SET driver_id=$2, status='DRIVER_ASSIGNED',
+          SET status='PAYMENT_AUTHORIZED',
               proof_requirements='{"pickup":["PHOTO"],"dropoff":["PIN"]}'::jsonb
         WHERE id=$1`,
-      [delivery.id, driver.id]
+      [delivery.id]
     );
 
     const driverToken = auth(driverUserId, "DRIVER");
     const otherDriverToken = auth(otherDriverUserId, "DRIVER");
+
+    const unverifiedDriverAccept = await request(`/api/deliveries/${delivery.id}/accept`, otherDriverToken, {});
+    assert.equal(unverifiedDriverAccept.status, 403);
+
+    const accepted = await request(`/api/deliveries/${delivery.id}/accept`, driverToken, {});
+    assert.equal(accepted.status, 200);
+    assert.equal((await accepted.json()).status, "DRIVER_ASSIGNED");
 
     const illegalFromAssigned = await request(`/api/deliveries/${delivery.id}/start-trip`, driverToken, {});
     assert.equal(illegalFromAssigned.status, 409);
