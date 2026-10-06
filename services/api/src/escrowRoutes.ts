@@ -43,9 +43,9 @@ router.post("/escrow/create", requireAuth, async (req, res) => {
       "SELECT id,customer_id,payment_on_delivery,quote_total_minor,quote_base_fare_minor,quote_service_fee_minor,quote_protection_reserve_minor FROM deliveries WHERE id=$1 FOR UPDATE",
       [parsed.data.orderId]
     )).rows[0];
-    if(!order) return res.status(404).json({error:"Order not found"});
-    if(order.customer_id!==userId) return res.status(403).json({error:"Order access denied"});
-    if(order.payment_on_delivery===true) return res.status(409).json({error:"Cash-on-delivery is disabled"});
+    if(!order){ await client.query("ROLLBACK"); return res.status(404).json({error:"Order not found"}); }
+    if(order.customer_id!==userId){ await client.query("ROLLBACK"); return res.status(403).json({error:"Order access denied"}); }
+    if(order.payment_on_delivery===true){ await client.query("ROLLBACK"); return res.status(409).json({error:"Cash-on-delivery is disabled"}); }
     const existing=(await client.query("SELECT * FROM escrow_ledgers WHERE order_id=$1 FOR UPDATE",[order.id])).rows[0];
     if(existing){ await client.query("COMMIT"); return res.status(200).json({escrow:existing}); }
     const totalPaidMinor=Number(order.quote_total_minor ?? 0);
@@ -56,7 +56,7 @@ router.post("/escrow/create", requireAuth, async (req, res) => {
     const courierShareMinor=Math.floor(baseFareMinor*COURIER_SHARE_BPS/10000);
     const merchantShareMinor=0;
     const swiftdropMarginMinor=totalPaidMinor-courierShareMinor-serviceChargeMinor-protectionReserveMinor-merchantShareMinor;
-    if(swiftdropMarginMinor<0) return res.status(409).json({error:"Order pricing cannot produce a valid escrow split"});
+    if(swiftdropMarginMinor<0){ await client.query("ROLLBACK"); return res.status(409).json({error:"Order pricing cannot produce a valid escrow split"}); }
     const row=(await client.query(
       `INSERT INTO escrow_ledgers(order_id,total_paid_minor,courier_share_minor,service_charge_minor,protection_reserve_minor,swiftdrop_margin_minor,merchant_share_minor)
        VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
@@ -80,8 +80,8 @@ router.post("/escrow/:orderId/pay", requireAuth, async (req,res)=>{
   try{
     await client.query("BEGIN");
     const order=(await client.query("SELECT id,customer_id,escrow_total_paid_minor FROM deliveries WHERE id=$1 FOR UPDATE",[orderId])).rows[0];
-    if(!order)return res.status(404).json({error:"Order not found"});
-    if(order.customer_id!==userId)return res.status(403).json({error:"Order access denied"});
+    if(!order){await client.query("ROLLBACK");return res.status(404).json({error:"Order not found"});}
+    if(order.customer_id!==userId){await client.query("ROLLBACK");return res.status(403).json({error:"Order access denied"});}
     const existing=(await client.query("SELECT * FROM escrow_payment_attempts WHERE idempotency_key=$1",[parsed.data.idempotencyKey])).rows[0];
     if(existing){await client.query("COMMIT");return res.status(200).json({payment:existing});}
     const payment=(await client.query(
