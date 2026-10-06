@@ -32,6 +32,7 @@ import { reconcileCancelledMarketplacePayments } from "./marketplacePaymentWorke
 import { reconcilePendingBuyOrderPayments } from "./buyOrderPaymentWorker.js";
 import { recordHttpMetric, renderPrometheusMetrics } from "./metrics.js";
 import { reportExternalError } from "./errorTracking.js";
+import { processPhase2EscrowReleases, reconcilePhase2Float } from "./phase2EscrowWorker.js";
 import escrowRoutes from "./escrowRoutes.js";
 
 const app = express();
@@ -2820,12 +2821,21 @@ async function startServer() {
     void reconcileProcessingDropOffCommissions().catch(() => {});
     void processSupportAiBatch().catch(() => {});
     void processRecurringDispatches().catch(() => {});
+    void processPhase2EscrowReleases().catch(() => {});
+    void reconcilePhase2Float().catch(() => {});
     const supportAiWorker = setInterval(() => {
       void processSupportAiBatch().catch(() => {});
     }, 5000);
     const notificationWorker = setInterval(() => {
       void processNotificationOutbox().catch(() => {});
     }, 5000);
+    const phase2EscrowWorker = setInterval(() => {
+      void processPhase2EscrowReleases().catch(() => {});
+    }, 60_000);
+    const phase2FloatReconciliationWorker = setInterval(() => {
+      const hour = new Date().getHours();
+      if (hour === 18) void reconcilePhase2Float().catch(() => {});
+    }, 60_000);
     const recurringDispatchWorker = setInterval(() => {
       void processRecurringDispatches().catch(() => {});
     }, 60_000);
@@ -2856,6 +2866,8 @@ async function startServer() {
     dropOffCommissionReconciliationWorker.unref();
     buyOrderSettlementReconciliationWorker.unref();
     recurringDispatchWorker.unref();
+    phase2EscrowWorker.unref();
+    phase2FloatReconciliationWorker.unref();
   }
   httpServer.listen(port, () => console.log(`SwiftDrop API listening on port ${port}`));
 }
