@@ -1606,6 +1606,31 @@ app.get("/api/admin/operations", requireAuth("ADMIN"), async (_req, res) => {
   } });
 });
 
+app.get("/api/customer/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const requested = typeof req.query.status === "string" ? req.query.status : "ALL";
+  const allowed = new Set(["ALL", "DELIVERED", "IN_TRANSIT", "CANCELLED"]);
+  if (!allowed.has(requested)) return res.status(400).json({ error: "Unsupported order history filter" });
+  const clauses = ["d.sender_id=$1"];
+  const params: unknown[] = [identity(req)];
+  if (requested === "DELIVERED") clauses.push("d.status='DELIVERED'");
+  if (requested === "CANCELLED") clauses.push("d.status='CANCELLED'");
+  if (requested === "IN_TRANSIT") clauses.push("d.status IN ('PAYMENT_AUTHORIZED','DRIVER_ASSIGNED','DRIVER_AT_PICKUP','PICKED_UP','IN_TRANSIT','ARRIVED')");
+  const result = await pool!.query(
+    `SELECT d.id,d.tracking_code,d.status,d.receiver_name,d.dropoff_address,d.quote_total_minor,d.quote_currency,d.created_at,d.updated_at,
+      (SELECT json_build_object('latitude',le.latitude,'longitude',le.longitude,'recordedAt',le.recorded_at)
+       FROM location_events le WHERE le.delivery_id=d.id ORDER BY le.recorded_at DESC LIMIT 1) AS latest_location
+     FROM deliveries d WHERE ${clauses.join(" AND ")} ORDER BY d.updated_at DESC LIMIT 100`,
+    params
+  );
+  res.json({ deliveries: result.rows.map(row => ({
+    id: row.id, trackingCode: row.tracking_code, status: row.status, receiverName: row.receiver_name,
+    dropoffAddress: row.dropoff_address, quoteTotalMinor: Number(row.quote_total_minor ?? 0),
+    quoteCurrency: row.quote_currency ?? "NGN", createdAt: row.created_at, updatedAt: row.updated_at,
+    latestLocation: row.latest_location
+  })) });
+});
+
 app.get("/api/admin/deliveries", requireAuth("ADMIN"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
   const status = typeof req.query.status === "string" ? req.query.status : null;
