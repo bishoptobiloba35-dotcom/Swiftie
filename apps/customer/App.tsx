@@ -117,6 +117,7 @@ export default function App() {
   const [receiverMode, setReceiverMode] = React.useState(false);
   const [email, setEmail] = React.useState("");
   const [quote, setQuote] = React.useState<Awaited<ReturnType<typeof api.quote>> | null>(null);
+  const [includeProtection, setIncludeProtection] = React.useState(true);
   const [delivery, setDelivery] = React.useState<ApiDelivery | null>(null);
   const [trackingCode, setTrackingCode] = React.useState("");
   const [trackingPhone, setTrackingPhone] = React.useState("");
@@ -698,7 +699,7 @@ export default function App() {
     try {
       if (![weightKg, lengthCm, widthCm, heightCm].every(value => Number(value) > 0)) throw new Error("Enter parcel weight and all three dimensions first.");
       const coords = coordinates();
-      setQuote(await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable, declaredValueMinor: Math.round(Number(declaredValue) * 100) }));
+      setQuote(await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable, declaredValueMinor: Math.round(Number(declaredValue) * 100), includeProtection }));
     } catch (error) {
       Alert.alert("Quote unavailable", error instanceof Error ? error.message : "Enter valid locations.");
     }
@@ -1223,7 +1224,7 @@ export default function App() {
       <Text>Weight: ₦{(quote.weightFareMinor / 100).toLocaleString()}</Text>
       <Text>Size/handling: ₦{(quote.sizeFareMinor / 100).toLocaleString()}</Text>
       {quote.perishableSurchargeMinor > 0 && <Text>Perishable/food surcharge: ₦{(quote.perishableSurchargeMinor / 100).toLocaleString()}</Text>}
-      <Text>Fuel reference: ₦{(quote.fuelReferenceMinor / 100).toLocaleString()} (2 litres)</Text><Text>Refundable protection reserve: ₦{(quote.protectionReserveMinor / 100).toLocaleString()}</Text><Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
+      <Text>Fuel reference: ₦{(quote.fuelReferenceMinor / 100).toLocaleString()} (2 litres)</Text><Pressable style={[styles.choice, includeProtection && styles.choiceActive]} onPress={() => setIncludeProtection(v => !v)} accessibilityRole="checkbox" accessibilityState={{ checked: includeProtection }}><Text style={styles.photoTitle}>{includeProtection ? "✓ " : ""}Refundable Protection Reserve · 10% of declared value</Text></Pressable><Text>Protection: ₦{(quote.protectionReserveMinor / 100).toLocaleString()}</Text><Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
       <Text style={styles.code}>Total: ₦{(quote.totalMinor / 100).toLocaleString()}</Text>    </View>}
     <Text style={styles.heading}>Who pays for this order?</Text>
     <View style={styles.row}>
