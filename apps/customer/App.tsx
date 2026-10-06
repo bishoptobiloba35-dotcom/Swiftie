@@ -36,6 +36,7 @@ export default function App() {
     destinationLng: ""
   });
   const [errandBusy, setErrandBusy] = React.useState(false);
+  const [errandStops, setErrandStops] = React.useState<Array<{ stopType: "TASK"|"PICKUP"|"PURCHASE"|"INSPECT"|"DROP_OFF"; label: string; address: string; latitude: string; longitude: string; instructions: string }>>([]);
   const [myErrands, setMyErrands] = React.useState<any[]>([]);
   const [selectedErrand, setSelectedErrand] = React.useState<any | null>(null);
   const [errandDetail, setErrandDetail] = React.useState<any | null>(null);
@@ -574,9 +575,11 @@ export default function App() {
         receiverPin: d.receiverPin,
         destinationAddress: d.destinationAddress.trim(),
         destinationLat: lat,
-        destinationLng: lng
+        destinationLng: lng,
+        stops: errandStops.map(stop => ({ stopType: stop.stopType, label: stop.label.trim(), address: stop.address.trim(), latitude: Number(stop.latitude), longitude: Number(stop.longitude), instructions: stop.instructions.trim() || undefined }))
       });
       setMyErrands(prev => [result.errand, ...prev]);
+      setErrandStops([]);
       try {
         const payment = await api.initializeErrandPayment(result.errand.id);
         if (payment.authorizationUrl) {
@@ -1152,6 +1155,17 @@ export default function App() {
         <TextInput style={styles.input} placeholder="Shop address (optional)" value={d.merchantAddress} onChangeText={v => updateErrand({ merchantAddress: v })} />
         <TextInput style={[styles.input, styles.multiline]} placeholder="Errand instructions" value={d.instructions} onChangeText={v => updateErrand({ instructions: v })} multiline maxLength={2000} />
         <TextInput style={styles.input} placeholder="Requested completion time (ISO 8601)" value={d.requestedCompletionAt} onChangeText={v => updateErrand({ requestedCompletionAt: v })} />
+        <View style={styles.card}>
+          <View style={styles.rowBetween}><View><Text style={styles.homeHeading}>Optional multi-stop errand</Text><Text style={styles.muted}>Add up to 10 ordered places to visit before the final destination.</Text></View><Pressable style={styles.secondary} onPress={() => { if (errandStops.length >= 10) { Alert.alert("Stops", "You can add up to 10 stops."); return; } setErrandStops(prev => [...prev, { stopType: "TASK", label: "", address: "", latitude: "", longitude: "", instructions: "" }]); }}><Text style={styles.secondaryText}>+ Add stop</Text></Pressable></View>
+          {errandStops.map((stop,index) => <View key={index} style={styles.notification}>
+            <View style={styles.rowBetween}><Text style={styles.photoTitle}>Stop {index + 1}</Text><Pressable onPress={() => setErrandStops(prev => prev.filter((_,i) => i !== index))}><Text style={styles.link}>Remove</Text></Pressable></View>
+            <View style={styles.row}>{(["TASK","PICKUP","PURCHASE","INSPECT","DROP_OFF"] as const).map(type => <Pressable key={type} style={[styles.choice, stop.stopType === type && styles.choiceActive]} onPress={() => setErrandStops(prev => prev.map((item,i) => i===index ? {...item,stopType:type} : item))}><Text style={styles.muted}>{type.replaceAll("_"," ")}</Text></Pressable>)}</View>
+            <TextInput style={styles.input} placeholder="Stop label" value={stop.label} onChangeText={v => setErrandStops(prev => prev.map((item,i)=>i===index?{...item,label:v}:item))} />
+            <TextInput style={styles.input} placeholder="Stop address" value={stop.address} onChangeText={v => setErrandStops(prev => prev.map((item,i)=>i===index?{...item,address:v}:item))} />
+            <View style={styles.row}><TextInput style={styles.half} placeholder="Latitude" keyboardType="decimal-pad" value={stop.latitude} onChangeText={v => setErrandStops(prev => prev.map((item,i)=>i===index?{...item,latitude:v}:item))} /><TextInput style={styles.half} placeholder="Longitude" keyboardType="decimal-pad" value={stop.longitude} onChangeText={v => setErrandStops(prev => prev.map((item,i)=>i===index?{...item,longitude:v}:item))} /></View>
+            <TextInput style={styles.input} placeholder="Stop instructions (optional)" value={stop.instructions} onChangeText={v => setErrandStops(prev => prev.map((item,i)=>i===index?{...item,instructions:v}:item))} />
+          </View>)}
+        </View>
       </View>
       <View style={styles.card}>
         <Text style={styles.homeHeading}>Receiver & destination</Text>
