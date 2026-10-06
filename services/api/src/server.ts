@@ -2070,7 +2070,10 @@ app.get("/api/public/track/:token", async (req, res) => {
   if (token.length < 32 || token.length > 128) return res.status(404).json({ error: "Tracking link not found or expired" });
   const tokenHash = createHash("sha256").update(token).digest("hex");
   const result = await pool!.query(
-    `SELECT d.id,d.tracking_code,d.status,d.pickup,d.dropoff,d.pickup_photo_url,d.updated_at
+    `SELECT d.id,d.tracking_code,d.status,
+              json_build_object('label','Pickup','formattedAddress',d.pickup_address,'location',json_build_object('latitude',d.pickup_lat,'longitude',d.pickup_lng)) AS pickup,
+              json_build_object('label','Drop-off','formattedAddress',d.dropoff_address,'location',json_build_object('latitude',d.dropoff_lat,'longitude',d.dropoff_lng)) AS dropoff,
+              d.pickup_photo_url,d.updated_at
        FROM delivery_tracking_links l
        JOIN deliveries d ON d.id=l.delivery_id
       WHERE l.token_hash=$1 AND l.revoked_at IS NULL AND l.expires_at > now()`,
