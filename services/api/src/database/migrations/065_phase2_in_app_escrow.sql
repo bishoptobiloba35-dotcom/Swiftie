@@ -41,8 +41,7 @@ CREATE TABLE IF NOT EXISTS escrow_ledgers (
   released_at TIMESTAMPTZ,
   stakeholder_release_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  idempotency_key TEXT NOT NULL UNIQUE
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_escrow_ledgers_provider_reference
@@ -104,7 +103,8 @@ CREATE TABLE IF NOT EXISTS payout_requests (
   failure_reason TEXT,
   requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   processed_at TIMESTAMPTZ,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  idempotency_key TEXT NOT NULL UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS float_transactions (
