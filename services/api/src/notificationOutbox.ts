@@ -8,6 +8,14 @@ export function backoffSeconds(attempts: number): number {
   return Math.min(900, Math.max(5, 5 * 2 ** Math.min(attempts - 1, 8)));
 }
 
+export function notificationAttemptOutcome(input: { attempts: number; retry: boolean; error?: string | null }): { state: "SENT" | "RETRY" | "FAILED"; delaySeconds?: number; error?: string } {
+  if (!input.retry) return { state: "SENT" };
+  if (input.attempts >= MAX_NOTIFICATION_ATTEMPTS) {
+    return { state: "FAILED", error: input.error ?? "Notification delivery retry limit exhausted" };
+  }
+  return { state: "RETRY", delaySeconds: backoffSeconds(input.attempts), error: input.error ?? "Expo reported one or more push delivery errors" };
+}
+
 export async function enqueueNotification(input: { userId: string; deliveryId?: string | null; title: string; body: string; type: string }): Promise<void> {
   if (!pool) return;
   await withDatabase(async client => {
@@ -94,18 +102,14 @@ export async function processNotificationOutbox(): Promise<void> {
           [row.id, JSON.stringify(outcome.tickets)]
         );
       }
-      if (outcome.retry) {
-        if (attempts >= MAX_NOTIFICATION_ATTEMPTS) {
-          await pool.query(
-            "UPDATE notification_outbox SET failed_at=now(), last_error=$2 WHERE id=$1",
-            [row.id, "Notification delivery retry limit exhausted"]
-          );
-        } else {
-          await pool.query(
-            "UPDATE notification_outbox SET next_attempt_at=now()+($2 * interval '1 second'), last_error=$3 WHERE id=$1",
-            [row.id, backoffSeconds(attempts), "Expo reported one or more push delivery errors"]
-          );
-        }
+      const decision = notificationAttemptOutcome({ attempts, retry: outcome.retry });
+      if (decision.state === "FAILED") {
+        await pool.query("UPDATE notification_outbox SET failed_at=now(), last_error=$2 WHERE id=$1", [row.id, decision.error]);
+      } else if (decision.state === "RETRY") {
+        await pool.query(
+          "UPDATE notification_outbox SET next_attempt_at=now()+($2 * interval '1 second'), last_error=$3 WHERE id=$1",
+          [row.id, decision.delaySeconds, decision.error]
+        );
       } else {
         await pool.query("UPDATE notification_outbox SET sent_at=now(), last_error=NULL WHERE id=$1", [row.id]);
       }
