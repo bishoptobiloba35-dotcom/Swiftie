@@ -440,7 +440,7 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
         `INSERT INTO business_accounts
           (owner_user_id, legal_name, display_name, registration_number, monthly_spend_limit_minor, per_order_limit_minor, requires_approval, status)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-         RETURNING *`,
+         RETURNING id,owner_user_id,legal_name,display_name,registration_number,monthly_spend_limit_minor,per_order_limit_minor,requires_approval,status,created_at,updated_at`,
         [userId, parsed.data.legalName, parsed.data.displayName, parsed.data.registrationNumber ?? null, parsed.data.monthlySpendLimitMinor, parsed.data.perOrderLimitMinor, parsed.data.requiresApproval, (req as any).user?.role === "ADMIN" ? "ACTIVE" : "PENDING"]
       );
       await client.query(
