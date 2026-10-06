@@ -218,9 +218,31 @@ router.post("/wallet/withdraw", requireAuth, async (req,res)=>{
     const duplicate=(await client.query("SELECT * FROM payout_requests WHERE idempotency_key=$1",[parsed.data.idempotencyKey])).rows[0];
     if(duplicate){await client.query("COMMIT");return res.json({payout:duplicate});}
     const payout=(await client.query("INSERT INTO payout_requests(wallet_id,user_id,amount_minor,idempotency_key) VALUES($1,$2,$3,$4) ON CONFLICT(idempotency_key) DO NOTHING RETURNING *",[wallet.id,userId,parsed.data.amountMinor,parsed.data.idempotencyKey])).rows[0];
-    await client.query("UPDATE stakeholder_wallets SET balance_minor=balance_minor-$2,updated_at=now() WHERE id=$1",[wallet.id,parsed.data.amountMinor]);
+    if(!wallet.paystack_recipient_code || !wallet.bank_account_verified){
+      await client.query("ROLLBACK");
+      return res.status(409).json({error:"A verified Paystack payout recipient is required before withdrawal"});
+    }
+    await client.query("UPDATE stakeholder_wallets SET balance_minor=balance_minor-$2,pending_minor=pending_minor+$2,updated_at=now() WHERE id=$1",[wallet.id,parsed.data.amountMinor]);
+    await client.query("UPDATE payout_requests SET status='PROCESSING' WHERE id=$1",[payout.id]);
     await client.query("COMMIT");
-    return res.status(201).json({payout,provider:"paystack_transfers"});
+    const secret=process.env.PAYSTACK_SECRET_KEY;
+    if(!secret){
+      await pool!.query("UPDATE stakeholder_wallets SET balance_minor=balance_minor+$2,pending_minor=GREATEST(0,pending_minor-$2),updated_at=now() WHERE id=$1",[wallet.id,parsed.data.amountMinor]);
+      await pool!.query("UPDATE payout_requests SET status='FAILED',failure_reason='Paystack transfers are not configured',updated_at=now() WHERE id=$1",[payout.id]);
+      return res.status(503).json({error:"Paystack transfers are not configured"});
+    }
+    const reference="SD-WALLET-"+payout.id;
+    const providerResponse=await fetch("https://api.paystack.co/transfer",{method:"POST",headers:{authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify({
+      source:"balance",amount:parsed.data.amountMinor,recipient:wallet.paystack_recipient_code,reason:"SwiftDrop wallet withdrawal",reference
+    })});
+    const providerPayload=await providerResponse.json() as any;
+    if(!providerResponse.ok||!providerPayload.status||!providerPayload.data?.reference){
+      await pool!.query("UPDATE stakeholder_wallets SET balance_minor=balance_minor+$2,pending_minor=GREATEST(0,pending_minor-$2),updated_at=now() WHERE id=$1",[wallet.id,parsed.data.amountMinor]);
+      await pool!.query("UPDATE payout_requests SET status='FAILED',failure_reason=$2,updated_at=now() WHERE id=$1",[payout.id,String(providerPayload.message ?? "Paystack transfer failed").slice(0,400)]);
+      return res.status(502).json({error:providerPayload.message ?? "Paystack transfer failed"});
+    }
+    const updated=(await pool!.query("UPDATE payout_requests SET provider_reference=$2,status='PROCESSING',updated_at=now() WHERE id=$1 RETURNING *",[payout.id,providerPayload.data.reference])).rows[0];
+    return res.status(201).json({payout:updated,provider:"paystack_transfers"});
   }catch(e){await client.query("ROLLBACK");return res.status(500).json({error:"Unable to create payout request"});}
   finally{client.release();}
 });
