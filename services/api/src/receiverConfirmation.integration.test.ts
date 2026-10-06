@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { pool } from "./database/db.js";
+import { signAccessToken } from "./auth.js";
 import { runMigrations } from "./database/migrate.js";
 import { createPersistentDelivery, createPayment, updatePaymentStatus } from "./database/deliveryRepository.js";
 
@@ -63,22 +64,24 @@ test("receiver confirmation route verifies PIN and atomically releases escrow fo
     await createPayment({ deliveryId: delivery.id, provider: "paystack", amountMinor: 100000, currency: "NGN", collectionMode: "SENDER_ESCROW" });
     assert.ok(await updatePaymentStatus(delivery.id, "HELD", "ESCROW-HTTP-1"));
 
-    const endpoint = `http://127.0.0.1:${API_PORT}/api/deliveries/${delivery.id}/receiver-confirm`;
+    const endpoint = `http://127.0.0.1:${API_PORT}/api/escrow/${delivery.id}/pin`;
+    const token = signAccessToken({ userId: sender, role: "CUSTOMER" });
+    const authHeaders = { "content-type": "application/json", authorization: `Bearer ${token}` };
     const wrong = await fetch(endpoint, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ receiverPhone: "+2349020000042", receiverPin: "000000" })
+      method: "POST", headers: authHeaders,
+      body: JSON.stringify({ pin: "0000" })
     });
-    assert.equal(wrong.status, 403);
+    assert.equal(wrong.status, 401);
 
     const confirmed = await fetch(endpoint, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ receiverPhone: "+2349020000042", receiverPin: "6543" })
+      method: "POST", headers: authHeaders,
+      body: JSON.stringify({ pin: "6543" })
     });
     assert.equal(confirmed.status, 200);
-    const payload = await confirmed.json() as { escrowStatus: string; payoutAmountMinor: number; delivery: { status: string } };
-    assert.equal(payload.escrowStatus, "RELEASED");
-    assert.equal(payload.delivery.status, "DELIVERED");
-    assert.equal(payload.payoutAmountMinor, 90000);
+    const payload = await confirmed.json() as { state: string; courierPayout: string; courierShareMinor: number };
+    assert.equal(payload.state, "dispute_window");
+    assert.equal(payload.courierPayout, "instant");
+    assert.equal(payload.courierShareMinor, 37500);
 
     const financial = (await pool.query(
       `SELECT d.status AS delivery_status, d.receiver_confirmed_at, p.status AS payment_status, p.escrow_status,
@@ -88,14 +91,14 @@ test("receiver confirmation route verifies PIN and atomically releases escrow fo
     )).rows[0];
     assert.equal(financial.delivery_status, "DELIVERED");
     assert.ok(financial.receiver_confirmed_at);
-    assert.equal(financial.payment_status, "RELEASED");
-    assert.equal(financial.escrow_status, "RELEASED");
-    assert.equal(financial.payout_status, "ELIGIBLE");
-    assert.equal(Number(financial.payout_amount), 90000);
+    assert.equal(financial.payment_status, "HELD");
+    assert.equal(financial.escrow_status, "HELD");
+    assert.equal(financial.payout_status, null);
+    assert.equal(Number(financial.payout_amount ?? 0), 0);
 
     const replay = await fetch(endpoint, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ receiverPhone: "+2349020000042", receiverPin: "6543" })
+      body: JSON.stringify({ pin: "6543" })
     });
     assert.equal(replay.status, 409);
   } finally {
