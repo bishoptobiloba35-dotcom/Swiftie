@@ -126,6 +126,33 @@ export class SwiftDropApi {
     return data;
   }
 
+  async createEscrow(orderId: string, totalPaidMinor: number): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/escrow/create", { method:"POST", headers:this.headers(true), body:JSON.stringify({
+      orderId,totalPaidMinor,courierShareMinor:0,serviceChargeMinor:0,protectionReserveMinor:0,swiftdropMarginMinor:0,merchantShareMinor:totalPaidMinor
+    })});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error ?? "Unable to create escrow"); return data.escrow;
+  }
+
+  async payEscrow(orderId: string, method: "PAYSTACK_CARD"|"BANK_TRANSFER"|"USSD"|"SMS_LINK", idempotencyKey: string): Promise<any> {
+    const response=await fetch(this.baseUrl + `/api/escrow/${encodeURIComponent(orderId)}/pay`,{method:"POST",headers:this.headers(true),body:JSON.stringify({method,idempotencyKey})});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error ?? "Unable to start escrow payment"); return data.payment;
+  }
+
+  async confirmEscrowPin(orderId: string, pin: string): Promise<any> {
+    const response=await fetch(this.baseUrl + `/api/escrow/${encodeURIComponent(orderId)}/pin`,{method:"POST",headers:this.headers(true),body:JSON.stringify({pin})});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error ?? "Unable to confirm receiver PIN"); return data;
+  }
+
+  async walletBalance(): Promise<any> {
+    const response=await fetch(this.baseUrl + "/api/wallet/balance",{headers:this.headers()});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error ?? "Unable to load wallet"); return data.wallet;
+  }
+
+  async withdrawWallet(amountMinor: number, idempotencyKey: string): Promise<any> {
+    const response=await fetch(this.baseUrl + "/api/wallet/withdraw",{method:"POST",headers:this.headers(true),body:JSON.stringify({amountMinor,idempotencyKey})});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error ?? "Unable to request payout"); return data.payout;
+  }
+
   async registerDeviceToken(token: string, platform: "IOS" | "ANDROID"): Promise<void> {
     const response = await fetch(this.baseUrl + "/api/notifications/device-token", {
       method: "POST",
