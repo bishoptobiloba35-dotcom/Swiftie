@@ -813,7 +813,7 @@ router.post("/marketplace/orders/:id/payment/initialize", requireAuth(), async (
      ON CONFLICT (marketplace_order_id) DO UPDATE
        SET provider_reference=EXCLUDED.provider_reference, amount_minor=EXCLUDED.amount_minor,
            provider_status='pending', authorization_url=EXCLUDED.authorization_url, updated_at=now()
-     RETURNING *`,
+     RETURNING id,marketplace_order_id,amount_minor,currency,status,provider_status,authorization_url,created_at,updated_at`,
     [orderId, userId, reference, amountMinor, payload.data.authorization_url]
   );
   const publicPayment = {
