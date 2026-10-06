@@ -46,7 +46,32 @@ router.get("/deliveries/:id/exceptions", requireAuth("CUSTOMER","DRIVER","ADMIN"
     "SELECT id,event_type,actor_user_id,metadata,created_at FROM delivery_exception_events WHERE delivery_id=$1 ORDER BY created_at ASC",
     [id]
   );
-  return res.json({ delivery, attempts: attempts.rows, events: events.rows });
+  return res.json({
+    delivery: {
+      id: delivery.id,
+      status: delivery.status,
+      exceptionStatus: delivery.exception_status,
+      nextDeliveryAt: delivery.next_delivery_at,
+      returnReason: delivery.return_reason,
+      returnedAt: delivery.returned_at
+    },
+    attempts: attempts.rows.map((attempt) => ({
+      id: attempt.id,
+      attemptNumber: attempt.attempt_number,
+      outcome: attempt.outcome,
+      reason: attempt.reason,
+      notes: attempt.notes,
+      latitude: attempt.latitude,
+      longitude: attempt.longitude,
+      createdAt: attempt.created_at
+    })),
+    events: events.rows.map((event) => ({
+      id: event.id,
+      eventType: event.event_type,
+      metadata: event.metadata,
+      createdAt: event.created_at
+    }))
+  });
 });
 
 router.post("/deliveries/:id/failure", requireAuth("DRIVER"), async (req, res) => {
