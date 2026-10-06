@@ -1917,7 +1917,7 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
         actorUserId: identity(req),
         metadata: { provider: "paystack", transactionReference: marketplace.provider_reference, refundReference: providerRefundReference, refundStatus, amountMinor: refundAmountMinor }
       });
-      return res.json({ dispute: resolved, refund: { status: refundStatus, reference: providerRefundReference, amountMinor: refundAmountMinor, paymentType: "MARKETPLACE_ORDER" } });
+      return res.json({ dispute: resolved, refund: { status: refundStatus, amountMinor: refundAmountMinor, paymentType: "MARKETPLACE_ORDER" } });
     }
 
     const paymentBefore = await findPayment(routeParam(req.params.id, "id"));
