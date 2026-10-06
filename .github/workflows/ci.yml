@@ -27,7 +27,6 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-          package-manager-cache: false
       - run: npm install --global npm@11
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run build --workspace=@swiftdrop/${{ matrix.project }}
