@@ -721,6 +721,7 @@ export default function App() {
         receiverPin,
         paymentMode,
         declaredValueMinor: Math.round(Number(declaredValue) * 100),
+        includeProtection,
         weightKg: Number(weightKg),
         dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) },
         isPerishable,
