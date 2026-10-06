@@ -64,6 +64,7 @@ export type CreateDeliveryInput = {
   dimensionsCm: { length: number; width: number; height: number };
   isPerishable: boolean;
   declaredValueMinor: number;
+  includeProtection?: boolean;
   pickup: { label: string; formattedAddress: string; latitude: number; longitude: number };
   dropoff: { label: string; formattedAddress: string; latitude: number; longitude: number };
   pickupDropOffLocationId?: string;
