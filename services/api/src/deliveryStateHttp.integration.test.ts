@@ -84,6 +84,11 @@ test("delivery transition routes enforce the production state machine at the HTT
       [otherDriverUserId]
     )).rows[0];
 
+    await pool.query(
+      "INSERT INTO driver_documents(driver_id,document_type,document_url,status) VALUES($1,'DRIVER_LICENSE','/api/driver/documents/file/state-http-verified','APPROVED')",
+      [driver.id]
+    );
+
     const delivery = await createPersistentDelivery({
       senderId,
       receiverName: "Receiver",
