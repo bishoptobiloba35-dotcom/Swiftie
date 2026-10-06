@@ -117,7 +117,7 @@ test("Paystack payout webhook route reconciles success, failure and reversal wit
       [success.payoutId]
     )).rows[0];
     assert.equal(successState.status, "RELEASED");
-    assert.equal(successState.provider_status, "transfer.success");
+    assert.equal(successState.provider_status, "success");
     assert.equal(successState.failure_reason, null);
 
     const failed = await seedProcessingPayout("WEBHOOK-FAILED-1", 60000);
@@ -131,7 +131,7 @@ test("Paystack payout webhook route reconciles success, failure and reversal wit
       [failed.payoutId]
     )).rows[0];
     assert.equal(failedState.status, "FAILED");
-    assert.equal(failedState.provider_status, "transfer.failed");
+    assert.equal(failedState.provider_status, "failed");
     assert.equal(failedState.failure_reason, "Bank rejected transfer");
 
     const reversed = await seedProcessingPayout("WEBHOOK-REVERSED-1", 70000);
@@ -145,7 +145,7 @@ test("Paystack payout webhook route reconciles success, failure and reversal wit
       [reversed.payoutId]
     )).rows[0];
     assert.equal(reversedState.status, "CANCELLED");
-    assert.equal(reversedState.provider_status, "transfer.reversed");
+    assert.equal(reversedState.provider_status, "reversed");
 
     const mismatch = await seedProcessingPayout("WEBHOOK-MISMATCH-1", 80000);
     const mismatchResponse = await postPaystackWebhook({
@@ -159,7 +159,7 @@ test("Paystack payout webhook route reconciles success, failure and reversal wit
     )).rows[0];
     assert.equal(mismatchState.status, "FAILED");
     assert.equal(mismatchState.provider_status, "amount_mismatch");
-    assert.equal(mismatchState.failure_reason, "Paystack payout amount/currency mismatch");
+    assert.equal(mismatchState.failure_reason, "Paystack transfer amount or currency mismatch");
 
     const invalidSignature = await postPaystackWebhook(
       { event: "transfer.success", data: { reference: "WEBHOOK-MISMATCH-1", amount: 80000, currency: "NGN" } },
