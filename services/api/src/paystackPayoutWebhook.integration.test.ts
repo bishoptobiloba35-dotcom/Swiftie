@@ -120,6 +120,21 @@ test("Paystack payout webhook route reconciles success, failure and reversal wit
     assert.equal(successState.provider_status, "success");
     assert.equal(successState.failure_reason, null);
 
+    const duplicateSuccessResponse = await postPaystackWebhook({
+      event: "transfer.success",
+      data: { reference: "WEBHOOK-SUCCESS-1", amount: 50000, currency: "NGN" }
+    });
+    assert.equal(duplicateSuccessResponse.status, 200);
+    const duplicateSuccessState = (await pool.query(
+      `SELECT status,provider_status,failure_reason,amount_minor,currency FROM payouts WHERE id=$1`,
+      [success.payoutId]
+    )).rows[0];
+    assert.equal(duplicateSuccessState.status, "RELEASED");
+    assert.equal(duplicateSuccessState.provider_status, "success");
+    assert.equal(Number(duplicateSuccessState.amount_minor), 50000);
+    assert.equal(duplicateSuccessState.currency, "NGN");
+    assert.equal(duplicateSuccessState.failure_reason, null);
+
     const failed = await seedProcessingPayout("WEBHOOK-FAILED-1", 60000);
     const failedResponse = await postPaystackWebhook({
       event: "transfer.failed",
@@ -134,6 +149,21 @@ test("Paystack payout webhook route reconciles success, failure and reversal wit
     assert.equal(failedState.provider_status, "failed");
     assert.equal(failedState.failure_reason, "Bank rejected transfer");
 
+    const duplicateFailedResponse = await postPaystackWebhook({
+      event: "transfer.failed",
+      data: { reference: "WEBHOOK-FAILED-1", amount: 60000, currency: "NGN", failures: { message: "Bank rejected transfer" } }
+    });
+    assert.equal(duplicateFailedResponse.status, 200);
+    const duplicateFailedState = (await pool.query(
+      `SELECT status,provider_status,failure_reason,amount_minor,currency FROM payouts WHERE id=$1`,
+      [failed.payoutId]
+    )).rows[0];
+    assert.equal(duplicateFailedState.status, "FAILED");
+    assert.equal(duplicateFailedState.provider_status, "failed");
+    assert.equal(duplicateFailedState.failure_reason, "Bank rejected transfer");
+    assert.equal(Number(duplicateFailedState.amount_minor), 60000);
+    assert.equal(duplicateFailedState.currency, "NGN");
+
     const reversed = await seedProcessingPayout("WEBHOOK-REVERSED-1", 70000);
     const reversedResponse = await postPaystackWebhook({
       event: "transfer.reversed",
@@ -146,6 +176,20 @@ test("Paystack payout webhook route reconciles success, failure and reversal wit
     )).rows[0];
     assert.equal(reversedState.status, "CANCELLED");
     assert.equal(reversedState.provider_status, "reversed");
+
+    const duplicateReversedResponse = await postPaystackWebhook({
+      event: "transfer.reversed",
+      data: { reference: "WEBHOOK-REVERSED-1", amount: 70000, currency: "NGN" }
+    });
+    assert.equal(duplicateReversedResponse.status, 200);
+    const duplicateReversedState = (await pool.query(
+      `SELECT status,provider_status,amount_minor,currency FROM payouts WHERE id=$1`,
+      [reversed.payoutId]
+    )).rows[0];
+    assert.equal(duplicateReversedState.status, "CANCELLED");
+    assert.equal(duplicateReversedState.provider_status, "reversed");
+    assert.equal(Number(duplicateReversedState.amount_minor), 70000);
+    assert.equal(duplicateReversedState.currency, "NGN");
 
     const mismatch = await seedProcessingPayout("WEBHOOK-MISMATCH-1", 80000);
     const mismatchResponse = await postPaystackWebhook({
