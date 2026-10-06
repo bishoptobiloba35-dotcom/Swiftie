@@ -1,5 +1,6 @@
 -- Phase 2: all receiver payments are in-app escrow. Cash-on-delivery is retired.
 ALTER TABLE deliveries
+  ADD COLUMN IF NOT EXISTS merchant_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   ALTER COLUMN payment_on_delivery SET DEFAULT false;
 
 UPDATE deliveries
