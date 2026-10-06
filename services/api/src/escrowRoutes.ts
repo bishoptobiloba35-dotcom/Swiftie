@@ -121,7 +121,7 @@ router.post("/escrow/:orderId/pin", requireAuth(), async (req,res)=>{
   try{
     await client.query("BEGIN");
     const order=(await client.query(
-      "SELECT d.id,d.customer_id,d.driver_id,dr.user_id AS courier_user_id,d.escrow_total_paid_minor,d.escrow_courier_share_minor,d.escrow_payment_state,d.receiver_pin_hash FROM deliveries d LEFT JOIN drivers dr ON dr.id=d.driver_id WHERE d.id=$1 FOR UPDATE",
+      "SELECT d.id,d.sender_id AS customer_id,d.driver_id,dr.user_id AS courier_user_id,d.escrow_total_paid_minor,d.escrow_courier_share_minor,d.escrow_payment_state,d.receiver_pin_hash FROM deliveries d LEFT JOIN drivers dr ON dr.id=d.driver_id WHERE d.id=$1 FOR UPDATE",
       [String(req.params.orderId)]
     )).rows[0];
     if(!order)return res.status(404).json({error:"Order not found"});
