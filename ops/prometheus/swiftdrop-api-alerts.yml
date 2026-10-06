@@ -1,0 +1,42 @@
+groups:
+  - name: swiftdrop-api
+    interval: 30s
+    rules:
+      - alert: SwiftDropApiHigh5xxRate
+        expr: |
+          (
+            sum(rate(swiftdrop_http_errors_total[5m]))
+            /
+            clamp_min(sum(rate(swiftdrop_http_requests_total[5m])), 1)
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: critical
+          service: swiftdrop-api
+        annotations:
+          summary: SwiftDrop API 5xx rate is above 5%
+          description: More than 5% of API requests have returned 5xx responses for at least 10 minutes.
+
+      - alert: SwiftDropApiHighLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(swiftdrop_http_request_duration_ms_bucket[5m]))
+          ) > 2500
+        for: 10m
+        labels:
+          severity: warning
+          service: swiftdrop-api
+        annotations:
+          summary: SwiftDrop API p95 latency is above 2.5 seconds
+          description: API request p95 latency has remained above 2.5 seconds for at least 10 minutes.
+
+      - alert: SwiftDropApiNoTraffic
+        expr: sum(rate(swiftdrop_http_requests_total[15m])) == 0
+        for: 30m
+        labels:
+          severity: warning
+          service: swiftdrop-api
+        annotations:
+          summary: SwiftDrop API has received no traffic
+          description: No API requests have been observed for 30 minutes; verify service health and monitoring connectivity.
