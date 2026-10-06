@@ -79,7 +79,8 @@ test("receiver confirmation route verifies PIN and atomically releases escrow fo
       method: "POST", headers: authHeaders,
       body: JSON.stringify({ pin: "0000" })
     });
-    assert.equal(wrong.status, 401);
+    const wrongBody = await wrong.text();
+    assert.equal(wrong.status, 401, `unexpected PIN response: ${wrongBody}`);
 
     const confirmed = await fetch(endpoint, {
       method: "POST", headers: authHeaders,
