@@ -8,6 +8,7 @@ export type ApiDelivery = {
   dimensionsCm: { length: number; width: number; height: number };
   isPerishable: boolean;
   declaredValueMinor: number;
+  includeProtection?: boolean;
   pickup: { label: string; formattedAddress: string; location?: { latitude: number; longitude: number; recordedAt?: string } };
   dropoff: { label: string; formattedAddress: string; location?: { latitude: number; longitude: number; recordedAt?: string } };
   pickupInstructions?: string;
@@ -468,6 +469,7 @@ export class SwiftDropApi {
     dimensionsCm: { length: number; width: number; height: number };
     isPerishable: boolean;
     declaredValueMinor: number;
+    includeProtection?: boolean;
   }): Promise<{
     currency: string; distanceMeters: number; durationSeconds: number;
     baseFareMinor: number; distanceFareMinor: number; weightFareMinor: number; sizeFareMinor: number;
