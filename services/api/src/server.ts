@@ -1213,6 +1213,14 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
         } finally {
           client.release();
         }
+        const floatLatest=(await pool!.query("SELECT balance_after_minor FROM float_transactions ORDER BY created_at DESC LIMIT 1")).rows[0];
+        const floatBalance=Number(floatLatest?.balance_after_minor ?? 0);
+        await pool!.query(
+          `INSERT INTO float_transactions(type,amount_minor,balance_after_minor,order_id,provider_reference,metadata)
+           VALUES('ESCROW_IN',$1,$2,$3,$4,'{"reason":"paystack_escrow_funding"}'::jsonb)
+           ON CONFLICT DO NOTHING`,
+          [providerAmount,floatBalance+providerAmount,attempt.order_id,escrowReference]
+        );
         await recordDeliveryEvent({deliveryId:attempt.order_id,eventType:"ESCROW_PAYMENT_FUNDED",metadata:{provider:"paystack",reference:escrowReference,amountMinor:providerAmount}});
         return res.status(200).json({received:true,duplicate:duplicateWebhook,escrow:"paid_escrow"});
       }
