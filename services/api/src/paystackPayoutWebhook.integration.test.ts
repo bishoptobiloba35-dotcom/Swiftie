@@ -29,7 +29,7 @@ async function waitForReady(): Promise<void> {
 async function postPaystackWebhook(event: Record<string, unknown>, secret = WEBHOOK_SECRET): Promise<Response> {
   const rawBody = JSON.stringify(event);
   const signature = createHmac("sha512", secret).update(rawBody).digest("hex");
-  return fetch(`http://127.0.0.1:${API_PORT}/api/paystack/webhook`, {
+  return fetch(`http://127.0.0.1:${API_PORT}/api/payments/paystack/webhook`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-paystack-signature": signature },
     body: rawBody
@@ -97,7 +97,7 @@ test("Paystack payout webhook route reconciles success, failure and reversal wit
         ...process.env,
         NODE_ENV: "test",
         API_PORT: String(API_PORT),
-        PAYSTACK_WEBHOOK_SECRET: WEBHOOK_SECRET
+        PAYMENT_WEBHOOK_SECRET: WEBHOOK_SECRET
       },
       stdio: "ignore"
     }
