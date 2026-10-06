@@ -77,11 +77,11 @@ if (db) {
     );
 
     const delivery = await createPersistentDelivery({
-      senderId: customer.id, receiverName: "Coverage Receiver", receiverPhone: "+2349070000000", receiverPin: "454545",
+      senderId: customer.id, receiverName: "Coverage Receiver", receiverPhone: "+2349070000000", receiverPin: "4545",
       declaredValueMinor: 100000,
       pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.07, longitude: 7.40 } },
       dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
-      weightKg: 1, dimensionsCm: { length: 10, width: 10, height: 10 }, isPerishable: false, paymentMode: "RECEIVER_ON_DELIVERY"
+      weightKg: 1, dimensionsCm: { length: 10, width: 10, height: 10 }, isPerishable: false, paymentMode: "SENDER_ESCROW"
     });
     assert.ok(await transitionDelivery(delivery.id, "CREATED", "DRIVER_ASSIGNED", driver.id));
     assert.ok(await transitionDelivery(delivery.id, "DRIVER_ASSIGNED", "DRIVER_AT_PICKUP", driver.id));
