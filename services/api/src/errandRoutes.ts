@@ -190,7 +190,7 @@ router.get("/errands/:id", requireAuth("CUSTOMER", "ADMIN", "AGENT"), async (req
        FROM buy_order_items i WHERE i.buy_order_id=$1 ORDER BY i.created_at ASC`, [id]),
     pool.query(`SELECT id,event_type AS "eventType",metadata,created_at AS "createdAt"
        FROM buy_order_events WHERE buy_order_id=$1 ORDER BY created_at ASC LIMIT 200`, [id]),
-    pool.query(`SELECT id,status,payment_status,amount_minor,currency,refund_status,refund_amount_minor
+    pool.query(`SELECT id,status AS payment_status,amount_minor,currency,refund_status,refund_amount_minor
        FROM buy_order_payments WHERE buy_order_id=$1 ORDER BY created_at DESC LIMIT 1`, [id]),
     pool.query(`SELECT id,stop_order,stop_type,label,address,latitude,longitude,instructions,status,completed_at,completed_by_user_id
        FROM buy_order_stops WHERE buy_order_id=$1 ORDER BY stop_order`, [id])
