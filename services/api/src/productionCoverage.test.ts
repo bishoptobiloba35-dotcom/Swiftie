@@ -99,6 +99,21 @@ if (db) {
     assert.equal(initialMessages.length, 1);
     assert.equal(initialMessages[0].message, "Please investigate this order");
 
+    const legalAcceptance = (await db.query(
+      `INSERT INTO legal_acceptances(user_id,terms_version,privacy_version,acceptable_use_version)
+       VALUES($1,'2026-09-28','2026-09-28','2026-09-28')
+       RETURNING user_id,terms_version,privacy_version,acceptable_use_version`,
+      [customer.id]
+    )).rows[0];
+    assert.equal(legalAcceptance.user_id, customer.id);
+    assert.equal(legalAcceptance.terms_version, "2026-09-28");
+    const duplicateAcceptance = await db.query(
+      `SELECT 1 FROM legal_acceptances
+       WHERE user_id=$1 AND terms_version='2026-09-28' AND privacy_version='2026-09-28' AND acceptable_use_version='2026-09-28'`,
+      [customer.id]
+    );
+    assert.equal(duplicateAcceptance.rowCount, 1);
+
     const admin = (await db.query(
       `INSERT INTO users(role,full_name,phone,email) VALUES('ADMIN','Coverage Admin',$1,$2) RETURNING id`,
       [`+234908${stamp}`, `coverage-admin-${stamp}@example.test`]

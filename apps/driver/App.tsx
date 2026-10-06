@@ -99,6 +99,7 @@ export default function App() {
   const [authMode, setAuthMode] = React.useState<"login" | "register">("login");
   const [authPhone, setAuthPhone] = React.useState("");
   const [authPassword, setAuthPassword] = React.useState("");
+  const [legalConsent, setLegalConsent] = React.useState(false);
   const [authName, setAuthName] = React.useState("");
   const [authEmail, setAuthEmail] = React.useState("");
   const [driverApproved, setDriverApproved] = React.useState(false);
@@ -291,6 +292,7 @@ export default function App() {
 
   async function registerDriver() {
     try {
+      if (!legalConsent) throw new Error("Please accept the Terms, Privacy Notice, and Acceptable Use Policy to create a driver account.");
       const response = await fetch(API_URL + "/api/auth/register", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -299,7 +301,10 @@ export default function App() {
           phone: authPhone.trim(),
           email: authEmail.trim() || undefined,
           password: authPassword,
-          role: "DRIVER"
+          role: "DRIVER",
+          termsAccepted: true,
+          privacyAccepted: true,
+          acceptableUseAccepted: true
         })
       });
       const data = await response.json();
@@ -564,6 +569,7 @@ export default function App() {
       <TextInput style={styles.input} placeholder="Phone number" value={authPhone} onChangeText={setAuthPhone} keyboardType="phone-pad" />
       {authMode === "register" && <TextInput style={styles.input} placeholder="Email (optional)" value={authEmail} onChangeText={setAuthEmail} keyboardType="email-address" autoCapitalize="none" />}
       <TextInput style={styles.input} placeholder="Password" value={authPassword} onChangeText={setAuthPassword} secureTextEntry />
+      {authMode === "register" && <Pressable onPress={() => setLegalConsent(v => !v)} style={{ flexDirection: "row", alignItems: "center", marginBottom: 12 }}><Text style={{ fontSize: 20, marginRight: 8 }}>{legalConsent ? "☑" : "☐"}</Text><Text style={{ flex: 1 }}>I accept the SwiftDrop Terms of Service, Privacy Notice, and Acceptable Use Policy.</Text></Pressable>}
       <Pressable style={styles.primary} onPress={() => void (authMode === "login" ? signIn() : registerDriver())}><Text style={styles.primaryText}>{authMode === "login" ? "Sign in" : "Create driver account"}</Text></Pressable>
       <Pressable onPress={() => setAuthMode(authMode === "login" ? "register" : "login")}><Text style={styles.link}>{authMode === "login" ? "Create a driver account" : "Already have an account? Sign in"}</Text></Pressable>
     </View></SafeAreaView>;

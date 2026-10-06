@@ -37,12 +37,19 @@ const schema = z.object({
 
 
 
+const TERMS_VERSION = "2026-09-28";
+const PRIVACY_VERSION = "2026-09-28";
+const ACCEPTABLE_USE_VERSION = "2026-09-28";
+
 const registrationSchema = z.object({
   fullName: z.string().trim().min(2).max(120),
   phone: z.string().trim().min(7).max(30),
   email: z.string().trim().email().optional(),
   password: z.string().min(8).max(128),
-  role: z.enum(["CUSTOMER", "DRIVER", "AGENT"]).default("CUSTOMER")
+  role: z.enum(["CUSTOMER", "DRIVER", "AGENT"]).default("CUSTOMER"),
+  termsAccepted: z.literal(true),
+  privacyAccepted: z.literal(true),
+  acceptableUseAccepted: z.literal(true)
 });
 
 router.post("/register", rateLimitAuth(5), async (req, res) => {
@@ -64,6 +71,11 @@ router.post("/register", rateLimitAuth(5), async (req, res) => {
     } else if (role === "AGENT") {
       await pool.query("INSERT INTO agent_profiles (user_id) VALUES ($1)", [user.id]);
     }
+    await pool.query(
+      `INSERT INTO legal_acceptances (user_id, terms_version, privacy_version, acceptable_use_version, ip_address, user_agent)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [user.id, TERMS_VERSION, PRIVACY_VERSION, ACCEPTABLE_USE_VERSION, req.ip ?? null, req.get("user-agent") ?? null]
+    );
     const accessToken = signAccessToken({ userId: user.id, role: user.role });
     res.status(201).json({
       accessToken,
@@ -77,6 +89,7 @@ router.post("/register", rateLimitAuth(5), async (req, res) => {
     });
   } catch (error: any) {
     if (error?.code === "23505") return res.status(409).json({ error: "Phone or email is already registered" });
+    if (error?.code === "42P01") return res.status(503).json({ error: "Account registration is temporarily unavailable while legal acceptance storage is being prepared." });
     res.status(500).json({ error: "Unable to create account" });
   }
 });

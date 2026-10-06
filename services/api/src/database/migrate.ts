@@ -58,6 +58,7 @@ const migrations = [
   { id: "059_errand_item_refunds", file: "059_errand_item_refunds.sql" },
   { id: "060_errand_multi_stop", file: "060_errand_multi_stop.sql" },
   { id: "061_notification_dead_letter", file: "061_notification_dead_letter.sql" },
+  { id: "062_legal_acceptance", file: "062_legal_acceptance.sql" },
 ];
 
 export async function runMigrations(): Promise<void> {
