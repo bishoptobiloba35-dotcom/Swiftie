@@ -127,7 +127,7 @@ if (db) {
     assert.equal(messages[1].senderType, "ADMIN");
 
     const escrowDelivery = await createPersistentDelivery({
-      senderId: customer.id, receiverName: "Escrow Receiver", receiverPhone: "+2349070000010", receiverPin: "676767",
+      senderId: customer.id, receiverName: "Escrow Receiver", receiverPhone: "+2349070000010", receiverPin: "6767",
       declaredValueMinor: 100000,
       pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.07, longitude: 7.40 } },
       dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
@@ -148,7 +148,7 @@ if (db) {
        VALUES($1,'DROPOFF','BARCODE','676767','{"source":"integration"}'::jsonb,$2)`,
       [escrowDelivery.id, driverUser.id]
     );
-    const escrowResult = await confirmReceiverAndReleaseEscrow(escrowDelivery.id, "+2349070000010", "676767", 100);
+    const escrowResult = await confirmReceiverAndReleaseEscrow(escrowDelivery.id, "+2349070000010", "6767", 100);
     assert.ok(escrowResult);
     assert.equal(escrowResult?.delivery.status, "DELIVERED");
     assert.equal(escrowResult?.payoutAmountMinor, 90000);
