@@ -2519,8 +2519,9 @@ app.post("/api/deliveries/:id/complete", requireAuth("DRIVER"), async (req, res)
   return res.status(409).json({ error: "Receiver confirmation is required to complete delivery and release payment" });
 });
 
-app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
+app.post("/api/deliveries/:id/receiver-confirm", async (_req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Receiver confirmation requires the production database" });
+  return res.status(410).json({ error: "Legacy receiver confirmation is retired. Use the authenticated escrow PIN endpoint so escrow release and the 72-hour stakeholder hold are enforced." });
   const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
   const receiverPin = String(req.body?.receiverPin ?? "").trim();
   if (!receiverPhone || !/^\d{4}$/.test(receiverPin)) return res.status(400).json({ error: "Receiver phone and four-digit PIN are required" });
