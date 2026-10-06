@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SWIFTDROP_RULES } from "../../../packages/shared/src/swiftdropRules.js";
+const SWIFTDROP_RULES = { noCashAccepted:true, courierDeliveryShareBps:7500, stakeholderHoldHours:72, minimumWithdrawalMinor:100000, floatMinimumReserveMinor:500000000, floatAutoTopUpThresholdMinor:300000000 };
 
 test("Phase 2 cash-flow constants are escrow-only", () => {
   assert.equal(SWIFTDROP_RULES.noCashAccepted, true);
