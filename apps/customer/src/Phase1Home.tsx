@@ -5,7 +5,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View, useColorScheme } from "r
 type Props = {
   delivery: any;
   notifications: any[];
-  setHomeSection: (section: "HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS" | "HISTORY") => void;
+  setHomeSection: (section: "HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS" | "HISTORY" | "WALLET" | "ESCROW" | "PAYOUT") => void;
   openNotifications: () => void;
   signOut: () => void;
 };
@@ -42,7 +42,7 @@ export default function Phase1Home({ delivery, notifications, setHomeSection, op
   };
 
   const isDark = appearance === "dark" || (appearance === "system" && systemScheme === "dark");
-  const go = (key: "HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS" | "HISTORY") => setHomeSection(key);
+  const go = (key: "HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS" | "HISTORY" | "WALLET" | "ESCROW" | "PAYOUT") => setHomeSection(key);
   const c = isDark ? palette.dark : palette.light;
 
   return (
@@ -99,6 +99,15 @@ export default function Phase1Home({ delivery, notifications, setHomeSection, op
           </Pressable>
           <Pressable onPress={() => setHomeSection("SHOP")} style={[styles.actionCard, { backgroundColor: c.card, borderColor: c.line }]}>
             <Text style={[styles.actionIcon, { color: c.primary }]}>□</Text><Text style={[styles.actionTitle, { color: c.ink }]}>Shop</Text><Text style={[styles.actionSub, { color: c.mut }]}>Everyday goods</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.quickGrid}>
+          <Pressable onPress={() => setHomeSection("WALLET")} style={[styles.actionCard, { backgroundColor: c.card, borderColor: c.line }]}>
+            <Text style={[styles.actionIcon, { color: c.primary }]}>₦</Text><Text style={[styles.actionTitle, { color: c.ink }]}>Wallet</Text><Text style={[styles.actionSub, { color: c.mut }]}>Balance & payout</Text>
+          </Pressable>
+          <Pressable onPress={() => delivery ? setHomeSection("ESCROW") : setHomeSection("ORDER")} style={[styles.actionCard, { backgroundColor: c.card, borderColor: c.line }]}>
+            <Text style={[styles.actionIcon, { color: c.primary }]}>✓</Text><Text style={[styles.actionTitle, { color: c.ink }]}>Escrow</Text><Text style={[styles.actionSub, { color: c.mut }]}>Secure payment</Text>
           </Pressable>
         </View>
 
