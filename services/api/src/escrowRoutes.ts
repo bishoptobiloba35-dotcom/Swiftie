@@ -137,7 +137,7 @@ router.post("/escrow/:orderId/pin", requireAuth, async (req,res)=>{
     if(!valid){await client.query("ROLLBACK");return res.status(401).json({error:"Invalid PIN"});}
     const disputeUntil=new Date(Date.now()+ESCROW_DISPUTE_HOURS*3600000);
     await client.query(
-      `UPDATE escrow_ledgers SET state='dispute_window',pin_confirmed_at=now(),dispute_window_until=$2,updated_at=now()
+      `UPDATE escrow_ledgers SET state='dispute_window',pin_confirmed_at=now(),dispute_window_until=$2,stakeholder_release_at=now()+interval '72 hours',updated_at=now()
        WHERE order_id=$1 AND state='arrived'`,
       [order.id,disputeUntil]
     );
@@ -145,6 +145,16 @@ router.post("/escrow/:orderId/pin", requireAuth, async (req,res)=>{
       `UPDATE deliveries SET status='DELIVERED',escrow_payment_state='dispute_window',escrow_pin_confirmed_at=now(),escrow_dispute_window_until=$2 WHERE id=$1`,
       [order.id,disputeUntil]
     );
+    if(Number(order.escrow_courier_share_minor)>0){
+      const floatLatest=(await client.query("SELECT balance_after_minor FROM float_transactions ORDER BY created_at DESC LIMIT 1")).rows[0];
+      const floatBalance=Number(floatLatest?.balance_after_minor ?? Number(order.escrow_total_paid_minor));
+      const courierAmount=Number(order.escrow_courier_share_minor);
+      await client.query(
+        `INSERT INTO float_transactions(type,amount_minor,balance_after_minor,order_id,metadata)
+         VALUES('PAYOUT',$1,$2,$3,'{"reason":"courier_pin_instant_payout"}'::jsonb)`,
+        [courierAmount,Math.max(0,floatBalance-courierAmount),order.id]
+      );
+    }
     if(order.courier_user_id && Number(order.escrow_courier_share_minor)>0){
       await client.query(
         `INSERT INTO stakeholder_wallets(user_id,stakeholder_type,balance_minor)
