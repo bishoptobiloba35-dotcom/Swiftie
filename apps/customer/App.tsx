@@ -1252,12 +1252,12 @@ export default function App() {
       <Pressable style={[styles.choice, paymentMode === "SENDER_ESCROW" && styles.choiceActive]} onPress={() => setPaymentMode("SENDER_ESCROW")}>
         <Text style={styles.photoTitle}>Sender pays</Text><Text style={styles.muted}>Payment is held until receiver PIN confirmation.</Text>
       </Pressable>
-      <Pressable style={[styles.choice, paymentMode === "RECEIVER_ON_DELIVERY" && styles.choiceActive]} onPress={() => setPaymentMode("RECEIVER_ON_DELIVERY")}>
+      <Pressable style={[styles.choice, false && styles.choiceActive]} onPress={() => setPaymentMode("SENDER_ESCROW")}>
         <Text style={styles.photoTitle}>Receiver pays</Text><Text style={styles.muted}>No escrow. Receiver pays after confirming the package.</Text>
       </Pressable>
     </View>
     {paymentMode === "SENDER_ESCROW" && <Text style={styles.hint}>Sender payment is held in SwiftDrop's application-level escrow ledger and released only after receiver PIN confirmation.</Text>}
-    {paymentMode === "RECEIVER_ON_DELIVERY" && <Text style={styles.hint}>The receiver confirms the package first, then pays the server-authoritative order total through SwiftDrop. Courier payout waits for verified payment.</Text>}
+    {false && <Text style={styles.hint}>The receiver confirms the package first, then pays the server-authoritative order total through SwiftDrop. Courier payout waits for verified payment.</Text>}
     <Pressable style={styles.primary} onPress={() => void createDelivery()}><Text style={styles.primaryText}>{paymentMode === "SENDER_ESCROW" ? "Place order & pay" : "Place order — receiver pays"}</Text></Pressable>
     {delivery?.status === "PAYMENT_AUTHORIZED" && <Text style={styles.done}>✓ Payment verified — driver matching can begin.</Text>}
     {delivery && <Text style={styles.code}>Tracking code: {delivery.trackingCode}</Text>}
@@ -1318,7 +1318,7 @@ export default function App() {
       </View>}
 {delivery.status === "ARRIVED" && <View style={styles.ratingBox}>
         <Text style={styles.photoTitle}>Receiver confirmation</Text>
-        <Text style={styles.muted}>{delivery.paymentMode === "RECEIVER_ON_DELIVERY" ? "Only confirm after you have physically received the parcel. Your confirmation starts the receiver payment step." : "Only confirm after you have physically received the parcel. This releases the held courier payment."}</Text>
+        <Text style={styles.muted}>{delivery.false ? "Only confirm after you have physically received the parcel. Your confirmation starts the receiver payment step." : "Only confirm after you have physically received the parcel. This releases the held courier payment."}</Text>
         <TextInput style={styles.input} placeholder="4-digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} />
         <Pressable style={styles.primary} onPress={() => void confirmReceipt()}><Text style={styles.primaryText}>I received the parcel & complete delivery</Text></Pressable>
       </View>}
