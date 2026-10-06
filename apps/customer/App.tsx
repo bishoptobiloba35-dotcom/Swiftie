@@ -11,13 +11,16 @@ import { SwiftDropApi, type ApiDelivery } from "../../packages/shared/src/api";
 import { haversineDistanceMeters, etaMinutes } from "./src/trackingMath";
 import Phase1Home from "./src/Phase1Home";
 import OrderHistory from "./src/OrderHistory";
+import EscrowPaymentScreen from "./src/EscrowPaymentScreen";
+import WalletScreen from "./src/WalletScreen";
+import PayoutRequestScreen from "./src/PayoutRequestScreen";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 const api = new SwiftDropApi(API_URL);
 
 export default function App() {
   const [signedIn, setSignedIn] = React.useState(false);
-  const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS" | "HISTORY">("HOME");
+  const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS" | "HISTORY" | "WALLET" | "ESCROW" | "PAYOUT">("HOME");
   const [errandDraft, setErrandDraft] = React.useState({
     errandType: "GENERAL_ERRAND" as "GENERAL_ERRAND" | "PURCHASE_AND_DELIVER" | "SHOP_FOR_ME",
     description: "",
@@ -896,6 +899,20 @@ export default function App() {
 
   if (homeSection === "HISTORY") {
     return <SafeAreaView style={styles.safe}><OrderHistory api={api} onBack={() => setHomeSection("HOME")} onTrack={(trackingCode) => { setTrackingCode(trackingCode); setHomeSection("TRACK"); }} /></SafeAreaView>;
+  }
+
+  if (homeSection === "WALLET") {
+    return <SafeAreaView style={styles.safe}><WalletScreen api={api} onBack={() => setHomeSection("HOME")} onPayout={() => setHomeSection("PAYOUT")} /></SafeAreaView>;
+  }
+
+  if (homeSection === "PAYOUT") {
+    return <SafeAreaView style={styles.safe}><PayoutRequestScreen api={api} onBack={() => setHomeSection("WALLET")} /></SafeAreaView>;
+  }
+
+  if (homeSection === "ESCROW") {
+    const escrowAmount = Number(delivery?.quote?.totalMinor ?? quote?.totalMinor ?? 0);
+    if (!delivery || !escrowAmount) return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}><View style={styles.card}><Text style={styles.homeHeading}>Escrow Payment</Text><Text style={styles.muted}>Create an order first. Every payment is secured through in-app escrow; cash is not accepted.</Text><Pressable style={styles.primary} onPress={() => setHomeSection("ORDER")}><Text style={styles.primaryText}>Place your order</Text></Pressable></View></ScrollView></SafeAreaView>;
+    return <SafeAreaView style={styles.safe}><EscrowPaymentScreen api={api} orderId={delivery.id} amountMinor={escrowAmount} onBack={() => setHomeSection("HOME")} /></SafeAreaView>;
   }
 
   if (homeSection === "LOCATIONS") {
