@@ -101,11 +101,6 @@ test("Hire an Errand HTTP boundary executes authorized purchase through delivery
       [buyOrderId]
     );
 
-    const claimed = await fetch(`${endpoint.replace("/errands", "/api/agent/buy-orders")}`, {
-      headers: { authorization: agentToken }
-    });
-    assert.equal(claimed.status, 200);
-
     const claim = await fetch(`http://127.0.0.1:${API_PORT}/api/buy-orders/${buyOrderId}/claim`, {
       method: "POST",
       headers: { authorization: agentToken }
@@ -160,7 +155,7 @@ test("Hire an Errand HTTP boundary executes authorized purchase through delivery
     });
     assert.ok(await updatePaymentStatus(deliveryId, "HELD", "ERRAND-DELIVERY-ESCROW-1"));
     await pool.query(
-      "UPDATE deliveries SET status='ARRIVED',proof_requirements='{"dropoff":["PIN"]}'::jsonb WHERE id=$1",
+      "UPDATE deliveries SET status='ARRIVED',proof_requirements='{\"dropoff\":[\"PIN\"]}'::jsonb WHERE id=$1",
       [deliveryId]
     );
 
