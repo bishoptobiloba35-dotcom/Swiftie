@@ -1340,7 +1340,7 @@ router.post("/admin/buy-order-settlements/:id/pay", requireAuth("ADMIN"), async(
       return res.status(502).json({error:payload.message??"Paystack transfer could not be initiated"});
     }
     if(payload.data.reference!==reference)await pool.query("UPDATE buy_order_settlements SET transfer_reference=$2,updated_at=now() WHERE id=$1",[id,payload.data.reference]);
-    return const settlement = (await pool.query("SELECT id,buy_order_id,agent_id,amount_minor,currency,status,provider_status,failure_reason,paid_at,created_at,updated_at FROM buy_order_settlements WHERE id=$1",[id])).rows[0];
+    const settlement = (await pool.query("SELECT id,buy_order_id,agent_id,amount_minor,currency,status,provider_status,failure_reason,paid_at,created_at,updated_at FROM buy_order_settlements WHERE id=$1",[id])).rows[0];
     return res.status(202).json({settlement: settlement ? { id:settlement.id,buyOrderId:settlement.buy_order_id,agentId:settlement.agent_id,amountMinor:Number(settlement.amount_minor),currency:settlement.currency,status:settlement.status,providerStatus:settlement.provider_status,failureReason:settlement.failure_reason,paidAt:settlement.paid_at,createdAt:settlement.created_at,updatedAt:settlement.updated_at } : null});
   }catch(error){try{await client.query("ROLLBACK")}catch{}throw error}finally{client.release();}
 });
