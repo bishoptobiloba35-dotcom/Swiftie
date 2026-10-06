@@ -99,7 +99,38 @@ router.post("/errands", requireAuth("CUSTOMER"), async (req, res) => {
       [errand.id]
     );
     await client.query("COMMIT");
-    return res.status(201).json({ errand, items: createdItems.rows });
+    return res.status(201).json({
+      errand: {
+        id: errand.id,
+        errandType: errand.errand_type,
+        status: errand.status,
+        description: errand.item_description,
+        merchantName: errand.merchant_name,
+        merchantAddress: errand.merchant_address,
+        purchaseBudgetMinor: Number(errand.purchase_budget_minor ?? 0),
+        currency: errand.currency,
+        replacementPolicy: errand.replacement_policy,
+        maxPriceDeltaMinor: Number(errand.max_price_delta_minor ?? 0),
+        instructions: errand.errand_instructions,
+        requestedCompletionAt: errand.requested_completion_at,
+        receiverName: errand.receiver_name,
+        receiverPhone: errand.receiver_phone,
+        destinationAddress: errand.destination_address,
+        destinationLat: errand.destination_lat,
+        destinationLng: errand.destination_lng,
+        createdAt: errand.created_at,
+        updatedAt: errand.updated_at
+      },
+      items: createdItems.rows.map((item) => ({
+        id: item.id,
+        description: item.requested_description,
+        quantity: Number(item.quantity),
+        maxAuthorizedMinor: Number(item.max_authorized_minor),
+        requestedPriceMinor: item.requested_price_minor == null ? null : Number(item.requested_price_minor),
+        replacementPolicy: item.replacement_policy,
+        status: item.status
+      }))
+    });
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -223,7 +254,20 @@ router.get("/errands/:id/replacements", requireAuth("CUSTOMER", "ADMIN", "AGENT"
       ORDER BY i.created_at ASC`,
     [id]
   );
-  res.json({ replacementReviewRequired: order.replacement_review_required, reviewDeadline: order.replacement_review_deadline, items: items.rows });
+  res.json({
+    replacementReviewRequired: order.replacement_review_required,
+    reviewDeadline: order.replacement_review_deadline,
+    items: items.rows.map((item) => ({
+      id: item.id,
+      description: item.requested_description,
+      quantity: Number(item.quantity),
+      maxAuthorizedMinor: Number(item.max_authorized_minor),
+      requestedPriceMinor: item.requested_price_minor == null ? null : Number(item.requested_price_minor),
+      replacementPolicy: item.replacement_policy,
+      status: item.status,
+      replacements: item.replacements
+    }))
+  });
 });
 
 router.get("/errands", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
