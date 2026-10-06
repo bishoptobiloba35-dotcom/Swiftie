@@ -1136,8 +1136,12 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
            FROM escrow_payment_attempts epa
            JOIN deliveries d ON d.id=epa.order_id
           WHERE epa.provider_reference=$1
+             OR epa.order_id IN (
+               SELECT va.order_id FROM virtual_accounts va
+                WHERE va.account_number=$2 AND va.status='ACTIVE'
+             )
           FOR UPDATE`,
-        [escrowReference]
+        [escrowReference, String(event?.data?.authorization?.receiver_bank_account_number ?? "")]
       )).rows[0];
       if (attempt) {
         const providerAmount = Number(event?.data?.amount);
