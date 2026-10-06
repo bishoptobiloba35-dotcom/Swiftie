@@ -63,7 +63,8 @@ function publicAgentBuyOrder(row: Record<string, unknown>) {
     purchased_at: row.purchased_at,
     assigned_at: row.assigned_at,
     created_at: row.created_at,
-    updated_at: row.updated_at
+    updated_at: row.updated_at,
+    stops: Array.isArray(row.stops) ? row.stops.map((stop: any) => ({ id: stop.id, order: Number(stop.stopOrder), stopType: stop.stopType, label: stop.label, address: stop.address, latitude: Number(stop.latitude), longitude: Number(stop.longitude), instructions: stop.instructions, status: stop.status, completedAt: stop.completedAt, completedByUserId: stop.completedByUserId })) : []
   };
 }
 
@@ -127,6 +128,26 @@ router.get("/agent/settlements", requireAuth("AGENT"), async(req,res)=>{
 });
 
 
+
+
+router.post("/agent/buy-orders/:id/stops/:stopId/complete", requireAuth("AGENT"), async (req,res)=>{
+  if(!pool) return res.status(503).json({error:"Database is not configured"});
+  const agent=await getAgent(identity(req));
+  if(!agent || agent.status!=="APPROVED") return res.status(403).json({error:"Approved agent status is required"});
+  const id=orderId(req); const stopId=String(req.params.stopId??"").trim();
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const order=(await client.query("SELECT id,agent_id,status FROM buy_orders WHERE id=$1 FOR UPDATE",[id])).rows[0];
+    if(!order || order.agent_id!==agent.id){await client.query("ROLLBACK");return res.status(404).json({error:"Errand not found"});}
+    if(!["AGENT_ASSIGNED","PURCHASING","PURCHASED","IN_TRANSIT"].includes(order.status)){await client.query("ROLLBACK");return res.status(409).json({error:"Errand is not active"});}
+    const stop=(await client.query("UPDATE buy_order_stops SET status='COMPLETED',completed_at=now(),completed_by_user_id=$3,updated_at=now() WHERE id=$1 AND buy_order_id=$2 AND status IN ('PENDING','IN_PROGRESS') RETURNING id,stop_order,stop_type,label,address,latitude,longitude,instructions,status,completed_at,completed_by_user_id",[stopId,id,identity(req)])).rows[0];
+    if(!stop){await client.query("ROLLBACK");return res.status(409).json({error:"Stop not found or already completed"});}
+    await client.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,'ERRAND_STOP_COMPLETED',$3::jsonb)",[id,identity(req),JSON.stringify({stopId:stop.id,stopOrder:stop.stop_order})]);
+    await client.query("COMMIT");
+    return res.json({stop:{id:stop.id,order:Number(stop.stop_order),stopType:stop.stop_type,label:stop.label,address:stop.address,latitude:Number(stop.latitude),longitude:Number(stop.longitude),instructions:stop.instructions,status:stop.status,completedAt:stop.completed_at,completedByUserId:stop.completed_by_user_id}});
+  }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
+});
 
 router.post("/agent/buy-orders/:id/replacement", requireAuth("AGENT"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
@@ -382,10 +403,16 @@ router.get("/agent/buy-orders", requireAuth("AGENT"), async (req, res) => {
   const agent = await getAgent(identity(req));
   if (!agent) return res.status(404).json({ error: "Agent profile not found" });
   const result = await pool.query(
-    `SELECT * FROM buy_orders
-      WHERE (agent_id=$1 AND status IN ('AGENT_ASSIGNED','PURCHASING','PURCHASED','IN_TRANSIT','DELIVERED','DISPUTED'))
-         OR (agent_id IS NULL AND status IN ('REQUESTED','APPROVED'))
-      ORDER BY created_at ASC
+    `SELECT bo.*,
+        COALESCE((SELECT json_agg(json_build_object(
+          'id',s.id,'stopOrder',s.stop_order,'stopType',s.stop_type,'label',s.label,'address',s.address,
+          'latitude',s.latitude,'longitude',s.longitude,'instructions',s.instructions,'status',s.status,
+          'completedAt',s.completed_at,'completedByUserId',s.completed_by_user_id
+        ) ORDER BY s.stop_order) FROM buy_order_stops s WHERE s.buy_order_id=bo.id),'[]'::json) AS stops
+       FROM buy_orders bo
+      WHERE (bo.agent_id=$1 AND bo.status IN ('AGENT_ASSIGNED','PURCHASING','PURCHASED','IN_TRANSIT','DELIVERED','DISPUTED'))
+         OR (bo.agent_id IS NULL AND bo.status IN ('REQUESTED','APPROVED'))
+      ORDER BY bo.created_at ASC
       LIMIT 100`,
     [agent.id]
   );
