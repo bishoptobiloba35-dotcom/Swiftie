@@ -1,5 +1,14 @@
 import type { ExpoConfig } from "expo/config";
 
+const apiUrl = process.env.EXPO_PUBLIC_API_URL ?? "";
+const isProduction = process.env.EAS_BUILD_PROFILE === "production" || process.env.NODE_ENV === "production";
+if (isProduction && (!apiUrl || apiUrl.includes("example.com"))) {
+  throw new Error("Production mobile builds require EXPO_PUBLIC_API_URL to point to the real HTTPS SwiftDrop API.");
+}
+if (isProduction && apiUrl && !apiUrl.startsWith("https://")) {
+  throw new Error("Production mobile builds require an HTTPS EXPO_PUBLIC_API_URL.");
+}
+
 const config: ExpoConfig = {
   name: "SwiftDrop",
   slug: "swiftdrop",
@@ -19,13 +28,7 @@ const config: ExpoConfig = {
     config: { googleMaps: { apiKey: process.env.GOOGLE_MAPS_API_KEY ?? "ci-validation-placeholder" } }
   },
   plugins: [
-    [
-      "expo-location",
-      {
-        isAndroidBackgroundLocationEnabled: false,
-        isIosBackgroundLocationEnabled: false
-      }
-    ],
+    ["expo-location", { isAndroidBackgroundLocationEnabled: false, isIosBackgroundLocationEnabled: false }],
     "expo-notifications",
     ["expo-image-picker", { photosPermission: "SwiftDrop uses your photos so you can add product images to marketplace listings.", cameraPermission: "SwiftDrop uses your camera so you can photograph products for marketplace listings.", microphonePermission: false }]
   ]
