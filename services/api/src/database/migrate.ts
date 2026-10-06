@@ -62,6 +62,7 @@ const migrations = [
   { id: "063_swiftdrop_business_trust_rules", file: "063_swiftdrop_business_trust_rules.sql" },
   { id: "064_swiftdrop_operational_controls", file: "064_swiftdrop_operational_controls.sql" },
   { id: "065_phase2_in_app_escrow", file: "065_phase2_in_app_escrow.sql" },
+  { id: "066_phase2_settlement_release", file: "066_phase2_settlement_release.sql" },
 ];
 
 export async function runMigrations(): Promise<void> {
