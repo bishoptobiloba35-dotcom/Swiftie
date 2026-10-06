@@ -26,7 +26,7 @@
 ## Remaining production milestones
 
 1. Add automated database integration coverage for every delivery-state transition, receiver PIN completion, escrow release, disputes, support, payout webhooks, notification outbox, and object-storage authorization.
-2. Add external alerting and operational dashboards on top of the authenticated metrics and external error-reporting foundation.
+2. Connect the committed Prometheus alert rules to production Prometheus/Alertmanager (or an equivalent hosted monitor) and an on-call notification channel; add an operational dashboard after the production scrape is live.
 3. Finish mobile app-store production configuration, privacy disclosures, terms/acceptable-use flows, notification credentials, and release builds; legal text should receive Nigerian counsel/privacy review before launch.
 5. Commit a reproducible npm lockfile and restore locked installs/caching in CI once dependency resolution is stable.
 6. After CI is verified green, enable branch protection with required production CI checks.
