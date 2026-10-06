@@ -57,7 +57,9 @@ const migrations = [
   { id: "058_errand_item_price_authorization", file: "058_errand_item_price_authorization.sql" },
   { id: "059_errand_item_refunds", file: "059_errand_item_refunds.sql" },
   { id: "060_errand_multi_stop", file: "060_errand_multi_stop.sql" },
+  { id: "061_notification_dead_letter", file: "061_notification_dead_letter.sql" },
 ];
+
 export async function runMigrations(): Promise<void> {
   if (!pool) return;
   await pool.query(`
@@ -66,14 +68,9 @@ export async function runMigrations(): Promise<void> {
       applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
-
   for (const migration of migrations) {
     const migrationUrl = new URL("./migrations/" + migration.file, import.meta.url);
     const sql = await readFile(migrationUrl, "utf8");
-
-    // Multiple API workers/tests can bootstrap the same database concurrently.
-    // Serialize migration check + execution so two processes cannot both insert
-    // the same migration id or partially advance the schema at the same time.
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
