@@ -151,6 +151,7 @@ const createDeliverySchema = z.object({
   dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
   isPerishable: z.boolean(),
   declaredValueMinor: z.number().int().positive().max(10000000000),
+  includeProtection: z.boolean().default(true),
   pickup: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   dropoff: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   pickupDropOffLocationId: z.string().uuid().optional(),
@@ -166,6 +167,9 @@ const createDeliverySchema = z.object({
     weightFareMinor: z.number().int().nonnegative(),
     sizeFareMinor: z.number().int().nonnegative(),
     perishableSurchargeMinor: z.number().int().nonnegative(),
+    fuelReferenceMinor: z.number().int().nonnegative(),
+    protectionReserveMinor: z.number().int().nonnegative(),
+    pricingVersion: z.number().int().positive(),
     serviceFeeMinor: z.number().int().nonnegative(),
     totalMinor: z.number().int().positive()
   })
