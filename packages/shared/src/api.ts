@@ -141,6 +141,11 @@ export class SwiftDropApi {
     const data=await response.json(); if(!response.ok) throw new Error(data.error ?? "Unable to confirm receiver PIN"); return data;
   }
 
+  async createVirtualAccount(orderId: string): Promise<any> {
+    const response=await fetch(this.baseUrl+"/api/virtual-account/create",{method:"POST",headers:this.headers(true),body:JSON.stringify({orderId})});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error ?? "Unable to create virtual account"); return data;
+  }
+
   async walletBalance(): Promise<any> {
     const response=await fetch(this.baseUrl + "/api/wallet/balance",{headers:this.headers()});
     const data=await response.json(); if(!response.ok) throw new Error(data.error ?? "Unable to load wallet"); return data.wallet;
