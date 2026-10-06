@@ -176,13 +176,14 @@ const quoteSchema = z.object({
   weightKg: z.number().positive().max(1000),
   dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
   isPerishable: z.boolean(),
-  declaredValueMinor: z.number().int().positive().max(10000000000)
+  declaredValueMinor: z.number().int().positive().max(10000000000),
+  includeProtection: z.boolean().default(true)
 });
 
 async function calculateQuote(
   pickup: { latitude: number; longitude: number },
   dropoff: { latitude: number; longitude: number },
-  parcel: { weightKg: number; dimensionsCm: { length: number; width: number; height: number }; isPerishable: boolean; declaredValueMinor: number }
+  parcel: { weightKg: number; dimensionsCm: { length: number; width: number; height: number }; isPerishable: boolean; declaredValueMinor: number; includeProtection?: boolean }
 ): Promise<DeliveryQuote> {
   const config = await getActivePricingConfig();
   const earthRadius = 6371000;
@@ -204,7 +205,7 @@ async function calculateQuote(
   const handlingMinor = baseFareMinor + distanceFareMinor + weightFareMinor + sizeFareMinor;
   const perishableSurchargeMinor = parcel.isPerishable ? Math.ceil(handlingMinor * config.perishableSurchargeBps / 10000) : 0;
   const serviceFeeMinor = Math.ceil((handlingMinor + perishableSurchargeMinor) * config.serviceChargeBps / 10000);
-  const protectionReserveMinor = Math.ceil(parcel.declaredValueMinor * config.protectionReserveBps / 10000);
+  const protectionReserveMinor = parcel.includeProtection === false ? 0 : Math.ceil(parcel.declaredValueMinor * config.protectionReserveBps / 10000);
   return {
     currency: "NGN",
     distanceMeters: Math.round(distanceMeters),
@@ -579,7 +580,7 @@ app.get("/api/locations/search", requireAuth("CUSTOMER"), async (req, res) => {
 app.post("/api/quotes", requireAuth("CUSTOMER"), async (req, res) => {
   const parsed = quoteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  try { res.json(await calculateQuote(parsed.data.pickup, parsed.data.dropoff, { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable, declaredValueMinor: parsed.data.declaredValueMinor })); } catch (error) { res.status(503).json({ error: error instanceof Error ? error.message : "Pricing configuration is unavailable" }); }
+  try { res.json(await calculateQuote(parsed.data.pickup, parsed.data.dropoff, { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable, declaredValueMinor: parsed.data.declaredValueMinor, includeProtection: parsed.data.includeProtection })); } catch (error) { res.status(503).json({ error: error instanceof Error ? error.message : "Pricing configuration is unavailable" }); }
 });
 
 app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
@@ -589,7 +590,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   const quote = await calculateQuote(
     { latitude: parsed.data.pickup.latitude, longitude: parsed.data.pickup.longitude },
     { latitude: parsed.data.dropoff.latitude, longitude: parsed.data.dropoff.longitude },
-    { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable, declaredValueMinor: parsed.data.declaredValueMinor }
+    { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable, declaredValueMinor: parsed.data.declaredValueMinor, includeProtection: parsed.data.includeProtection }
   );
   if (quote.currency !== "NGN" || !Number.isSafeInteger(quote.totalMinor) || quote.totalMinor <= 0) {
     return res.status(500).json({ error: "Unable to calculate delivery quote" });
