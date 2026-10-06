@@ -63,7 +63,7 @@ router.get("/business/recurring-dispatches", requireAuth("CUSTOMER", "ADMIN"), a
   const m = await member(identity(req), businessId);
   if (!m && (req as any).user?.role !== "ADMIN") return res.status(403).json({ error: "Business membership required" });
   const result = await pool.query(
-    "SELECT * FROM business_recurring_dispatches WHERE business_id=$1 ORDER BY created_at DESC",
+    "SELECT id,business_id,name,cadence_minutes,next_run_at,approval_required,active,last_run_at,last_dispatch_plan_id,created_at,updated_at FROM business_recurring_dispatches WHERE business_id=$1 ORDER BY created_at DESC",
     [businessId]
   );
   res.json({ recurringDispatches: result.rows.map(publicRecurringDispatch) });
@@ -88,7 +88,7 @@ router.post("/business/recurring-dispatches", requireAuth("CUSTOMER", "ADMIN"), 
     `INSERT INTO business_recurring_dispatches
       (business_id, created_by_user_id, name, cadence_minutes, next_run_at, approval_required, template)
      VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)
-     RETURNING *`,
+     RETURNING id,business_id,name,cadence_minutes,next_run_at,approval_required,active,last_run_at,last_dispatch_plan_id,created_at,updated_at`,
     [parsed.data.businessId, userId, parsed.data.name, parsed.data.cadenceMinutes, parsed.data.nextRunAt, parsed.data.approvalRequired, JSON.stringify(parsed.data.template)]
   );
   res.status(201).json({ recurringDispatch: publicRecurringDispatch(result.rows[0]) });
@@ -102,7 +102,7 @@ router.post("/business/recurring-dispatches/:id/cancel", requireAuth("CUSTOMER",
   const m = await member(identity(req), current.business_id);
   if (!m || !canDispatchBusiness(m.member_role as any)) return res.status(403).json({ error: "Business dispatch authorization required" });
   const result = await pool.query(
-    "UPDATE business_recurring_dispatches SET active=false, updated_at=now() WHERE id=$1 RETURNING *",
+    "UPDATE business_recurring_dispatches SET active=false, updated_at=now() WHERE id=$1 RETURNING id,business_id,name,cadence_minutes,next_run_at,approval_required,active,last_run_at,last_dispatch_plan_id,created_at,updated_at",
     [id]
   );
   res.json({ recurringDispatch: publicRecurringDispatch(result.rows[0]) });

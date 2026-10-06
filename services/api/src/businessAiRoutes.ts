@@ -568,7 +568,7 @@ router.post("/ai/action", requireAuth("CUSTOMER", "DRIVER", "AGENT", "ADMIN"), a
         userId, plan, capability: "ACTION", action, allowed: true,
         metadata: { dispatchPlanId: planResult.rows[0].id, skippedBuyOrderIds, skippedDeliveryIds }
       });
-      return res.status(201).json({ dispatchPlan: planResult.rows[0], skippedBuyOrderIds, skippedDeliveryIds });
+      return res.status(201).json({ dispatchPlan: publicDispatchPlan(planResult.rows[0]), skippedBuyOrderIds, skippedDeliveryIds });
     } catch (error) {
       try { await client.query("ROLLBACK"); } catch {}
       throw error;
@@ -1139,7 +1139,7 @@ router.get("/buy-orders", requireAuth("CUSTOMER", "AGENT", "ADMIN"), async (req,
     : (req as any).user?.role === "AGENT"
       ? await pool!.query(`SELECT id,customer_user_id,business_id,errand_type,status,item_description,merchant_name,merchant_address,merchant_lat,merchant_lng,purchase_budget_minor,actual_purchase_minor,delivery_fee_minor,total_authorized_minor,currency,notes,replacement_policy,max_price_delta_minor,errand_instructions,requested_completion_at,receiver_name,receiver_phone,destination_address,destination_lat,destination_lng,agent_id,delivery_id,replacement_review_required,replacement_review_deadline,created_at,updated_at FROM buy_orders bo JOIN agent_profiles ap ON ap.id=bo.agent_id WHERE ap.user_id=$1 ORDER BY bo.created_at DESC LIMIT 100`, [userId])
       : await pool!.query(`SELECT id,customer_user_id,business_id,errand_type,status,item_description,merchant_name,merchant_address,merchant_lat,merchant_lng,purchase_budget_minor,actual_purchase_minor,delivery_fee_minor,total_authorized_minor,currency,notes,replacement_policy,max_price_delta_minor,errand_instructions,requested_completion_at,receiver_name,receiver_phone,destination_address,destination_lat,destination_lng,agent_id,delivery_id,replacement_review_required,replacement_review_deadline,created_at,updated_at FROM buy_orders WHERE customer_user_id=$1 ORDER BY created_at DESC LIMIT 100`, [userId]);
-  res.json({ buyOrders: result.rows });
+  res.json({ buyOrders: result.rows.map((row) => ({ id: row.id, customerUserId: row.customer_user_id, businessId: row.business_id, errandType: row.errand_type, status: row.status, itemDescription: row.item_description, merchantName: row.merchant_name, merchantAddress: row.merchant_address, merchantLat: row.merchant_lat, merchantLng: row.merchant_lng, purchaseBudgetMinor: Number(row.purchase_budget_minor), actualPurchaseMinor: row.actual_purchase_minor == null ? null : Number(row.actual_purchase_minor), deliveryFeeMinor: Number(row.delivery_fee_minor), totalAuthorizedMinor: Number(row.total_authorized_minor), currency: row.currency, notes: row.notes, replacementPolicy: row.replacement_policy, maxPriceDeltaMinor: Number(row.max_price_delta_minor ?? 0), errandInstructions: row.errand_instructions, requestedCompletionAt: row.requested_completion_at, receiverName: row.receiver_name, receiverPhone: row.receiver_phone, destinationAddress: row.destination_address, destinationLat: row.destination_lat, destinationLng: row.destination_lng, agentId: row.agent_id, deliveryId: row.delivery_id, replacementReviewRequired: row.replacement_review_required, replacementReviewDeadline: row.replacement_review_deadline, createdAt: row.created_at, updatedAt: row.updated_at })) });
 });
 
 router.post("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
@@ -1150,17 +1150,18 @@ router.post("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, 
   const result = await pool!.query(
     `INSERT INTO business_accounts
       (owner_user_id, legal_name, display_name, registration_number, monthly_spend_limit_minor, per_order_limit_minor, requires_approval, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,owner_user_id,legal_name,display_name,registration_number,monthly_spend_limit_minor,per_order_limit_minor,requires_approval,status,created_at,updated_at`,
     [userId, parsed.data.legalName, parsed.data.displayName, parsed.data.registrationNumber ?? null, parsed.data.monthlySpendLimitMinor, parsed.data.perOrderLimitMinor, parsed.data.requiresApproval, (req as any).user?.role === "ADMIN" ? "ACTIVE" : "PENDING"]
   );
   await pool!.query("INSERT INTO business_members (business_id, user_id, member_role) VALUES ($1,$2,'OWNER')", [result.rows[0].id, userId]);
-  res.status(201).json({ business: result.rows[0] });
+  const business = result.rows[0];
+  res.status(201).json({ business: { id: business.id, ownerUserId: business.owner_user_id, legalName: business.legal_name, displayName: business.display_name, registrationNumber: business.registration_number, monthlySpendLimitMinor: Number(business.monthly_spend_limit_minor ?? 0), perOrderLimitMinor: Number(business.per_order_limit_minor ?? 0), requiresApproval: business.requires_approval, status: business.status, createdAt: business.created_at, updatedAt: business.updated_at } });
 });
 
 router.get("/admin/business/recurring-dispatches", requireAuth("ADMIN"), async (_req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool.query(
-    `SELECT rd.*, ba.display_name AS business_name,
+    `SELECT rd.id,rd.business_id,rd.frequency,rd.next_run_at,rd.active,rd.last_run_at,rd.last_dispatch_plan_id,rd.created_at,rd.updated_at, ba.display_name AS business_name,
             bdp.status AS plan_status, bdp.created_at AS plan_created_at
        FROM business_recurring_dispatches rd
        JOIN business_accounts ba ON ba.id=rd.business_id
@@ -1168,16 +1169,30 @@ router.get("/admin/business/recurring-dispatches", requireAuth("ADMIN"), async (
       ORDER BY rd.active DESC, rd.next_run_at ASC
       LIMIT 200`
   );
-  res.json({ recurringDispatches: result.rows });
+  res.json({ recurringDispatches: result.rows.map((row) => ({ id: row.id, businessId: row.business_id, frequency: row.frequency, nextRunAt: row.next_run_at, active: row.active, lastRunAt: row.last_run_at, lastDispatchPlanId: row.last_dispatch_plan_id, createdAt: row.created_at, updatedAt: row.updated_at, businessName: row.business_name, planStatus: row.plan_status, planCreatedAt: row.plan_created_at })) });
 });
 
 router.get("/business/accounts", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Business accounts require the production database" });
   const userId = identity(req);
   const result = (req as any).user?.role === "ADMIN"
-    ? await pool!.query("SELECT * FROM business_accounts ORDER BY created_at DESC LIMIT 200")
-    : await pool!.query("SELECT ba.* FROM business_accounts ba JOIN business_members bm ON bm.business_id=ba.id WHERE bm.user_id=$1 AND bm.active=true ORDER BY ba.created_at DESC", [userId]);
-  res.json({ businesses: result.rows });
+    ? await pool!.query("SELECT id,owner_user_id,legal_name,display_name,registration_number,monthly_spend_limit_minor,per_order_limit_minor,requires_approval,status,created_at,updated_at FROM business_accounts ORDER BY created_at DESC LIMIT 200")
+    : await pool!.query("SELECT ba.id,ba.owner_user_id,ba.legal_name,ba.display_name,ba.registration_number,ba.monthly_spend_limit_minor,ba.per_order_limit_minor,ba.requires_approval,ba.status,ba.created_at,ba.updated_at FROM business_accounts ba JOIN business_members bm ON bm.business_id=ba.id WHERE bm.user_id=$1 AND bm.active=true ORDER BY ba.created_at DESC", [userId]);
+  res.json({ businesses: result.rows.map((row) => ({ id: row.id, ownerUserId: row.owner_user_id, legalName: row.legal_name, displayName: row.display_name, registrationNumber: row.registration_number, monthlySpendLimitMinor: Number(row.monthly_spend_limit_minor ?? 0), perOrderLimitMinor: Number(row.per_order_limit_minor ?? 0), requiresApproval: row.requires_approval, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at })) });
+});
+
+const publicDropOffParcel = (row: any) => ({
+  id: row.id,
+  deliveryId: row.delivery_id,
+  locationId: row.location_id,
+  endpoint: row.endpoint,
+  status: row.status,
+  receivedAt: row.received_at,
+  courierDriverId: row.courier_driver_id,
+  courierCollectedAt: row.courier_collected_at,
+  completedAt: row.completed_at,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at
 });
 
 const dropOffApplicationSchema = z.object({
@@ -1207,7 +1222,7 @@ router.post("/drop-off/applications", requireAuth("CUSTOMER","AGENT","ADMIN"), a
     }
     const location=await client.query("INSERT INTO drop_off_locations(business_id,name,address,latitude,longitude,phone,operating_hours,capacity,commission_minor) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) RETURNING *",[businessId,d.name,d.address,d.latitude,d.longitude,d.phone,JSON.stringify(d.operatingHours),d.capacity,50000]);
     await client.query("INSERT INTO drop_off_application_audit(location_id,actor_user_id,new_status,note) VALUES($1,$2,'PENDING','Application submitted')",[location.rows[0].id,userId]);
-    await client.query("COMMIT"); res.status(201).json({location:location.rows[0]});
+    await client.query("COMMIT"); res.status(201).json({location:{id:location.rows[0].id,businessId:location.rows[0].business_id,name:location.rows[0].name,address:location.rows[0].address,latitude:Number(location.rows[0].latitude),longitude:Number(location.rows[0].longitude),phone:location.rows[0].phone,operatingHours:location.rows[0].operating_hours,capacity:Number(location.rows[0].capacity),commissionMinor:Number(location.rows[0].commission_minor),status:location.rows[0].status,verificationStatus:location.rows[0].verification_status,createdAt:location.rows[0].created_at,updatedAt:location.rows[0].updated_at}});
   } catch(e){await client.query("ROLLBACK");res.status(400).json({error:e instanceof Error?e.message:"Unable to submit application"});} finally{client.release();}
 });
 router.get("/drop-off/locations", requireAuth("CUSTOMER","AGENT","ADMIN"), async (req,res) => {
@@ -1216,13 +1231,13 @@ router.get("/drop-off/locations", requireAuth("CUSTOMER","AGENT","ADMIN"), async
   if(!Number.isFinite(latitude)||!Number.isFinite(longitude))return res.status(400).json({error:"latitude and longitude are required"});
   const latDelta=radiusKm/111,lngDelta=radiusKm/(111*Math.max(.2,Math.cos(latitude*Math.PI/180)));
   const result=await pool.query("SELECT dl.*,ba.display_name AS business_name FROM drop_off_locations dl JOIN business_accounts ba ON ba.id=dl.business_id WHERE dl.status='ACTIVE' AND dl.verification_status='VERIFIED' AND dl.latitude BETWEEN $1 AND $2 AND dl.longitude BETWEEN $3 AND $4 LIMIT 200",[latitude-latDelta,latitude+latDelta,longitude-lngDelta,longitude+lngDelta]);
-  const locations=result.rows.map(row=>{const p1=latitude*Math.PI/180,p2=Number(row.latitude)*Math.PI/180,dp=(Number(row.latitude)-latitude)*Math.PI/180,dl=(Number(row.longitude)-longitude)*Math.PI/180,h=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return {...row,distanceKm:6371*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h))}}).filter(row=>row.distanceKm<=radiusKm).sort((a,b)=>a.distanceKm-b.distanceKm);
+  const locations=result.rows.map(row=>{const p1=latitude*Math.PI/180,p2=Number(row.latitude)*Math.PI/180,dp=(Number(row.latitude)-latitude)*Math.PI/180,dl=(Number(row.longitude)-longitude)*Math.PI/180,h=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return {id:row.id,businessId:row.business_id,name:row.name,address:row.address,latitude:Number(row.latitude),longitude:Number(row.longitude),phone:row.phone,operatingHours:row.operating_hours,capacity:Number(row.capacity),status:row.status,verificationStatus:row.verification_status,createdAt:row.created_at,updatedAt:row.updated_at,businessName:row.business_name,distanceKm:6371*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h))}}).filter(row=>row.distanceKm<=radiusKm).sort((a,b)=>a.distanceKm-b.distanceKm);
   res.json({locations});
 });
 router.get("/drop-off/locations/mine", requireAuth("CUSTOMER","AGENT","ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const result=await pool.query("SELECT dl.*,ba.display_name AS business_name FROM drop_off_locations dl JOIN business_accounts ba ON ba.id=dl.business_id WHERE ba.owner_user_id=$1 OR EXISTS (SELECT 1 FROM business_members bm WHERE bm.business_id=ba.id AND bm.user_id=$1 AND bm.active=true AND bm.member_role IN ('OWNER','ADMIN')) ORDER BY dl.created_at DESC",[identity(req)]);
-  res.json({locations:result.rows});
+  res.json({locations:result.rows.map(row=>({id:row.id,businessId:row.business_id,name:row.name,address:row.address,latitude:Number(row.latitude),longitude:Number(row.longitude),phone:row.phone,operatingHours:row.operating_hours,capacity:Number(row.capacity),commissionMinor:Number(row.commission_minor),status:row.status,verificationStatus:row.verification_status,createdAt:row.created_at,updatedAt:row.updated_at}))});
 });
 router.post("/drop-off/locations/:id/documents", requireAuth("CUSTOMER","AGENT","ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
@@ -1237,7 +1252,7 @@ router.post("/drop-off/locations/:id/documents", requireAuth("CUSTOMER","AGENT",
   try{
     await putPrivateObject(key,bytes,m[1]);
     const saved=await pool.query("INSERT INTO drop_off_location_documents(location_id,document_type,storage_key,status) VALUES($1,$2,$3,'PENDING') RETURNING id,document_type,status,created_at",[locationId,parsed.data.documentType,key]);
-    res.status(201).json({document:saved.rows[0]});
+    res.status(201).json({document:{id:saved.rows[0].id,documentType:saved.rows[0].document_type,status:saved.rows[0].status,createdAt:saved.rows[0].created_at}});
   }catch(e){res.status(503).json({error:e instanceof Error?e.message:"Unable to store document"});}
 });
 
@@ -1248,7 +1263,8 @@ router.post("/admin/business/accounts/:id/status", requireAuth("ADMIN"), async(r
   const result=await pool.query("UPDATE business_accounts SET status=$2,updated_at=now() WHERE id=$1 RETURNING *",[String(req.params.id),parsed.data.status]);
   if(!result.rows[0])return res.status(404).json({error:"Business account not found"});
   await pool.query("INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES((SELECT owner_user_id FROM business_accounts WHERE id=$1),(SELECT ai_plan FROM users WHERE id=(SELECT owner_user_id FROM business_accounts WHERE id=$1)),'ADMIN_BUSINESS_STATUS','UPDATE',true,'Admin status update',$2::jsonb)",[String(req.params.id),JSON.stringify({businessId:String(req.params.id),status:parsed.data.status})]);
-  return res.json({business:result.rows[0]});
+  const business = result.rows[0];
+  return res.json({business: { id: business.id, displayName: business.display_name, status: business.status, ownerUserId: business.owner_user_id, createdAt: business.created_at, updatedAt: business.updated_at }});
 });
 
 router.post("/admin/ai/users/:id/plan", requireAuth("ADMIN"), async(req,res)=>{
@@ -1275,7 +1291,8 @@ router.get("/drop-off/settlement-account/:id", requireAuth("CUSTOMER","AGENT","A
   const id=String(req.params.id),role=(req as any).user?.role;
   if(role!=="ADMIN"&&!await managesDropOff(identity(req),id))return res.status(403).json({error:"Not authorized"});
   const result=await pool.query("SELECT id,bank_code,bank_name,account_name,account_last4,currency,active,verified_at,created_at,updated_at FROM drop_off_settlement_accounts WHERE location_id=$1",[id]);
-  res.json({account:result.rows[0]??null});
+  const account=result.rows[0];
+  res.json({account:account?{id:account.id,bankCode:account.bank_code,bankName:account.bank_name,accountName:account.account_name,accountLast4:account.account_last4,currency:account.currency,active:account.active,verifiedAt:account.verified_at,createdAt:account.created_at,updatedAt:account.updated_at}:null});
 });
 router.post("/drop-off/settlement-account/:id", requireAuth("CUSTOMER","AGENT","ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
@@ -1295,7 +1312,7 @@ router.post("/drop-off/settlement-account/:id", requireAuth("CUSTOMER","AGENT","
     ON CONFLICT(location_id) DO UPDATE SET recipient_code=EXCLUDED.recipient_code,bank_code=EXCLUDED.bank_code,bank_name=EXCLUDED.bank_name,account_name=EXCLUDED.account_name,account_last4=EXCLUDED.account_last4,active=true,verified_at=now(),updated_at=now()
     RETURNING id,bank_code,bank_name,account_name,account_last4,currency,active,verified_at,created_at,updated_at`,
     [id,recipient.data.recipient_code,parsed.data.bankCode,recipient.data.details?.bank_name??null,resolved.data.account_name,parsed.data.accountNumber.slice(-4)]);
-  res.status(201).json({account:saved.rows[0]});
+  res.status(201).json({account:{id:saved.rows[0].id,bankCode:saved.rows[0].bank_code,bankName:saved.rows[0].bank_name,accountName:saved.rows[0].account_name,accountLast4:saved.rows[0].account_last4,currency:saved.rows[0].currency,active:saved.rows[0].active,verifiedAt:saved.rows[0].verified_at,createdAt:saved.rows[0].created_at,updatedAt:saved.rows[0].updated_at}});
 });
 router.post("/admin/buy-order-settlements/:id/pay", requireAuth("ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
@@ -1323,7 +1340,8 @@ router.post("/admin/buy-order-settlements/:id/pay", requireAuth("ADMIN"), async(
       return res.status(502).json({error:payload.message??"Paystack transfer could not be initiated"});
     }
     if(payload.data.reference!==reference)await pool.query("UPDATE buy_order_settlements SET transfer_reference=$2,updated_at=now() WHERE id=$1",[id,payload.data.reference]);
-    return res.status(202).json({settlement:(await pool.query("SELECT * FROM buy_order_settlements WHERE id=$1",[id])).rows[0]});
+    const settlement = (await pool.query("SELECT id,buy_order_id,agent_id,amount_minor,currency,status,provider_status,failure_reason,paid_at,created_at,updated_at FROM buy_order_settlements WHERE id=$1",[id])).rows[0];
+    return res.status(202).json({settlement: settlement ? { id:settlement.id,buyOrderId:settlement.buy_order_id,agentId:settlement.agent_id,amountMinor:Number(settlement.amount_minor),currency:settlement.currency,status:settlement.status,providerStatus:settlement.provider_status,failureReason:settlement.failure_reason,paidAt:settlement.paid_at,createdAt:settlement.created_at,updatedAt:settlement.updated_at } : null});
   }catch(error){try{await client.query("ROLLBACK")}catch{}throw error}finally{client.release();}
 });
 router.post("/admin/drop-off/commission/:id/pay", requireAuth("ADMIN"), async(req,res)=>{
@@ -1346,14 +1364,15 @@ router.post("/admin/drop-off/commission/:id/pay", requireAuth("ADMIN"), async(re
       return res.status(502).json({error:payload.message??"Paystack transfer could not be initiated"});
     }
     if(payload.data.reference!==reference)await pool.query("UPDATE drop_off_commission_ledger SET provider_reference=$2,updated_at=now() WHERE id=$1",[id,payload.data.reference]);
-    return res.status(202).json({commission:(await pool.query("SELECT * FROM drop_off_commission_ledger WHERE id=$1",[id])).rows[0]});
+    const commission = (await pool.query("SELECT id,location_id,amount_minor,currency,status,provider_status,failure_reason,paid_at,created_at,updated_at FROM drop_off_commission_ledger WHERE id=$1",[id])).rows[0];
+    return res.status(202).json({commission: commission ? { id:commission.id,locationId:commission.location_id,amountMinor:Number(commission.amount_minor),currency:commission.currency,status:commission.status,providerStatus:commission.provider_status,failureReason:commission.failure_reason,paidAt:commission.paid_at,createdAt:commission.created_at,updatedAt:commission.updated_at } : null});
   }catch(error){try{await client.query("ROLLBACK")}catch{}throw error}finally{client.release();}
 });
 
 router.get("/admin/buy-order-settlements", requireAuth("ADMIN"), async(_req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
-  const result=await pool.query("SELECT s.*,bo.item_description,bo.customer_user_id,ap.user_id AS agent_user_id,u.full_name AS agent_name FROM buy_order_settlements s JOIN buy_orders bo ON bo.id=s.buy_order_id JOIN agent_profiles ap ON ap.id=s.agent_id JOIN users u ON u.id=ap.user_id ORDER BY s.created_at DESC LIMIT 200");
-  return res.json({settlements:result.rows});
+  const result=await pool.query("SELECT s.id,s.buy_order_id,s.amount_minor,s.currency,s.status,s.provider_status,s.failure_reason,s.paid_at,s.created_at,s.updated_at,bo.item_description,u.full_name AS agent_name FROM buy_order_settlements s JOIN buy_orders bo ON bo.id=s.buy_order_id JOIN agent_profiles ap ON ap.id=s.agent_id JOIN users u ON u.id=ap.user_id ORDER BY s.created_at DESC LIMIT 200");
+  return res.json({settlements:result.rows.map((row) => ({ id:row.id,buyOrderId:row.buy_order_id,amountMinor:Number(row.amount_minor),currency:row.currency,status:row.status,providerStatus:row.provider_status,failureReason:row.failure_reason,paidAt:row.paid_at,createdAt:row.created_at,updatedAt:row.updated_at }))});
 });
 router.post("/admin/buy-order-settlements/:id/status", requireAuth("ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
@@ -1367,17 +1386,18 @@ router.post("/admin/buy-order-settlements/:id/status", requireAuth("ADMIN"), asy
     const reference=parsed.data.providerReference??current.provider_reference??current.transfer_reference;
     if(parsed.data.status==="PAID"&&!reference){await client.query("ROLLBACK");return res.status(400).json({error:"A provider transfer reference is required before marking a settlement paid"});}
     if(parsed.data.status==="PAID"&&current.status==="REVERSED"){await client.query("ROLLBACK");return res.status(409).json({error:"A reversed settlement cannot be marked paid manually"});}
-    const result=await client.query("UPDATE buy_order_settlements SET status=$2,provider_reference=COALESCE($3,provider_reference,transfer_reference),failure_reason=COALESCE($4,failure_reason),paid_at=CASE WHEN $2='PAID' THEN COALESCE(paid_at,now()) ELSE paid_at END,updated_at=now() WHERE id=$1 RETURNING *",[id,parsed.data.status,reference??null,parsed.data.failureReason??null]);
+    const result=await client.query("UPDATE buy_order_settlements SET status=$2,provider_reference=COALESCE($3,provider_reference,transfer_reference),failure_reason=COALESCE($4,failure_reason),paid_at=CASE WHEN $2='PAID' THEN COALESCE(paid_at,now()) ELSE paid_at END,updated_at=now() WHERE id=$1 RETURNING id,buy_order_id,agent_id,amount_minor,currency,status,provider_status,failure_reason,paid_at,created_at,updated_at",[id,parsed.data.status,reference??null,parsed.data.failureReason??null]);
     await client.query("INSERT INTO ai_audit_log(user_id,plan,capability,action,allowed,reason,metadata) VALUES($1,(SELECT ai_plan FROM users WHERE id=$1),'SETTLEMENT_STATUS','UPDATE',true,'Admin settlement status update',$2::jsonb)",[identity(req),JSON.stringify({settlementId:id,status:parsed.data.status,providerReference:reference??null})]);
     await client.query("COMMIT");
-    return res.json({settlement:result.rows[0]});
+    const settlement = result.rows[0];
+    return res.json({settlement:{id:settlement.id,buyOrderId:settlement.buy_order_id,agentId:settlement.agent_id,amountMinor:Number(settlement.amount_minor),currency:settlement.currency,status:settlement.status,providerStatus:settlement.provider_status,failureReason:settlement.failure_reason,paidAt:settlement.paid_at,createdAt:settlement.created_at,updatedAt:settlement.updated_at}});
   }catch(error){try{await client.query("ROLLBACK")}catch{}throw error}finally{client.release();}
 });
 
 router.get("/admin/drop-off/locations/:locationId/documents", requireAuth("ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const result=await pool.query("SELECT id,document_type,status,review_note,created_at,updated_at FROM drop_off_location_documents WHERE location_id=$1 ORDER BY created_at ASC",[String(req.params.locationId)]);
-  return res.json({documents:result.rows});
+  return res.json({documents:result.rows.map(row=>({id:row.id,documentType:row.document_type,status:row.status,reviewNote:row.review_note,createdAt:row.created_at,updatedAt:row.updated_at}))});
 });
 
 router.get("/admin/drop-off/locations/:locationId/documents/:documentId", requireAuth("ADMIN"), async(req,res)=>{
@@ -1395,13 +1415,13 @@ router.get("/admin/drop-off/locations/:locationId/documents/:documentId", requir
 router.get("/admin/drop-off/commission", requireAuth("ADMIN"), async(_req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const result=await pool.query("SELECT l.id AS location_id,l.name,l.address,ba.display_name AS business_name,c.status,c.currency,count(*)::int AS parcels,sum(c.amount_minor)::bigint AS amount_minor FROM drop_off_commission_ledger c JOIN drop_off_locations l ON l.id=c.location_id JOIN business_accounts ba ON ba.id=l.business_id GROUP BY l.id,l.name,l.address,ba.display_name,c.status,c.currency ORDER BY l.name,c.status");
-  return res.json({commission:result.rows});
+  return res.json({commission:result.rows.map(row=>({locationId:row.location_id,name:row.name,address:row.address,businessName:row.business_name,status:row.status,currency:row.currency,parcels:Number(row.parcels),amountMinor:Number(row.amount_minor)}))});
 });
 
 router.get("/admin/drop-off/applications", requireAuth("ADMIN"), async(_req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const result=await pool.query("SELECT dl.*,ba.display_name AS business_name,(SELECT count(*) FROM drop_off_location_documents d WHERE d.location_id=dl.id) AS document_count FROM drop_off_locations dl JOIN business_accounts ba ON ba.id=dl.business_id ORDER BY dl.created_at DESC LIMIT 500");
-  res.json({applications:result.rows});
+  res.json({applications:result.rows.map(row=>({id:row.id,businessId:row.business_id,name:row.name,address:row.address,latitude:Number(row.latitude),longitude:Number(row.longitude),phone:row.phone,operatingHours:row.operating_hours,capacity:Number(row.capacity),commissionMinor:Number(row.commission_minor),status:row.status,verificationStatus:row.verification_status,createdAt:row.created_at,updatedAt:row.updated_at,businessName:row.business_name,documentCount:Number(row.document_count)}))});
 });
 router.post("/admin/drop-off/locations/:id/review", requireAuth("ADMIN"), async(req,res)=>{
   if(!pool)return res.status(503).json({error:"Database is not configured"});
@@ -1423,7 +1443,23 @@ router.post("/admin/drop-off/locations/:id/review", requireAuth("ADMIN"), async(
     await client.query("UPDATE drop_off_location_documents SET status=$2,updated_at=now() WHERE location_id=$1 AND status='PENDING'",[locationId,verified?"APPROVED":"REJECTED"]);
     await client.query("INSERT INTO drop_off_application_audit(location_id,actor_user_id,old_status,new_status,note) VALUES($1,$2,$3,$4,$5)",[locationId,identity(req),current.rows[0].status,parsed.data.status,parsed.data.note??null]);
     await client.query("COMMIT");
-    res.json({location:updated.rows[0]});
+    const locationRow = updated.rows[0];
+    return res.json({location:{
+      id: locationRow.id,
+      businessId: locationRow.business_id,
+      name: locationRow.name,
+      address: locationRow.address,
+      latitude: Number(locationRow.latitude),
+      longitude: Number(locationRow.longitude),
+      phone: locationRow.phone,
+      operatingHours: locationRow.operating_hours,
+      capacity: Number(locationRow.capacity),
+      commissionMinor: Number(locationRow.commission_minor),
+      status: locationRow.status,
+      verificationStatus: locationRow.verification_status,
+      createdAt: locationRow.created_at,
+      updatedAt: locationRow.updated_at
+    }});
   }catch(e){await client.query("ROLLBACK");throw e}finally{client.release();}
 });
 
@@ -1434,10 +1470,10 @@ router.post("/drop-off/parcels", requireAuth("CUSTOMER","AGENT","ADMIN"), async(
   const userId=identity(req),role=(req as any).user?.role;
   const delivery=await pool.query("SELECT id FROM deliveries WHERE id=$1 AND sender_id=$2",[parsed.data.deliveryId,userId]);
   if(!delivery.rows[0]&&role!=="ADMIN")return res.status(404).json({error:"Delivery not found"});
-  const location=(await pool.query("SELECT * FROM drop_off_locations WHERE id=$1",[parsed.data.locationId])).rows[0];
+  const location=(await pool.query("SELECT id,status,verification_status,capacity,commission_minor FROM drop_off_locations WHERE id=$1",[parsed.data.locationId])).rows[0];
   if(!location||location.status!=="ACTIVE"||location.verification_status!=="VERIFIED")return res.status(409).json({error:"Drop-off location is not active"});
-  const existing=await pool.query("SELECT * FROM drop_off_parcels WHERE delivery_id=$1 AND location_id=$2 AND endpoint=$3",[parsed.data.deliveryId,parsed.data.locationId,parsed.data.endpoint]);
-  if(existing.rows[0])return res.json({parcel:existing.rows[0]});
+  const existing=await pool.query("SELECT id,delivery_id,location_id,endpoint,status,received_at,courier_driver_id,courier_collected_at,completed_at,created_at,updated_at FROM drop_off_parcels WHERE delivery_id=$1 AND location_id=$2 AND endpoint=$3",[parsed.data.deliveryId,parsed.data.locationId,parsed.data.endpoint]);
+  if(existing.rows[0])return res.json({parcel:publicDropOffParcel(existing.rows[0])});
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
@@ -1445,10 +1481,10 @@ router.post("/drop-off/parcels", requireAuth("CUSTOMER","AGENT","ADMIN"), async(
     if(!lockedLocation){await client.query("ROLLBACK");return res.status(409).json({error:"Drop-off location is no longer active"});}
     const capacity=await client.query("SELECT count(*)::int AS count FROM drop_off_parcels WHERE location_id=$1 AND status IN ('AT_LOCATION','READY_FOR_COURIER')",[location.id]);
     if(Number(capacity.rows[0].count)>=Number(lockedLocation.capacity)){await client.query("ROLLBACK");return res.status(409).json({error:"Drop-off location is at capacity"});}
-    const parcel=await client.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,$3,encode(gen_random_bytes(5),'hex')) RETURNING *",[parsed.data.deliveryId,location.id,parsed.data.endpoint]);
+    const parcel=await client.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,$3,encode(gen_random_bytes(5),'hex')) RETURNING id,delivery_id,location_id,endpoint,status,received_at,courier_driver_id,courier_collected_at,completed_at,created_at,updated_at",[parsed.data.deliveryId,location.id,parsed.data.endpoint]);
     await client.query("INSERT INTO drop_off_events(parcel_id,actor_user_id,event_type,metadata) VALUES($1,$2,'PARCEL_EXPECTED',$3::jsonb)",[parcel.rows[0].id,userId,JSON.stringify({endpoint:parsed.data.endpoint})]);
     await client.query("COMMIT");
-    res.status(201).json({parcel:parcel.rows[0]});
+    res.status(201).json({parcel:publicDropOffParcel(parcel.rows[0])});
   }catch(error){await client.query("ROLLBACK");throw error}finally{client.release();}
 });
 
@@ -1457,11 +1493,11 @@ router.post("/drop-off/parcels/:id/intake", requireAuth("CUSTOMER","AGENT","ADMI
   const parsed=z.object({intakeCode:z.string().min(6).max(20),storageReference:z.string().max(120).optional(),parcelPhoto:z.string().optional()}).safeParse(req.body);
   if(!parsed.success)return res.status(400).json({error:parsed.error.flatten()});
   const parcelId=String(req.params.id);
-  const parcel=(await pool.query("SELECT p.*,dl.capacity,dl.commission_minor FROM drop_off_parcels p JOIN drop_off_locations dl ON dl.id=p.location_id WHERE p.id=$1",[parcelId])).rows[0];
+  const parcel=(await pool.query("SELECT p.id,p.delivery_id,p.location_id,p.endpoint,p.intake_code,p.status,p.received_at,p.courier_driver_id,p.courier_collected_at,p.completed_at,p.created_at,p.updated_at,dl.capacity,dl.commission_minor FROM drop_off_parcels p JOIN drop_off_locations dl ON dl.id=p.location_id WHERE p.id=$1",[parcelId])).rows[0];
   if(!parcel)return res.status(404).json({error:"Parcel not found"});
   if((req as any).user?.role!=="ADMIN"&&!await managesDropOff(identity(req),parcel.location_id))return res.status(403).json({error:"Only the approved drop-off operator can intake parcels"});
   if(parcel.intake_code!==parsed.data.intakeCode)return res.status(403).json({error:"Invalid parcel intake code"});
-  if(parcel.status==="READY_FOR_COURIER")return res.json({parcel});
+  if(parcel.status==="READY_FOR_COURIER")return res.json({parcel:publicDropOffParcel(parcel)});
   if(parcel.status!=="EXPECTED")return res.status(409).json({error:"Parcel is not awaiting intake"});
   const count=(await pool.query("SELECT count(*)::int AS count FROM drop_off_parcels WHERE location_id=$1 AND status IN ('AT_LOCATION','READY_FOR_COURIER')",[parcel.location_id])).rows[0].count;
   if(Number(count)>=parcel.capacity)return res.status(409).json({error:"Location capacity exceeded"});
@@ -1478,11 +1514,11 @@ router.post("/drop-off/parcels/:id/intake", requireAuth("CUSTOMER","AGENT","ADMI
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
-    const updated=await client.query("UPDATE drop_off_parcels SET status='READY_FOR_COURIER',storage_reference=COALESCE($2,storage_reference),received_by_user_id=$3,received_at=now(),parcel_photo_key=COALESCE($4,parcel_photo_key),updated_at=now() WHERE id=$1 AND status='EXPECTED' RETURNING *",[parcelId,parsed.data.storageReference??null,identity(req),parcelPhotoKey]);
+    const updated=await client.query("UPDATE drop_off_parcels SET status='READY_FOR_COURIER',storage_reference=COALESCE($2,storage_reference),received_by_user_id=$3,received_at=now(),parcel_photo_key=COALESCE($4,parcel_photo_key),updated_at=now() WHERE id=$1 AND status='EXPECTED' RETURNING id,delivery_id,location_id,endpoint,status,received_at,courier_driver_id,courier_collected_at,completed_at,created_at,updated_at",[parcelId,parsed.data.storageReference??null,identity(req),parcelPhotoKey]);
     if(!updated.rows[0]){await client.query("ROLLBACK");return res.status(409).json({error:"Parcel intake changed concurrently"});}
     await client.query("INSERT INTO drop_off_events(parcel_id,actor_user_id,event_type,metadata) VALUES($1,$2,'PARCEL_INTAKE','{}'::jsonb)",[parcelId,identity(req)]);
     await client.query("INSERT INTO drop_off_commission_ledger(location_id,parcel_id,amount_minor,status) VALUES($1,$2,$3,'EARNED') ON CONFLICT(parcel_id) DO NOTHING",[parcel.location_id,parcelId,parcel.commission_minor]);
-    await client.query("COMMIT");res.status(201).json({parcel:updated.rows[0]});
+    await client.query("COMMIT");res.status(201).json({parcel:publicDropOffParcel(updated.rows[0])});
   }catch(e){await client.query("ROLLBACK");throw e}finally{client.release();}
 });
 
@@ -1490,8 +1526,10 @@ router.get("/drop-off/parcels/:id", requireAuth("CUSTOMER","AGENT","DRIVER","ADM
   if(!pool)return res.status(503).json({error:"Database is not configured"});
   const parcelId=String(req.params.id);
   const row=(await pool.query(
-    `SELECT p.*, d.sender_id, d.driver_id, d.tracking_code, d.status AS delivery_status,
-            dl.name AS location_name, dl.address AS location_address, ba.display_name AS business_name
+    `SELECT p.id,p.delivery_id,p.location_id,p.endpoint,p.status,p.received_at,p.courier_driver_id,
+            p.courier_collected_at,p.completed_at,p.created_at,p.updated_at,
+            d.sender_id,d.driver_id,d.tracking_code,d.status AS delivery_status,
+            dl.name AS location_name,dl.address AS location_address,ba.display_name AS business_name
        FROM drop_off_parcels p
        JOIN deliveries d ON d.id=p.delivery_id
        JOIN drop_off_locations dl ON dl.id=p.location_id
@@ -1505,7 +1543,7 @@ router.get("/drop-off/parcels/:id", requireAuth("CUSTOMER","AGENT","DRIVER","ADM
   if(user?.role==="AGENT")authorized=await managesDropOff(identity(req),row.location_id);
   if(!authorized)return res.status(403).json({error:"Not authorized"});
   const events=await pool.query("SELECT id,event_type,actor_user_id,metadata,created_at FROM drop_off_events WHERE parcel_id=$1 ORDER BY created_at ASC",[parcelId]);
-  return res.json({parcel:row,events:events.rows});
+  return res.json({parcel:{...publicDropOffParcel(row),trackingCode:row.tracking_code,deliveryStatus:row.delivery_status,locationName:row.location_name,locationAddress:row.location_address,businessName:row.business_name},events:events.rows.map((event)=>({id:event.id,eventType:event.event_type,createdAt:event.created_at}))});
 });
 
 router.get("/drop-off/parcels/:id/photo", requireAuth("CUSTOMER","AGENT","DRIVER","ADMIN"), async(req,res)=>{
@@ -1538,7 +1576,7 @@ router.post("/drop-off/parcels/:id/collect", requireAuth("DRIVER"), async(req,re
   const updated=await pool.query("UPDATE drop_off_parcels SET status='COURIER_COLLECTED',courier_driver_id=$2,courier_collected_at=now(),updated_at=now() WHERE id=$1 AND status='READY_FOR_COURIER' RETURNING *",[parcel.id,driver.id]);
   if(!updated.rows[0])return res.status(409).json({error:"Parcel collection changed concurrently"});
   await pool.query("INSERT INTO drop_off_events(parcel_id,actor_user_id,event_type,metadata) VALUES($1,$2,'COURIER_COLLECTED',$3::jsonb)",[parcel.id,identity(req),JSON.stringify({driverId:driver.id})]);
-  res.json({parcel:updated.rows[0]});
+  res.json({parcel:publicDropOffParcel(updated.rows[0])});
 });
 
 router.get("/drop-off/locations/:id/commission", requireAuth("AGENT","ADMIN"), async(req,res)=>{
@@ -1546,7 +1584,7 @@ router.get("/drop-off/locations/:id/commission", requireAuth("AGENT","ADMIN"), a
   const locationId=String(req.params.id);
   if((req as any).user?.role!=="ADMIN"&&!await managesDropOff(identity(req),locationId))return res.status(403).json({error:"Not authorized"});
   const result=await pool.query("SELECT status,currency,count(*)::int AS parcels,sum(amount_minor)::bigint AS amount_minor FROM drop_off_commission_ledger WHERE location_id=$1 GROUP BY status,currency ORDER BY status",[locationId]);
-  res.json({commission:result.rows});
+  res.json({commission:result.rows.map((row)=>({status:row.status,currency:row.currency,parcels:Number(row.parcels),amountMinor:Number(row.amount_minor)}))});
 });
 
 

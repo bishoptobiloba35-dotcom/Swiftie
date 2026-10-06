@@ -264,7 +264,7 @@ app.post("/api/deliveries/:id/rating", requireAuth(), async (req, res) => {
        RETURNING id, delivery_id, rater_user_id, rated_user_id, stars, comment, created_at`,
       [delivery.id, userId, driver.userId, parsed.data.stars, parsed.data.comment?.trim() || null]
     );
-    return res.status(201).json({ rating: result.rows[0] });
+    return res.status(201).json({ rating: { id: result.rows[0].id, deliveryId: result.rows[0].delivery_id, stars: Number(result.rows[0].stars), comment: result.rows[0].comment, createdAt: result.rows[0].created_at } });
   } catch (error) {
     if ((error as { code?: string })?.code === "23505") return res.status(409).json({ error: "This delivery has already been rated" });
     return res.status(500).json({ error: "Unable to save rating" });
@@ -295,7 +295,7 @@ app.post("/api/deliveries/:id/rating/receiver", async (req, res) => {
        RETURNING id, delivery_id, driver_id, stars, comment, created_at`,
       [delivery.id, delivery.driverId, receiverPhone, parsed.data.stars, parsed.data.comment?.trim() || null]
     );
-    return res.status(201).json({ rating: result.rows[0] });
+    return res.status(201).json({ rating: { id: result.rows[0].id, deliveryId: result.rows[0].delivery_id, driverId: result.rows[0].driver_id, stars: Number(result.rows[0].stars), comment: result.rows[0].comment, createdAt: result.rows[0].created_at } });
   } catch (error) {
     if ((error as { code?: string })?.code === "23505") return res.status(409).json({ error: "This delivery has already been rated by the receiver" });
     return res.status(500).json({ error: "Unable to save receiver rating" });
@@ -307,7 +307,7 @@ app.get("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) =>
   const driver = await driverForUser(identity(req));
   if (!driver) return res.status(404).json({ error: "Driver profile not found" });
   const account = await getDriverPayoutAccount(driver.id);
-  return res.json({ account });
+  return res.json({ account: account ? { bankCode: account.bankCode, bankName: account.bankName, accountName: account.accountName, accountLast4: account.accountLast4, currency: account.currency } : null });
 });
 
 app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) => {
@@ -340,7 +340,7 @@ app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) =
     accountName: resolved.data.account_name,
     recipientCode: recipient.data.recipient_code
   });
-  return res.status(201).json({ account });
+  return res.status(201).json({ account: account ? { bankCode: account.bankCode, bankName: account.bankName, accountName: account.accountName, accountLast4: account.accountLast4, currency: account.currency } : null });
 });
 
 app.get("/api/driver/payouts", requireAuth("DRIVER"), async (req, res) => {
@@ -348,7 +348,7 @@ app.get("/api/driver/payouts", requireAuth("DRIVER"), async (req, res) => {
   const driver = await driverForUser(identity(req));
   if (!driver) return res.status(404).json({ error: "Driver profile not found" });
   const result = await pool!.query(
-    `SELECT id, delivery_id, amount_minor, currency, status, provider,
+    `SELECT id, delivery_id, driver_id, amount_minor, currency, status, provider,
             provider_status, failure_reason, processed_at, created_at, updated_at
        FROM payouts
       WHERE driver_id=$1
@@ -364,7 +364,7 @@ app.get("/api/driver/payouts", requireAuth("DRIVER"), async (req, res) => {
     else if (row.status === "FAILED") acc.failedMinor += amount;
     return acc;
   }, { eligibleMinor: 0, processingMinor: 0, releasedMinor: 0, failedMinor: 0 });
-  return res.json({ summary, payouts: result.rows });
+  return res.json({ summary, payouts: result.rows.map((row) => ({ id: row.id, deliveryId: row.delivery_id, driverId: row.driver_id, amountMinor: Number(row.amount_minor), currency: row.currency, status: row.status, provider: row.provider, providerStatus: row.provider_status, failureReason: row.failure_reason, processedAt: row.processed_at, createdAt: row.created_at, updatedAt: row.updated_at })) });
 });
 
 app.get("/api/deliveries/:id/payout", requireAuth(), async (req, res) => {
@@ -474,7 +474,7 @@ app.get("/api/drivers/:driverId/ratings", requireAuth(), async (req, res) => {
   const average = result.rows.length
     ? result.rows.reduce((sum: number, row: { stars: number }) => sum + Number(row.stars), 0) / result.rows.length
     : null;
-  res.json({ average, count: result.rows.length, ratings: result.rows });
+  res.json({ average, count: result.rows.length, ratings: result.rows.map((row) => ({ stars: Number(row.stars), comment: row.comment, createdAt: row.created_at })) });
 });
 
 app.post("/api/deliveries/:id/rating/driver", requireAuth("DRIVER"), async (req, res) => {
@@ -493,7 +493,7 @@ app.post("/api/deliveries/:id/rating/driver", requireAuth("DRIVER"), async (req,
       [delivery.id, userId, parsed.data.stars, parsed.data.comment?.trim() || null]
     );
     if (!result.rows[0]) return res.status(409).json({ error: "Sender could not be found" });
-    return res.status(201).json({ rating: result.rows[0] });
+    return res.status(201).json({ rating: { id: result.rows[0].id, deliveryId: result.rows[0].delivery_id, raterUserId: result.rows[0].rater_user_id, ratedUserId: result.rows[0].rated_user_id, stars: Number(result.rows[0].stars), comment: result.rows[0].comment, createdAt: result.rows[0].created_at } });
   } catch (error) {
     if ((error as { code?: string })?.code === "23505") return res.status(409).json({ error: "This delivery has already been rated" });
     return res.status(500).json({ error: "Unable to save rating" });
@@ -506,7 +506,7 @@ app.get("/api/notifications", requireAuth(), async (req, res) => {
     "SELECT id, delivery_id, title, body, type, read_at, created_at FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100",
     [identity(req)]
   );
-  res.json({ notifications: result.rows });
+  res.json({ notifications: result.rows.map((row) => ({ id: row.id, deliveryId: row.delivery_id, title: row.title, body: row.body, type: row.type, readAt: row.read_at, createdAt: row.created_at })) });
 });
 
 app.post("/api/notifications/:id/read", requireAuth(), async (req, res) => {
@@ -516,7 +516,7 @@ app.post("/api/notifications/:id/read", requireAuth(), async (req, res) => {
     [routeParam(req.params.id, "id"), identity(req)]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Notification not found" });
-  res.json({ notification: result.rows[0] });
+  res.json({ notification: { id: result.rows[0].id, readAt: result.rows[0].read_at } });
 });
 
 app.post("/api/notifications/device-token", requireAuth(), async (req, res) => {
@@ -1397,7 +1397,19 @@ app.get("/api/admin/support/ai-actions", requireAuth("ADMIN"), async (req, res) 
      JOIN support_tickets t ON t.id=a.ticket_id
      ORDER BY a.created_at DESC LIMIT 200`
   );
-  return res.json({ actions: result.rows });
+  return res.json({ actions: result.rows.map((row) => ({
+    id: row.id,
+    ticketId: row.ticket_id,
+    actionType: row.action_type,
+    decision: row.decision,
+    reason: row.reason,
+    response: row.response,
+    actor: row.actor,
+    createdAt: row.created_at,
+    subject: row.subject,
+    category: row.category,
+    ticketStatus: row.ticket_status
+  })) });
 });
 
 app.post("/api/driver/documents/upload", requireAuth("DRIVER"), async (req, res) => {
@@ -1437,7 +1449,7 @@ app.post("/api/driver/documents/upload", requireAuth("DRIVER"), async (req, res)
     "INSERT INTO driver_documents (driver_id, document_type, document_url) VALUES ($1,$2,$3) RETURNING id, document_type, status, created_at",
     [driver.id, documentType, "/api/driver/documents/file/" + filename]
   );
-  res.status(201).json({ document: result.rows[0] });
+  res.status(201).json({ document: { id: result.rows[0].id, documentType: result.rows[0].document_type, status: result.rows[0].status, createdAt: result.rows[0].created_at } });
 });
 
 app.get("/api/driver/documents/file/:filename", requireAuth(), async (req, res) => {
@@ -1478,7 +1490,7 @@ app.get("/api/driver/documents", requireAuth("DRIVER"), async (req, res) => {
     "SELECT id, document_type, document_url, status, review_note, created_at, updated_at FROM driver_documents WHERE driver_id=$1 ORDER BY created_at DESC",
     [driver.id]
   );
-  res.json({ documents: result.rows });
+  res.json({ documents: result.rows.map((row) => ({ id: row.id, documentType: row.document_type, documentUrl: row.document_url, status: row.status, reviewNote: row.review_note, createdAt: row.created_at, updatedAt: row.updated_at })) });
 });
 
 app.get("/api/admin/drivers/:driverId/documents", requireAuth("ADMIN"), async (req, res) => {
@@ -1487,7 +1499,7 @@ app.get("/api/admin/drivers/:driverId/documents", requireAuth("ADMIN"), async (r
     "SELECT id, document_type, document_url, status, review_note, created_at, updated_at FROM driver_documents WHERE driver_id=$1 ORDER BY created_at DESC",
     [routeParam(req.params.driverId, "driverId")]
   );
-  res.json({ documents: result.rows });
+  res.json({ documents: result.rows.map((row) => ({ id: row.id, documentType: row.document_type, documentUrl: row.document_url, status: row.status, reviewNote: row.review_note, createdAt: row.created_at, updatedAt: row.updated_at })) });
 });
 
 app.post("/api/admin/driver-documents/:documentId/review", requireAuth("ADMIN"), async (req, res) => {
@@ -1506,7 +1518,7 @@ app.post("/api/admin/driver-documents/:documentId/review", requireAuth("ADMIN"),
     note: note || null,
     metadata: { documentId: result.rows[0].id, driverId: result.rows[0].driver_id, documentType: result.rows[0].document_type, status }
   });
-  res.json({ document: result.rows[0] });
+  res.json({ document: { id: result.rows[0].id, driverId: result.rows[0].driver_id, documentType: result.rows[0].document_type, status: result.rows[0].status, reviewNote: result.rows[0].review_note, updatedAt: result.rows[0].updated_at } });
 });
 
 app.get("/api/admin/users", requireAuth("ADMIN"), async (req, res) => {
@@ -1523,7 +1535,7 @@ app.get("/api/admin/users", requireAuth("ADMIN"), async (req, res) => {
       LIMIT $2`,
     [search, limit]
   );
-  return res.json({ users: result.rows });
+  return res.json({ users: result.rows.map((row) => ({ id: row.id, role: row.role, fullName: row.full_name, phone: row.phone, email: row.email, aiPlan: row.ai_plan, createdAt: row.created_at, driver: row.driver_id ? { id: row.driver_id, status: row.driver_status, online: row.driver_online } : null })) });
 });
 
 app.get("/api/admin/drivers", requireAuth("ADMIN"), async (_req, res) => {
@@ -1531,7 +1543,7 @@ app.get("/api/admin/drivers", requireAuth("ADMIN"), async (_req, res) => {
   const result = await pool!.query(
     "SELECT d.id, d.user_id, d.status, d.online, d.vehicle_type, d.vehicle_registration, u.full_name, u.phone, u.email, d.created_at FROM drivers d JOIN users u ON u.id=d.user_id ORDER BY d.created_at DESC LIMIT 200"
   );
-  res.json({ drivers: result.rows });
+  res.json({ drivers: result.rows.map((row) => ({ id: row.id, userId: row.user_id, status: row.status, online: row.online, vehicleType: row.vehicle_type, vehicleRegistration: row.vehicle_registration, fullName: row.full_name, phone: row.phone, email: row.email, createdAt: row.created_at })) });
 });
 
 app.post("/api/admin/drivers/:driverId/approve", requireAuth("ADMIN"), async (req, res) => {
@@ -1545,23 +1557,25 @@ app.post("/api/admin/drivers/:driverId/approve", requireAuth("ADMIN"), async (re
     return res.status(409).json({ error: "At least one approved KYC document is required before driver approval" });
   }
   const result = await pool!.query(
-    "UPDATE drivers SET status='APPROVED' WHERE id=$1 AND status='PENDING' RETURNING id, user_id, status",
+    "UPDATE drivers SET status='APPROVED', updated_at=now() WHERE id=$1 AND status='PENDING' RETURNING id, user_id, status, online, updated_at",
     [routeParam(req.params.driverId, "driverId")]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Pending driver not found" });
   await recordAdminCaseAudit({ adminUserId: identity(req), action: "DRIVER_APPROVED", metadata: { driverId: result.rows[0].id } });
-  res.json({ driver: result.rows[0] });
+  const driver = result.rows[0];
+  res.json({ driver: { id: driver.id, userId: driver.user_id, status: driver.status, online: driver.online, updatedAt: driver.updated_at } });
 });
 
 app.post("/api/admin/drivers/:driverId/suspend", requireAuth("ADMIN"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool!.query(
-    "UPDATE drivers SET status='SUSPENDED', online=false WHERE id=$1 AND status <> 'SUSPENDED' RETURNING id, user_id, status",
+    "UPDATE drivers SET status='SUSPENDED', online=false, updated_at=now() WHERE id=$1 AND status <> 'SUSPENDED' RETURNING id, user_id, status, online, updated_at",
     [routeParam(req.params.driverId, "driverId")]
   );
   if (!result.rows[0]) return res.status(404).json({ error: "Driver not found" });
   await recordAdminCaseAudit({ adminUserId: identity(req), action: "DRIVER_SUSPENDED", metadata: { driverId: result.rows[0].id } });
-  res.json({ driver: result.rows[0] });
+  const driver = result.rows[0];
+  res.json({ driver: { id: driver.id, userId: driver.user_id, status: driver.status, online: driver.online, updatedAt: driver.updated_at } });
 });
 
 app.get("/api/admin/operations", requireAuth("ADMIN"), async (_req, res) => {
@@ -1569,7 +1583,16 @@ app.get("/api/admin/operations", requireAuth("ADMIN"), async (_req, res) => {
   const result = await pool!.query(
     "SELECT (SELECT count(*) FROM users WHERE role='CUSTOMER')::int AS customers, (SELECT count(*) FROM drivers)::int AS drivers, (SELECT count(*) FROM drivers WHERE status='APPROVED' AND online=true)::int AS online_drivers, (SELECT count(*) FROM deliveries)::int AS deliveries, (SELECT count(*) FROM deliveries WHERE status NOT IN ('DELIVERED','CANCELLED','DISPUTED'))::int AS active_deliveries, (SELECT count(*) FROM disputes WHERE status IN ('OPEN','UNDER_REVIEW'))::int AS open_disputes, (SELECT count(*) FROM payouts WHERE status IN ('ELIGIBLE','PROCESSING'))::int AS pending_payouts"
   );
-  res.json({ metrics: result.rows[0] });
+  const row = result.rows[0] ?? {};
+  res.json({ metrics: {
+    customers: Number(row.customers ?? 0),
+    drivers: Number(row.drivers ?? 0),
+    onlineDrivers: Number(row.online_drivers ?? 0),
+    deliveries: Number(row.deliveries ?? 0),
+    activeDeliveries: Number(row.active_deliveries ?? 0),
+    openDisputes: Number(row.open_disputes ?? 0),
+    pendingPayouts: Number(row.pending_payouts ?? 0)
+  } });
 });
 
 app.get("/api/admin/deliveries", requireAuth("ADMIN"), async (req, res) => {
@@ -1585,7 +1608,7 @@ app.get("/api/admin/deliveries", requireAuth("ADMIN"), async (req, res) => {
       "(SELECT json_build_object('latitude', le.latitude, 'longitude', le.longitude, 'accuracyMeters', le.accuracy_meters, 'recordedAt', le.recorded_at) FROM location_events le WHERE le.delivery_id=d.id ORDER BY le.recorded_at DESC LIMIT 1) AS latest_location FROM deliveries d " + whereClause + " ORDER BY d.updated_at DESC LIMIT $" + params.length,
     params
   );
-  res.json({ deliveries: result.rows });
+  res.json({ deliveries: result.rows.map((row) => ({ id: row.id, trackingCode: row.tracking_code, senderId: row.sender_id, driverId: row.driver_id, receiverName: row.receiver_name, status: row.status, quoteTotalMinor: Number(row.quote_total_minor), quoteCurrency: row.quote_currency, createdAt: row.created_at, updatedAt: row.updated_at, latestLocation: row.latest_location })) });
 });
 
 app.get("/api/admin/disputes", requireAuth("ADMIN"), async (_req, res) => {
@@ -1604,7 +1627,7 @@ app.get("/api/admin/disputes", requireAuth("ADMIN"), async (_req, res) => {
       ORDER BY dp.updated_at DESC
       LIMIT 100`
   );
-  res.json({ disputes: result.rows });
+  res.json({ disputes: result.rows.map((row) => ({ id: row.id, deliveryId: row.delivery_id, openedBy: row.opened_by, openedByPhone: row.opened_by_phone, openedByRole: row.opened_by_role, reason: row.reason, description: row.description, status: row.status, resolutionNote: row.resolution_note, createdAt: row.created_at, updatedAt: row.updated_at, trackingCode: row.tracking_code, deliveryStatus: row.delivery_status, receiverName: row.receiver_name, receiverPhone: row.receiver_phone, driverId: row.driver_id, quoteTotalMinor: Number(row.quote_total_minor), quoteCurrency: row.quote_currency, paymentStatus: row.payment_status, refundStatus: row.refund_status, refundAmountMinor: row.refund_amount_minor, payoutStatus: row.payout_status })) });
 });
 
 app.get("/api/admin/disputes/:deliveryId", requireAuth("ADMIN"), async (req, res) => {
@@ -1644,7 +1667,21 @@ app.get("/api/admin/disputes/:deliveryId", requireAuth("ADMIN"), async (req, res
     pool!.query(`SELECT latitude::float AS latitude, longitude::float AS longitude, accuracy_meters::float AS accuracy_meters, recorded_at FROM location_events WHERE delivery_id=$1 ORDER BY recorded_at DESC LIMIT 100`, [routeParam(req.params.deliveryId, "deliveryId")]),
     listAdminCaseAudit(routeParam(req.params.deliveryId, "deliveryId"))
   ]);
-  return res.json({ case: row, events: events.rows, locations: locations.rows, audit });
+  return res.json({ case: {
+    id: row.id, trackingCode: row.tracking_code, senderId: row.sender_id, driverId: row.driver_id,
+    receiverName: row.receiver_name, receiverPhone: row.receiver_phone, status: row.status,
+    pickupAddress: row.pickup_address, dropoffAddress: row.dropoff_address,
+    pickupLat: row.pickup_lat, pickupLng: row.pickup_lng, dropoffLat: row.dropoff_lat, dropoffLng: row.dropoff_lng,
+    pickupPhotoUrl: row.pickup_photo_url, weightKg: row.weight_kg, lengthCm: row.length_cm, widthCm: row.width_cm,
+    heightCm: row.height_cm, isPerishable: row.is_perishable, quoteTotalMinor: Number(row.quote_total_minor),
+    quoteCurrency: row.quote_currency, quoteDistanceMeters: row.quote_distance_meters, quoteDurationSeconds: row.quote_duration_seconds,
+    createdAt: row.created_at, updatedAt: row.updated_at, receiverConfirmedAt: row.receiver_confirmed_at,
+    dispute: row.dispute_id ? { id: row.dispute_id, openedBy: row.opened_by, openedByPhone: row.opened_by_phone, openedByRole: row.opened_by_role, reason: row.reason, description: row.dispute_description, status: row.dispute_status, resolutionNote: row.resolution_note, createdAt: row.dispute_created_at, updatedAt: row.dispute_updated_at } : null,
+    payment: row.payment_id ? { id: row.payment_id, provider: row.payment_provider, amountMinor: Number(row.payment_amount_minor), currency: row.payment_currency, status: row.payment_status, escrowStatus: row.escrow_status, refundStatus: row.refund_status, refundAmountMinor: row.refund_amount_minor, refundUpdatedAt: row.refund_updated_at } : null,
+    payout: row.payout_id ? { id: row.payout_id, amountMinor: Number(row.payout_amount_minor), currency: row.payout_currency, status: row.payout_status, provider: row.payout_provider, providerStatus: row.payout_provider_status, failureReason: row.payout_failure_reason, processedAt: row.payout_processed_at } : null,
+    sender: { fullName: row.sender_name, phone: row.sender_phone, email: row.sender_email },
+    driver: { fullName: row.driver_name, phone: row.driver_phone, email: row.driver_email }
+  }, events: events.rows, locations: locations.rows, audit });
 });
 
 app.post("/api/admin/disputes/:deliveryId/review", requireAuth("ADMIN"), async (req, res) => {
@@ -1702,8 +1739,8 @@ app.post("/api/admin/support/tickets/:id/reply", requireAuth("ADMIN"), async (re
 
 app.get("/api/admin/payouts", requireAuth("ADMIN"), async (_req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
-  const result = await pool!.query("SELECT id, delivery_id, driver_id, amount_minor, currency, status, provider, provider_reference, provider_status, failure_reason, processed_at, created_at, updated_at FROM payouts ORDER BY updated_at DESC LIMIT 100");
-  res.json({ payouts: result.rows });
+  const result = await pool!.query("SELECT id, delivery_id, driver_id, amount_minor, currency, status, provider, provider_status, failure_reason, processed_at, created_at, updated_at FROM payouts ORDER BY updated_at DESC LIMIT 100");
+  res.json({ payouts: result.rows.map((row) => ({ id:row.id,deliveryId:row.delivery_id,driverId:row.driver_id,amountMinor:Number(row.amount_minor),currency:row.currency,status:row.status,provider:row.provider,providerStatus:row.provider_status,failureReason:row.failure_reason,processedAt:row.processed_at,createdAt:row.created_at,updatedAt:row.updated_at })) });
 });
 
 app.post("/api/admin/payouts/:deliveryId/retry", requireAuth("ADMIN"), async (req, res) => {
@@ -1880,7 +1917,7 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
         actorUserId: identity(req),
         metadata: { provider: "paystack", transactionReference: marketplace.provider_reference, refundReference: providerRefundReference, refundStatus, amountMinor: refundAmountMinor }
       });
-      return res.json({ dispute: resolved, refund: { status: refundStatus, reference: providerRefundReference, amountMinor: refundAmountMinor, paymentType: "MARKETPLACE_ORDER" } });
+      return res.json({ dispute: resolved, refund: { status: refundStatus, amountMinor: refundAmountMinor, paymentType: "MARKETPLACE_ORDER" } });
     }
 
     const paymentBefore = await findPayment(routeParam(req.params.id, "id"));
