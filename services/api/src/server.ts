@@ -147,7 +147,7 @@ const notificationForDelivery = async (deliveryId: string, userId: string, title
 
 
 const createDeliverySchema = z.object({
-  senderId: z.string().uuid().optional(), paymentMode: z.enum(["SENDER_ESCROW","RECEIVER_ON_DELIVERY"]).default("SENDER_ESCROW"), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
+  senderId: z.string().uuid().optional(), paymentMode: z.literal("SENDER_ESCROW").default("SENDER_ESCROW"), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
   receiverPin: z.string().regex(/^\d{4}$/, "Receiver PIN must be exactly 4 digits"),
   weightKg: z.number().positive().max(1000),
   dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
@@ -667,7 +667,7 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
   const userId = identity(req);
   const delivery = databaseEnabled() ? await findDeliveryForUser(routeParam(req.params.id, "id"), userId, "CUSTOMER") : await getOne(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
-  if (delivery.paymentMode === "RECEIVER_ON_DELIVERY") return res.status(409).json({ error: "This order is payable by the receiver on delivery and does not use sender escrow." });
+  if (delivery.paymentMode !== "SENDER_ESCROW") return res.status(410).json({ error: "Cash-on-delivery has been retired. All payments must use in-app escrow." });
   if (!databaseEnabled()) return res.status(503).json({ error: "Payments require the production database" });
 
   const email = String(req.body?.email ?? "").trim();
@@ -726,7 +726,7 @@ app.post("/api/deliveries/:id/payment", requireAuth("CUSTOMER"), async (req, res
     ? await findDeliveryForUser(routeParam(req.params.id, "id"), userId, "CUSTOMER")
     : await getOne(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
-  if (delivery.paymentMode === "RECEIVER_ON_DELIVERY") return res.status(409).json({ error: "Receiver payment is collected after receiver confirmation." });
+  if (delivery.paymentMode !== "SENDER_ESCROW") return res.status(410).json({ error: "Cash-on-delivery has been retired. All payments must use in-app escrow." });
 
   const amountMinor = delivery.quote?.totalMinor;
   if (!amountMinor || !Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
