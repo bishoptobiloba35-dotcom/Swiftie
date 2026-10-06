@@ -27,6 +27,7 @@ const config: ExpoConfig = {
     package: process.env.ANDROID_PACKAGE ?? "com.swiftdrop.customer",
     config: { googleMaps: { apiKey: process.env.GOOGLE_MAPS_API_KEY ?? "ci-validation-placeholder" } }
   },
+  web: { bundler: "metro", name: "SwiftDrop", themeColor: "#0B5A3A" },
   plugins: [
     ["expo-location", { isAndroidBackgroundLocationEnabled: false, isIosBackgroundLocationEnabled: false }],
     "expo-notifications",
