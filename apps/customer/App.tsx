@@ -153,6 +153,12 @@ export default function App() {
   }
 
   React.useEffect(() => {
+    if (Platform.OS === "web" && typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+      void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    }
+  }, []);
+
+  React.useEffect(() => {
     AsyncStorage.getItem("swiftdrop.customerAccessToken").then(token => {
       if (token) {
         api.setAccessToken(token);
