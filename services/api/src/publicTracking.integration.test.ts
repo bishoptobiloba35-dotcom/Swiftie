@@ -61,7 +61,7 @@ test("shareable tracking exposes safe live delivery state without authentication
       method: "POST",
       headers: { authorization: token }
     });
-    assert.equal(share.status, 200);
+    assert.equal(share.status, 201);
     const shareBody = await share.json() as { url: string; expiresAt: string };
     assert.match(shareBody.url, /\/api\/public\/track\//);
     assert.ok(Date.parse(shareBody.expiresAt) > Date.now());
