@@ -58,11 +58,19 @@ test("receiver confirmation route verifies PIN and atomically releases escrow fo
       isPerishable: false
     });
     await pool.query(
-      `UPDATE deliveries SET driver_id=$2,status='ARRIVED',proof_requirements='{"pickup":["PHOTO"],"dropoff":["PIN"]}'::jsonb WHERE id=$1`,
+      `UPDATE deliveries SET driver_id=$2,status='ARRIVED',proof_requirements='{"pickup":["PHOTO"],"dropoff":["PIN"]}'::jsonb,
+          escrow_payment_state='paid_escrow',escrow_total_paid_minor=100000,escrow_courier_share_minor=37500,
+          escrow_service_charge_minor=5000,escrow_protection_reserve_minor=10000,escrow_swiftdrop_margin_minor=37500
+        WHERE id=$1`,
       [delivery.id, driver.id]
     );
     await createPayment({ deliveryId: delivery.id, provider: "paystack", amountMinor: 100000, currency: "NGN", collectionMode: "SENDER_ESCROW" });
     assert.ok(await updatePaymentStatus(delivery.id, "HELD", "ESCROW-HTTP-1"));
+    await pool.query(
+      `INSERT INTO escrow_ledgers(order_id,total_paid_minor,courier_share_minor,service_charge_minor,protection_reserve_minor,swiftdrop_margin_minor,merchant_share_minor,state)
+       VALUES($1,100000,37500,5000,10000,37500,0,'paid_escrow')`,
+      [delivery.id]
+    );
 
     const endpoint = `http://127.0.0.1:${API_PORT}/api/escrow/${delivery.id}/pin`;
     const token = signAccessToken({ userId: sender, role: "CUSTOMER" });
@@ -97,7 +105,7 @@ test("receiver confirmation route verifies PIN and atomically releases escrow fo
     assert.equal(Number(financial.payout_amount ?? 0), 0);
 
     const replay = await fetch(endpoint, {
-      method: "POST", headers: { "content-type": "application/json" },
+      method: "POST", headers: authHeaders,
       body: JSON.stringify({ pin: "6543" })
     });
     assert.equal(replay.status, 409);
