@@ -113,7 +113,7 @@ const locationRateLimit = new Map<string, number>();
 const LOCATION_MIN_INTERVAL_MS = 3000;
 const receiverPinAttempts = new Map<string, { windowStartedAt: number; count: number; blockedUntil: number }>();
 const RECEIVER_PIN_WINDOW_MS = 5 * 60 * 1000;
-const RECEIVER_PIN_MAX_ATTEMPTS = 5;
+const RECEIVER_PIN_MAX_ATTEMPTS = 3;
 const RECEIVER_PIN_BLOCK_MS = 15 * 60 * 1000;
 
 function checkReceiverPinRate(key: string): { allowed: boolean; retryAfterMs: number } {
@@ -146,7 +146,7 @@ const notificationForDelivery = async (deliveryId: string, userId: string, title
 
 const createDeliverySchema = z.object({
   senderId: z.string().uuid().optional(), paymentMode: z.enum(["SENDER_ESCROW","RECEIVER_ON_DELIVERY"]).default("SENDER_ESCROW"), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
-  receiverPin: z.string().regex(/^\d{6}$/, "Receiver PIN must be exactly 6 digits"),
+  receiverPin: z.string().regex(/^\d{4}$/, "Receiver PIN must be exactly 4 digits"),
   weightKg: z.number().positive().max(1000),
   dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
   isPerishable: z.boolean(),
