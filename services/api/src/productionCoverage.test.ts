@@ -225,7 +225,7 @@ if (db) {
     const released = await updatePayoutProviderStatus("COVERAGE-PAYOUT-2", "RELEASED", null, 50000, "NGN");
     assert.ok(released);
     assert.equal(released?.status, "RELEASED");
-    assert.equal(released?.providerStatus, "released");
+    assert.equal(released?.providerStatus, "success");
 
     await enqueueNotification({
       userId: customer.id,
