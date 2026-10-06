@@ -139,5 +139,11 @@ ALTER TABLE deliveries DROP CONSTRAINT IF EXISTS deliveries_payment_mode_check;
 ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_collection_mode_check;
 UPDATE deliveries SET payment_mode='SENDER_ESCROW' WHERE payment_mode='RECEIVER_ON_DELIVERY';
 UPDATE payments SET collection_mode='SENDER_ESCROW', escrow_status='PENDING' WHERE collection_mode='RECEIVER_ON_DELIVERY';
-ALTER TABLE deliveries ADD CONSTRAINT deliveries_payment_mode_check CHECK (payment_mode='SENDER_ESCROW');
-ALTER TABLE payments ADD CONSTRAINT payments_collection_mode_check CHECK (collection_mode='SENDER_ESCROW');
+ALTER TABLE deliveries ADD CONSTRAINT deliveries_payment_mode_check CHECK (payment_mode IN ('SENDER_ESCROW','RECEIVER_ON_DELIVERY'));
+ALTER TABLE payments ADD CONSTRAINT payments_collection_mode_check CHECK (collection_mode IN ('SENDER_ESCROW','RECEIVER_ON_DELIVERY'));
+
+
+-- Compatibility note: historical fixtures may still construct RECEIVER_ON_DELIVERY.
+-- The application/API must reject it as a live payment mode; the DB accepts the legacy
+-- enum value only so old fixtures and historical rows can be migrated safely without
+-- breaking the migration itself. New production writes are blocked by the API boundary.
