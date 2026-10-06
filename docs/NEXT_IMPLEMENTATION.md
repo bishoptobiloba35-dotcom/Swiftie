@@ -19,7 +19,7 @@
 - Customer and driver Expo configuration now uses environment-driven dynamic configs with production bundle/package identifiers and EAS build profiles.
 - CI run #277 passed all workspace builds and API tests after the production-hardening changes.
 - CI is a genuine quality gate: workspace builds and API tests must pass; failures are fixed at source/configuration level rather than suppressed.
-- The API test job does not depend on an npm lockfile cache until a reproducible lockfile is committed.
+- CI uses the committed npm lockfile with `npm ci`; setup-node lockfile-aware npm caching is enabled for both workspace builds and API tests.
 - The latest CI source repairs corrected the driver earnings-style reference and customer tracking destination coordinates to use the nested `dropoff.location` model.
 
 ## Remaining production milestones
