@@ -25,8 +25,13 @@ export const SWIFTDROP_RULES = {
   receiverPinDigits: 4,
   receiverPinMaxFailures: 3,
   receiverPinLockMinutes: 15,
-  courierDeliveryShareBps: 8_000,
-  swiftDropDeliveryShareBps: 2_000,
+  courierDeliveryShareBps: 7_500,
+  swiftDropDeliveryShareBps: 2_500,
+  stakeholderHoldHours: 72,
+  minimumWithdrawalMinor: 100_000,
+  floatMinimumReserveMinor: 500_000_000,
+  floatAutoTopUpThresholdMinor: 300_000_000,
+  noCashAccepted: true,
 } as const;
 
 export const SWIFTDROP_COPY = {
