@@ -155,7 +155,41 @@ router.post("/virtual-account/create", requireAuth, async (req,res)=>{
   if(existing)return res.status(200).json({virtualAccount:existing});
   const secret=process.env.PAYSTACK_SECRET_KEY;
   if(!secret)return res.status(503).json({error:"Paystack virtual accounts are not configured"});
-  return res.status(501).json({error:"Paystack DVA provisioning requires a configured Paystack customer and dedicated-account profile; no placeholder account is returned"});
+  const user=(await pool!.query("SELECT full_name,email,phone FROM users WHERE id=$1",[userId])).rows[0];
+  if(!user?.email)return res.status(409).json({error:"A verified customer email is required to create a dedicated virtual account"});
+  const names=String(user.full_name).trim().split(/\\s+/);
+  const firstName=names.shift() ?? "SwiftDrop";
+  const lastName=names.join(" ") || "Customer";
+  const headers={authorization:"Bearer "+secret,"content-type":"application/json"};
+  const customerResponse=await fetch("https://api.paystack.co/customer",{method:"POST",headers,body:JSON.stringify({
+    email:user.email,first_name:firstName,last_name:lastName,phone:String(order.customer_id===userId?user.phone:"")
+  })});
+  const customerPayload=await customerResponse.json() as any;
+  if(!customerResponse.ok||!customerPayload.status||!customerPayload.data?.customer_code){
+    return res.status(502).json({error:customerPayload.message ?? "Unable to create Paystack customer for virtual account"});
+  }
+  const preferredBank=process.env.PAYSTACK_DVA_BANK_SLUG || (process.env.PAYSTACK_SECRET_KEY?.startsWith("sk_test_") ? "test-bank" : undefined);
+  const dvaResponse=await fetch("https://api.paystack.co/dedicated_account",{method:"POST",headers,body:JSON.stringify({
+    customer:customerPayload.data.customer_code,
+    ...(preferredBank ? {preferred_bank:preferredBank} : {}),
+    first_name:firstName,last_name:lastName,phone:user.phone
+  })});
+  const dvaPayload=await dvaResponse.json() as any;
+  if(!dvaResponse.ok||!dvaPayload.status){
+    return res.status(502).json({error:dvaPayload.message ?? "Unable to create dedicated virtual account"});
+  }
+  const data=dvaPayload.data ?? {};
+  if(!data.account_number){
+    return res.status(202).json({status:"PROVISIONING",customerCode:customerPayload.data.customer_code,message:"Paystack is provisioning the dedicated virtual account. Retry shortly."});
+  }
+  const saved=(await pool!.query(
+    `INSERT INTO virtual_accounts(user_id,order_id,customer_code,account_name,account_number,bank_name,bank_code,provider_reference,status)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,'ACTIVE')
+     ON CONFLICT(order_id) DO UPDATE SET customer_code=EXCLUDED.customer_code,account_name=EXCLUDED.account_name,account_number=EXCLUDED.account_number,bank_name=EXCLUDED.bank_name,bank_code=EXCLUDED.bank_code,provider_reference=EXCLUDED.provider_reference,status='ACTIVE',updated_at=now()
+     RETURNING *`,
+    [userId,order.id,customerPayload.data.customer_code,data.account_name,data.account_number,data.bank?.name ?? null,data.bank?.id ? String(data.bank.id) : null,String(data.id ?? customerPayload.data.customer_code)]
+  )).rows[0];
+  return res.status(201).json({virtualAccount:saved,displayMessage:`Transfer ₦${(Number(order.escrow_total_paid_minor)/100).toLocaleString()} to ${data.account_number} (${data.bank?.name ?? "Paystack bank"})`});
 });
 
 router.get("/wallet/balance", requireAuth, async (req,res)=>{
