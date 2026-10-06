@@ -765,7 +765,7 @@ router.post("/business/dispatch-plans/:id/cancel", requireAuth("CUSTOMER", "ADMI
   }
   if (["EXECUTED","CANCELLED"].includes(current.status)) return res.status(409).json({ error: "This dispatch plan can no longer be cancelled" });
   const result = await pool.query(
-    "UPDATE business_dispatch_plans SET status='CANCELLED',updated_at=now() WHERE id=$1 AND status IN ('PREPARED','APPROVED') RETURNING *",
+    "UPDATE business_dispatch_plans SET status='CANCELLED',updated_at=now() WHERE id=$1 AND status IN ('PREPARED','APPROVED') RETURNING id,business_id,created_by_user_id,status,delivery_window_start,delivery_window_end,estimated_total_minor,approval_required,approved_by_user_id,approved_at,executed_at,plan,created_at,updated_at",
     [id]
   );
   if (!result.rows[0]) return res.status(409).json({ error: "Dispatch plan changed concurrently" });
@@ -1220,7 +1220,7 @@ router.post("/drop-off/applications", requireAuth("CUSTOMER","AGENT","ADMIN"), a
       const b=await client.query("INSERT INTO business_accounts(owner_user_id,legal_name,display_name,registration_number,status) VALUES($1,$2,$3,$4,'PENDING') RETURNING id",[userId,d.legalName??d.displayName??d.name,d.displayName??d.name,d.registrationNumber??null]);
       businessId=b.rows[0].id; await client.query("INSERT INTO business_members(business_id,user_id,member_role) VALUES($1,$2,'OWNER')",[businessId,userId]);
     }
-    const location=await client.query("INSERT INTO drop_off_locations(business_id,name,address,latitude,longitude,phone,operating_hours,capacity,commission_minor) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) RETURNING *",[businessId,d.name,d.address,d.latitude,d.longitude,d.phone,JSON.stringify(d.operatingHours),d.capacity,50000]);
+    const location=await client.query("INSERT INTO drop_off_locations(business_id,name,address,latitude,longitude,phone,operating_hours,capacity,commission_minor) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) RETURNING id,business_id,name,address,latitude,longitude,phone,operating_hours,capacity,commission_minor,status,verification_status,verified_by_user_id,verified_at,created_at,updated_at",[businessId,d.name,d.address,d.latitude,d.longitude,d.phone,JSON.stringify(d.operatingHours),d.capacity,50000]);
     await client.query("INSERT INTO drop_off_application_audit(location_id,actor_user_id,new_status,note) VALUES($1,$2,'PENDING','Application submitted')",[location.rows[0].id,userId]);
     await client.query("COMMIT"); res.status(201).json({location:{id:location.rows[0].id,businessId:location.rows[0].business_id,name:location.rows[0].name,address:location.rows[0].address,latitude:Number(location.rows[0].latitude),longitude:Number(location.rows[0].longitude),phone:location.rows[0].phone,operatingHours:location.rows[0].operating_hours,capacity:Number(location.rows[0].capacity),commissionMinor:Number(location.rows[0].commission_minor),status:location.rows[0].status,verificationStatus:location.rows[0].verification_status,createdAt:location.rows[0].created_at,updatedAt:location.rows[0].updated_at}});
   } catch(e){await client.query("ROLLBACK");res.status(400).json({error:e instanceof Error?e.message:"Unable to submit application"});} finally{client.release();}
@@ -1439,7 +1439,7 @@ router.post("/admin/drop-off/locations/:id/review", requireAuth("ADMIN"), async(
       const missing=required.filter(type=>!docs.includes(type));
       if(missing.length){await client.query("ROLLBACK");return res.status(409).json({error:"Required verification documents are missing",missing});}
     }
-    const updated=await client.query("UPDATE drop_off_locations SET status=$2,verification_status=$3,verified_by_user_id=CASE WHEN $3='VERIFIED' THEN $4 ELSE verified_by_user_id END,verified_at=CASE WHEN $3='VERIFIED' THEN now() ELSE verified_at END,updated_at=now() WHERE id=$1 RETURNING *",[locationId,parsed.data.status,verified?"VERIFIED":"REJECTED",identity(req)]);
+    const updated=await client.query("UPDATE drop_off_locations SET status=$2,verification_status=$3,verified_by_user_id=CASE WHEN $3='VERIFIED' THEN $4 ELSE verified_by_user_id END,verified_at=CASE WHEN $3='VERIFIED' THEN now() ELSE verified_at END,updated_at=now() WHERE id=$1 RETURNING id,business_id,name,address,latitude,longitude,phone,operating_hours,capacity,commission_minor,status,verification_status,verified_by_user_id,verified_at,created_at,updated_at",[locationId,parsed.data.status,verified?"VERIFIED":"REJECTED",identity(req)]);
     await client.query("UPDATE drop_off_location_documents SET status=$2,updated_at=now() WHERE location_id=$1 AND status='PENDING'",[locationId,verified?"APPROVED":"REJECTED"]);
     await client.query("INSERT INTO drop_off_application_audit(location_id,actor_user_id,old_status,new_status,note) VALUES($1,$2,$3,$4,$5)",[locationId,identity(req),current.rows[0].status,parsed.data.status,parsed.data.note??null]);
     await client.query("COMMIT");
@@ -1573,7 +1573,7 @@ router.post("/drop-off/parcels/:id/collect", requireAuth("DRIVER"), async(req,re
   if(!parcel)return res.status(404).json({error:"Parcel not found"});
   if(parcel.driver_id!==driver.id)return res.status(403).json({error:"This parcel is not assigned to this driver"});
   if(parcel.status!=="READY_FOR_COURIER")return res.status(409).json({error:"Parcel is not ready for courier collection"});
-  const updated=await pool.query("UPDATE drop_off_parcels SET status='COURIER_COLLECTED',courier_driver_id=$2,courier_collected_at=now(),updated_at=now() WHERE id=$1 AND status='READY_FOR_COURIER' RETURNING *",[parcel.id,driver.id]);
+  const updated=await pool.query("UPDATE drop_off_parcels SET status='COURIER_COLLECTED',courier_driver_id=$2,courier_collected_at=now(),updated_at=now() WHERE id=$1 AND status='READY_FOR_COURIER' RETURNING id,delivery_id,location_id,status,courier_driver_id,courier_collected_at,completed_at,created_at,updated_at",[parcel.id,driver.id]);
   if(!updated.rows[0])return res.status(409).json({error:"Parcel collection changed concurrently"});
   await pool.query("INSERT INTO drop_off_events(parcel_id,actor_user_id,event_type,metadata) VALUES($1,$2,'COURIER_COLLECTED',$3::jsonb)",[parcel.id,identity(req),JSON.stringify({driverId:driver.id})]);
   res.json({parcel:publicDropOffParcel(updated.rows[0])});
