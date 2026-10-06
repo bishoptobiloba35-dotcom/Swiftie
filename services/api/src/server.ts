@@ -959,6 +959,20 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
       const status = event.event === "transfer.success" ? "RELEASED" : event.event === "transfer.failed" ? "FAILED" : "CANCELLED";
       const payout = await updatePayoutProviderStatus(reference,status,failureReason,Number(event?.data?.amount),String(event?.data?.currency ?? ""));
       if(payout) await recordDeliveryEvent({deliveryId:payout.deliveryId,eventType:"PAYOUT_"+status,metadata:{provider:"paystack",reference}});
+      const walletPayout=(await pool!.query(
+        "SELECT pr.*,sw.id AS wallet_id FROM payout_requests pr JOIN stakeholder_wallets sw ON sw.id=pr.wallet_id WHERE pr.provider_reference=$1 FOR UPDATE",
+        [reference]
+      )).rows[0];
+      if(walletPayout){
+        const amount=Number(walletPayout.amount_minor);
+        if(event.event==="transfer.success"){
+          await pool!.query("UPDATE payout_requests SET status='RELEASED',processed_at=COALESCE(processed_at,now()),updated_at=now() WHERE id=$1 AND status='PROCESSING'",[walletPayout.id]);
+          await pool!.query("UPDATE stakeholder_wallets SET pending_minor=GREATEST(0,pending_minor-$2),updated_at=now() WHERE id=$1",[walletPayout.wallet_id,amount]);
+        }else{
+          await pool!.query("UPDATE payout_requests SET status='FAILED',failure_reason=$2,processed_at=COALESCE(processed_at,now()),updated_at=now() WHERE id=$1 AND status='PROCESSING'",[walletPayout.id,failureReason ?? "Paystack transfer failed"]);
+          await pool!.query("UPDATE stakeholder_wallets SET balance_minor=balance_minor+$2,pending_minor=GREATEST(0,pending_minor-$2),updated_at=now() WHERE id=$1",[walletPayout.wallet_id,amount]);
+        }
+      }
     }
     return res.status(200).json({ received: true });
   }
