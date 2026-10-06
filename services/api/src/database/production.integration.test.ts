@@ -103,7 +103,7 @@ if (!db) {
     const completed = await confirmReceiverAndReleaseEscrow(
       delivery.id,
       " +2349020000000".trim(),
-      "123456",
+      "1234",
       90
     );
 
