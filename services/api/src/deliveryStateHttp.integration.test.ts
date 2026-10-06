@@ -120,7 +120,7 @@ test("delivery transition routes enforce the production state machine at the HTT
     assert.equal(atPickup.status, 200);
     assert.equal((await atPickup.json()).status, "DRIVER_AT_PICKUP");
 
-    const wrongDriver = await request(`/api/deliveries/${delivery.id}/pickup`, otherDriverToken, { pickupPhotoUrl: "/api/deliveries/${delivery.id}/pickup-photo" });
+    const wrongDriver = await request(`/api/deliveries/${delivery.id}/pickup`, otherDriverToken, { pickupPhotoUrl: `/api/deliveries/${delivery.id}/pickup-photo` });
     assert.equal(wrongDriver.status, 403);
 
     const missingEvidence = await request(`/api/deliveries/${delivery.id}/pickup`, driverToken, {});
@@ -130,7 +130,7 @@ test("delivery transition routes enforce the production state machine at the HTT
     assert.equal(pickup.status, 200);
     assert.equal((await pickup.json()).status, "PICKED_UP");
 
-    const pickupReplay = await request(`/api/deliveries/${delivery.id}/pickup`, driverToken, { pickupPhotoUrl: "/api/deliveries/${delivery.id}/pickup-photo/replay" });
+    const pickupReplay = await request(`/api/deliveries/${delivery.id}/pickup`, driverToken, { pickupPhotoUrl: `/api/deliveries/${delivery.id}/pickup-photo` });
     assert.equal(pickupReplay.status, 409);
 
     const arrivedBeforeTrip = await request(`/api/deliveries/${delivery.id}/arrived`, driverToken, {});
@@ -159,7 +159,7 @@ test("delivery transition routes enforce the production state machine at the HTT
     )).rows[0];
     assert.equal(persisted.status, "ARRIVED");
     assert.equal(persisted.driver_id, driver.id);
-    assert.equal(persisted.pickup_photo_url, "/api/deliveries/${delivery.id}/pickup-photo");
+    assert.equal(persisted.pickup_photo_url, `/api/deliveries/${delivery.id}/pickup-photo`);
 
     assert.notEqual(otherDriver.id, driver.id);
   } finally {
