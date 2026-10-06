@@ -1,6 +1,6 @@
 import React from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View, useColorScheme } from "react-native";
 
 type Props = {
   delivery: any;
@@ -21,6 +21,7 @@ const palette = {
 export default function Phase1Home({ delivery, notifications, setHomeSection, openNotifications, signOut }: Props) {
   const [appearance, setAppearance] = React.useState<Appearance>("system");
   const [mode, setMode] = React.useState<Mode>("individual");
+  const systemScheme = useColorScheme();
 
   React.useEffect(() => {
     AsyncStorage.multiGet(["swiftdrop.appearance", "swiftdrop.mode"]).then(entries => {
@@ -40,7 +41,7 @@ export default function Phase1Home({ delivery, notifications, setHomeSection, op
     await AsyncStorage.setItem("swiftdrop.mode", value);
   };
 
-  const isDark = appearance === "dark";
+  const isDark = appearance === "dark" || (appearance === "system" && systemScheme === "dark");
   const go = (key: "HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS") => setHomeSection(key);
   const c = isDark ? palette.dark : palette.light;
 
@@ -77,7 +78,7 @@ export default function Phase1Home({ delivery, notifications, setHomeSection, op
               <Text style={[styles.arrow, { color: c.primary }]}>→</Text>
             </View>
             <View style={styles.progressTrack}><View style={styles.progressFill} /></View>
-            <View style={styles.activeMeta}><Text style={{ color: c.mut }}>Pickup evidence ✓</Text><Text style={{ color: c.mut }}>GPS live • ETA 18 min</Text></View>
+            <View style={styles.activeMeta}><Text style={{ color: c.mut }}>{String(delivery.status ?? "ACTIVE").replaceAll("_", " ")} · Evidence protected</Text><Text style={{ color: c.mut }}>{delivery.etaMinutes != null ? `ETA ${delivery.etaMinutes} min` : "Live ETA when courier is moving"}</Text></View>
           </Pressable>
         ) : (
           <View style={[styles.emptyCard, { backgroundColor: c.card, borderColor: c.line }]}>
