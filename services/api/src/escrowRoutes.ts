@@ -247,6 +247,25 @@ router.get("/wallet/balance", requireAuth(), async (req,res)=>{
   return res.json({wallet:row ?? {balance_minor:0,pending_minor:0,currency:"NGN"}});
 });
 
+router.post("/wallet/recipient", requireAuth(), async (req,res)=>{
+  if(!databaseEnabled())return res.status(503).json({error:"Database unavailable"});
+  const parsed=z.object({bankCode:z.string().regex(/^\\d{3,6}$/),accountNumber:z.string().regex(/^\\d{10}$/)}).safeParse(req.body);
+  if(!parsed.success)return res.status(400).json({error:"A valid Nigerian bank code and 10-digit account number are required"});
+  const userId=authUser(req);
+  const secret=process.env.PAYSTACK_SECRET_KEY;
+  if(!secret)return res.status(503).json({error:"Paystack transfers are not configured"});
+  const headers={authorization:"Bearer "+secret,"content-type":"application/json"};
+  const resolveResponse=await fetch("https://api.paystack.co/bank/resolve?account_number="+encodeURIComponent(parsed.data.accountNumber)+"&bank_code="+encodeURIComponent(parsed.data.bankCode),{headers:{authorization:"Bearer "+secret}});
+  const resolved=await resolveResponse.json() as any;
+  if(!resolveResponse.ok||!resolved.status||!resolved.data?.account_name)return res.status(400).json({error:resolved.message ?? "Unable to verify the bank account"});
+  const recipientResponse=await fetch("https://api.paystack.co/transferrecipient",{method:"POST",headers,body:JSON.stringify({type:"nuban",name:resolved.data.account_name,account_number:parsed.data.accountNumber,bank_code:parsed.data.bankCode,currency:"NGN"})});
+  const recipient=await recipientResponse.json() as any;
+  if(!recipientResponse.ok||!recipient.status||!recipient.data?.recipient_code)return res.status(400).json({error:recipient.message ?? "Unable to create payout recipient"});
+  const wallet=await ensureWallet(userId,"CUSTOMER");
+  const saved=(await pool!.query("UPDATE stakeholder_wallets SET paystack_recipient_code=$2,bank_account_verified=true,updated_at=now() WHERE id=$1 RETURNING id,user_id,balance_minor,pending_minor,currency,paystack_recipient_code,bank_account_verified",[wallet.id,String(recipient.data.recipient_code)])).rows[0];
+  return res.status(201).json({wallet:saved,accountName:resolved.data.account_name,bankCode:parsed.data.bankCode,accountLast4:parsed.data.accountNumber.slice(-4)});
+});
+
 router.post("/wallet/withdraw", requireAuth(), async (req,res)=>{
   if(!databaseEnabled())return res.status(503).json({error:"Database unavailable"});
   const parsed=z.object({amountMinor:z.number().int().min(MIN_WITHDRAWAL_MINOR),idempotencyKey:z.string().min(8).max(120)}).safeParse(req.body);
