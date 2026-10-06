@@ -1021,7 +1021,7 @@ router.post("/marketplace/listings/:id/checkout", requireAuth(), async (req, res
     if (!stockUpdate.rows[0]) { await client.query("ROLLBACK"); return res.status(409).json({ error: "The requested quantity is no longer available" }); }
     const order = await client.query(
       `INSERT INTO marketplace_orders(listing_id,buyer_user_id,seller_user_id,quantity,unit_final_price_minor,total_minor,currency,requested_delivery_at,checkout_idempotency_key)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,listing_id,buyer_user_id,seller_user_id,quantity,unit_final_price_minor,total_minor,currency,status,fulfillment_status,delivery_id,requested_delivery_at,checkout_idempotency_key,created_at,updated_at`,
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,listing_id,buyer_user_id,seller_user_id,quantity,unit_final_price_minor,total_minor,currency,status,fulfillment_status,delivery_id,requested_delivery_at,checkout_idempotency_key,created_at,updated_at`,
       [listing.id,identity(req),listing.seller_user_id,quantity,listing.final_price_minor,total,listing.currency,requestedDeliveryAt,idempotencyKey]
     );
     await client.query("COMMIT");
