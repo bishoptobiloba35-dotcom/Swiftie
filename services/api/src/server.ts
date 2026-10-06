@@ -32,6 +32,7 @@ import { reconcileCancelledMarketplacePayments } from "./marketplacePaymentWorke
 import { reconcilePendingBuyOrderPayments } from "./buyOrderPaymentWorker.js";
 import { recordHttpMetric, renderPrometheusMetrics } from "./metrics.js";
 import { reportExternalError } from "./errorTracking.js";
+import escrowRoutes from "./escrowRoutes.js";
 
 const app = express();
 
@@ -83,6 +84,7 @@ app.use("/api", marketplaceRoutes);
 app.use("/api", recurringDispatchRoutes);
 app.use("/api", deliveryExceptionRoutes);
 app.use("/api", errandRoutes);
+app.use("/api", escrowRoutes);
 
 type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED" | "RETURNED";
 type DeliveryLocation = { latitude: number; longitude: number; recordedAt?: string };
