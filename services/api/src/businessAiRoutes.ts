@@ -765,7 +765,7 @@ router.post("/business/dispatch-plans/:id/cancel", requireAuth("CUSTOMER", "ADMI
   }
   if (["EXECUTED","CANCELLED"].includes(current.status)) return res.status(409).json({ error: "This dispatch plan can no longer be cancelled" });
   const result = await pool.query(
-    "UPDATE business_dispatch_plans SET status='CANCELLED',updated_at=now() WHERE id=$1 AND status IN ('PREPARED','APPROVED') RETURNING *",
+    "UPDATE business_dispatch_plans SET status='CANCELLED',updated_at=now() WHERE id=$1 AND status IN ('PREPARED','APPROVED') RETURNING id,business_id,created_by_user_id,status,delivery_window_start,delivery_window_end,estimated_total_minor,approval_required,approved_by_user_id,approved_at,executed_at,plan,created_at,updated_at",
     [id]
   );
   if (!result.rows[0]) return res.status(409).json({ error: "Dispatch plan changed concurrently" });
