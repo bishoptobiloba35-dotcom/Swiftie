@@ -683,7 +683,7 @@ export default function App() {
       {job.status === "PICKED_UP" && <Pressable style={styles.primary} onPress={() => void startTrip()}><Text style={styles.primaryText}>Start trip & share location</Text></Pressable>}
       {job.status === "IN_TRANSIT" && <Pressable style={styles.primary} onPress={() => void markArrived()}><Text style={styles.primaryText}>I have arrived</Text></Pressable>}
       {job.status === "ARRIVED" && <>
-        <Text style={styles.muted}>You have arrived. Hand the parcel to the receiver and ask them to confirm receipt in SwiftDrop using their six-digit PIN.</Text>
+        <Text style={styles.muted}>You have arrived. Hand the parcel to the receiver and ask them to confirm receipt in SwiftDrop using their 4-digit PIN.</Text>
         <Text style={styles.done}>Courier payment is held until receiver confirmation.</Text>
       </>}
       {job.status === "DELIVERED" && <Text style={styles.done}>✓ Delivery completed</Text>}
