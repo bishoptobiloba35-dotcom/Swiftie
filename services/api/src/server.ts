@@ -1200,43 +1200,6 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
     }
   }
 
-  if (databaseEnabled() && (event?.event === "charge.success" || event?.event === "charge.failed")) {
-    const receiverDeliveryId = String(event?.data?.metadata?.deliveryId ?? "");    const receiverDeliveryId = String(event?.data?.metadata?.deliveryId ?? "");
-    const receiverReference = String(event?.data?.reference ?? "");
-    if (receiverDeliveryId && receiverReference) {
-      const receiverPayment = await findPayment(receiverDeliveryId);
-      if (receiverPayment?.collectionMode === "RECEIVER_ON_DELIVERY" && receiverPayment.providerReference === receiverReference) {
-        if (event.event === "charge.failed") {
-          await updatePaymentStatus(receiverDeliveryId, "FAILED", receiverReference);
-          await recordDeliveryEvent({ deliveryId: receiverDeliveryId, eventType: "RECEIVER_PAYMENT_FAILED", metadata: { provider: "paystack", reference: receiverReference } });
-          return res.status(200).json({ received: true, duplicate: duplicateWebhook });
-        }
-        const providerAmount = Number(event?.data?.amount);
-        const providerCurrency = String(event?.data?.currency ?? "");
-        if (!Number.isSafeInteger(providerAmount) || providerAmount !== receiverPayment.amountMinor || providerCurrency.trim() !== receiverPayment.currency.trim()) {
-          await updatePaymentStatus(receiverDeliveryId, "FAILED", receiverReference);
-          await recordDeliveryEvent({ deliveryId: receiverDeliveryId, eventType: "RECEIVER_PAYMENT_RECONCILIATION_MISMATCH", metadata: { provider: "paystack", reference: receiverReference, expectedAmount: receiverPayment.amountMinor, expectedCurrency: receiverPayment.currency, providerAmount, providerCurrency } });
-          return res.status(200).json({ received: true, duplicate: duplicateWebhook });
-        }
-        const settled = await settleReceiverPaymentAndReleasePayout(
-          receiverDeliveryId,
-          receiverReference,
-          providerAmount,
-          providerCurrency,
-          Number(process.env.DRIVER_PAYOUT_PERCENT ?? 90)
-        );
-        if (!settled) return res.status(409).json({ error: "Receiver payment could not be settled safely" });
-        await notificationForDelivery(receiverDeliveryId, settled.delivery.senderId, "Receiver payment received", "The receiver paid for the delivery. The order is complete and courier payout is now eligible.", "RECEIVER_PAYMENT_RECEIVED");
-        if (settled.delivery.driverId) {
-          const driver = await driverForUser(settled.delivery.driverId);
-          if (driver) await notificationForDelivery(receiverDeliveryId, driver.userId, "Receiver payment received", "The receiver has paid. Your courier payout is now eligible.", "PAYOUT_ELIGIBLE");
-        }
-        publishDeliveryUpdate(receiverDeliveryId, safeDelivery(settled.delivery));
-        return res.status(200).json({ received: true, duplicate: duplicateWebhook, paymentMode: "RECEIVER_ON_DELIVERY", payoutAmountMinor: settled.payoutAmountMinor });
-      }
-    }
-  }
-
   if (event?.event !== "charge.success") return res.status(200).json({ received: true });
 
   const data = event.data;
