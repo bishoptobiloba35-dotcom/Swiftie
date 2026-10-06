@@ -10,13 +10,14 @@ import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { SwiftDropApi, type ApiDelivery } from "../../packages/shared/src/api";
 import { haversineDistanceMeters, etaMinutes } from "./src/trackingMath";
 import Phase1Home from "./src/Phase1Home";
+import OrderHistory from "./src/OrderHistory";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 const api = new SwiftDropApi(API_URL);
 
 export default function App() {
   const [signedIn, setSignedIn] = React.useState(false);
-  const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS">("HOME");
+  const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS" | "HISTORY">("HOME");
   const [errandDraft, setErrandDraft] = React.useState({
     errandType: "GENERAL_ERRAND" as "GENERAL_ERRAND" | "PURCHASE_AND_DELIVER" | "SHOP_FOR_ME",
     description: "",
@@ -892,6 +893,10 @@ export default function App() {
         signOut={() => void signOut()}
       />
     </SafeAreaView>;
+  }
+
+  if (homeSection === "HISTORY") {
+    return <SafeAreaView style={styles.safe}><OrderHistory api={api} onBack={() => setHomeSection("HOME")} onTrack={(trackingCode) => { setTrackingCode(trackingCode); setHomeSection("TRACK"); }} /></SafeAreaView>;
   }
 
   if (homeSection === "LOCATIONS") {
