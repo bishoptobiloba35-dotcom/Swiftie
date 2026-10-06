@@ -84,12 +84,30 @@ router.post("/escrow/:orderId/pay", requireAuth, async (req,res)=>{
     if(order.customer_id!==userId){await client.query("ROLLBACK");return res.status(403).json({error:"Order access denied"});}
     const existing=(await client.query("SELECT * FROM escrow_payment_attempts WHERE idempotency_key=$1",[parsed.data.idempotencyKey])).rows[0];
     if(existing){await client.query("COMMIT");return res.status(200).json({payment:existing});}
+    const amountMinor=Number(order.escrow_total_paid_minor);
+    const user=(await client.query("SELECT email FROM users WHERE id=$1",[userId])).rows[0];
+    if(!user?.email){await client.query("ROLLBACK");return res.status(409).json({error:"Customer email is required for Paystack payment"});}
+    let providerReference=parsed.data.providerReference ?? null;
+    let authorizationUrl:string|undefined;
+    let accessCode:string|undefined;
+    if(parsed.data.method!=="BANK_TRANSFER"){
+      const secret=process.env.PAYSTACK_SECRET_KEY;
+      if(!secret){await client.query("ROLLBACK");return res.status(503).json({error:"Paystack payment configuration is not ready"});}
+      const reference=providerReference ?? "SD-ESCROW-"+orderId+"-"+Date.now();
+      const channels=parsed.data.method==="USSD" ? ["ussd"] : ["card","bank","ussd","bank_transfer"];
+      const providerResponse=await fetch("https://api.paystack.co/transaction/initialize",{method:"POST",headers:{authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify({email:user.email,amount:String(amountMinor),currency:"NGN",reference,channels,metadata:{deliveryId:orderId,escrow:true}})});
+      const payload=await providerResponse.json() as any;
+      if(!providerResponse.ok||!payload.status||!payload.data?.authorization_url){await client.query("ROLLBACK");return res.status(502).json({error:payload.message ?? "Paystack payment initialization failed"});}
+      providerReference=String(payload.data.reference ?? reference);
+      authorizationUrl=payload.data.authorization_url;
+      accessCode=payload.data.access_code;
+    }
     const payment=(await client.query(
       "INSERT INTO escrow_payment_attempts(order_id,method,provider_reference,amount_minor,idempotency_key) VALUES($1,$2,$3,$4,$5) RETURNING *",
-      [orderId,parsed.data.method,parsed.data.providerReference ?? null,Number(order.escrow_total_paid_minor),parsed.data.idempotencyKey]
+      [orderId,parsed.data.method,providerReference,amountMinor,parsed.data.idempotencyKey]
     )).rows[0];
     await client.query("COMMIT");
-    return res.status(201).json({payment,confirmation:"Payment will be confirmed from the verified provider webhook."});
+    return res.status(201).json({payment,authorizationUrl,accessCode,amountMinor,confirmation:"Payment will be confirmed from the verified provider webhook."});
   }catch(e){await client.query("ROLLBACK");return res.status(500).json({error:"Unable to start escrow payment"});}
   finally{client.release();}
 });
