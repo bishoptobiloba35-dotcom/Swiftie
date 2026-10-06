@@ -675,7 +675,7 @@ router.post("/business/dispatch-plans/:id/execute", requireAuth("CUSTOMER", "ADM
       await client.query("ROLLBACK");
       return res.status(403).json({ error: "Business dispatch authorization required" });
     }
-    if (plan.status === "EXECUTED") { await client.query("COMMIT"); return res.json({ dispatchPlan: plan, idempotent: true }); }
+    if (plan.status === "EXECUTED") { await client.query("COMMIT"); return res.json({ dispatchPlan: publicDispatchPlan(plan), idempotent: true }); }
     if (plan.status === "CANCELLED") { await client.query("ROLLBACK"); return res.status(409).json({ error: "Cancelled dispatch plan cannot be executed" }); }
     if (plan.approval_required && plan.status !== "APPROVED") {
       await client.query("ROLLBACK");
