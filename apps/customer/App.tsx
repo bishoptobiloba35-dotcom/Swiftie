@@ -9,13 +9,15 @@ import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, Scro
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { SwiftDropApi, type ApiDelivery } from "../../packages/shared/src/api";
 import { haversineDistanceMeters, etaMinutes } from "./src/trackingMath";
+import Phase1Home from "./src/Phase1Home";
+import OrderHistory from "./src/OrderHistory";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 const api = new SwiftDropApi(API_URL);
 
 export default function App() {
   const [signedIn, setSignedIn] = React.useState(false);
-  const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS">("HOME");
+  const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS" | "HISTORY">("HOME");
   const [errandDraft, setErrandDraft] = React.useState({
     errandType: "GENERAL_ERRAND" as "GENERAL_ERRAND" | "PURCHASE_AND_DELIVER" | "SHOP_FOR_ME",
     description: "",
@@ -116,6 +118,7 @@ export default function App() {
   const [receiverMode, setReceiverMode] = React.useState(false);
   const [email, setEmail] = React.useState("");
   const [quote, setQuote] = React.useState<Awaited<ReturnType<typeof api.quote>> | null>(null);
+  const [includeProtection, setIncludeProtection] = React.useState(true);
   const [delivery, setDelivery] = React.useState<ApiDelivery | null>(null);
   const [trackingCode, setTrackingCode] = React.useState("");
   const [trackingPhone, setTrackingPhone] = React.useState("");
@@ -150,6 +153,12 @@ export default function App() {
       await api.registerDeviceToken(token.data, Platform.OS === "ios" ? "IOS" : "ANDROID");
     } catch {}
   }
+
+  React.useEffect(() => {
+    if (Platform.OS === "web" && typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+      void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    }
+  }, []);
 
   React.useEffect(() => {
     AsyncStorage.getItem("swiftdrop.customerAccessToken").then(token => {
@@ -691,7 +700,7 @@ export default function App() {
     try {
       if (![weightKg, lengthCm, widthCm, heightCm].every(value => Number(value) > 0)) throw new Error("Enter parcel weight and all three dimensions first.");
       const coords = coordinates();
-      setQuote(await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable, declaredValueMinor: Math.round(Number(declaredValue) * 100) }));
+      setQuote(await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable, declaredValueMinor: Math.round(Number(declaredValue) * 100), includeProtection }));
     } catch (error) {
       Alert.alert("Quote unavailable", error instanceof Error ? error.message : "Enter valid locations.");
     }
@@ -712,6 +721,7 @@ export default function App() {
         receiverPin,
         paymentMode,
         declaredValueMinor: Math.round(Number(declaredValue) * 100),
+        includeProtection,
         weightKg: Number(weightKg),
         dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) },
         isPerishable,
@@ -875,57 +885,19 @@ export default function App() {
   }
 
   if (homeSection === "HOME") {
-    return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}>
-      <View style={styles.heroHeader}>
-        <View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.brandTag}>LOGISTICS · SHOPPING · SERVICES</Text></View>
-        <View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View>
-      </View>
+    return <SafeAreaView style={styles.safe}>
+      <Phase1Home
+        delivery={delivery}
+        notifications={notifications}
+        setHomeSection={setHomeSection}
+        openNotifications={() => { setShowNotifications(v => !v); void loadNotifications(); }}
+        signOut={() => void signOut()}
+      />
+    </SafeAreaView>;
+  }
 
-      <Pressable style={styles.trackSearch} onPress={() => setHomeSection("TRACK")}><Text style={styles.trackIcon}>◉</Text><Text style={styles.trackText}>Track Your Order</Text><Text style={styles.trackArrow}>›</Text></Pressable>
-
-      <View style={styles.homeCard}>
-        <Text style={styles.homeHeading}>Get Quote of Order</Text>
-        <View style={styles.homeTwoCol}>
-          <Pressable style={styles.homeChoice} onPress={() => { setHomeSection("ORDER"); }}>
-            <Text style={styles.homeEmoji}>📦</Text><Text style={styles.homeChoiceTitle}>Same state</Text><Text style={styles.homeChoiceSub}>Within your state</Text>
-          </Pressable>
-          <Pressable style={styles.homeChoice} onPress={() => { setHomeSection("ORDER"); }}>
-            <Text style={styles.homeEmoji}>🗺️</Text><Text style={styles.homeChoiceTitle}>Inter state</Text><Text style={styles.homeChoiceSub}>Across Nigerian states</Text>
-          </Pressable>
-        </View>
-      </View>
-
-      <View style={styles.homeCard}>
-        <Text style={styles.homeHeading}>Place your order</Text>
-        <View style={styles.actionGrid}>
-          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>📦</Text><Text style={styles.tileTitle}>Send within Nigeria</Text></Pressable>
-          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ERRAND")}><Text style={styles.tileEmoji}>🛵</Text><Text style={styles.tileTitle}>Hire an Errand</Text><Text style={styles.tileSub}>Errand · Purchase · Shop for me</Text></Pressable>
-          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>⚡</Text><Text style={styles.tileTitle}>Express drop off</Text></Pressable>
-          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>💳</Text><Text style={styles.tileTitle}>Pay Shipment</Text></Pressable>
-          <Pressable style={styles.actionTile} onPress={() => void openNearbyDropOffLocations()}><Text style={styles.tileEmoji}>📍</Text><Text style={styles.tileTitle}>Drop-off locations</Text><Text style={styles.tileSub}>Merchant & partner points</Text></Pressable>
-        </View>
-      </View>
-
-      <View style={styles.homeCard}>
-        <View style={styles.sectionHeader}><View><Text style={styles.homeHeading}>SwiftDrop Shop</Text><Text style={styles.muted}>Every product is anchored to its own seller.</Text></View><Pressable onPress={() => { setHomeSection("SHOP"); void loadMarketplace(); }}><Text style={styles.link}>View all</Text></Pressable></View>
-        <View style={styles.shopPreviewRow}>
-          <Pressable style={styles.shopPreview} onPress={() => { setHomeSection("SHOP"); void loadMarketplace(); }}><Text style={styles.productEmoji}>🛍️</Text><Text style={styles.productName}>Shop products</Text><Text style={styles.muted}>Seller profile + recommendations</Text></Pressable>
-          <Pressable style={styles.shopPreview} onPress={() => { setHomeSection("SHOP"); void loadMarketplace("food"); }}><Text style={styles.productEmoji}>🍱</Text><Text style={styles.productName}>Food & perishables</Text><Text style={styles.muted}>Delivery included in price</Text></Pressable>
-        </View>
-      </View>
-
-      <View style={styles.homeCard}>
-        <Text style={styles.eyebrow}>SWIFT AI</Text><Text style={styles.homeHeading}>Ask Swift AI</Text><Text style={styles.muted}>Basic AI explains your orders and app. Premium can take authorized actions.</Text>
-        <Pressable style={styles.secondary} onPress={() => Alert.alert("Swift AI", "Use the Swift AI section below your order workspace to ask questions. Premium actions remain permission-controlled.")}><Text style={styles.secondaryText}>Open Swift AI</Text></Pressable>
-      </View>
-
-      <View style={styles.bottomNav}>
-        <Pressable style={styles.navActive}><Text>⌂</Text><Text>Home</Text></Pressable>
-        <Pressable style={styles.navItem} onPress={() => setHomeSection("ORDER")}><Text>□</Text><Text>Order</Text></Pressable>
-        <Pressable style={styles.navItem} onPress={() => { setHomeSection("SHOP"); void loadMarketplace(); }}><Text>🛍</Text><Text>Shop</Text></Pressable>
-        <Pressable style={styles.navItem} onPress={() => setShowSupport(v => !v)}><Text>?</Text><Text>Support</Text></Pressable>
-      </View>
-    </ScrollView></SafeAreaView>;
+  if (homeSection === "HISTORY") {
+    return <SafeAreaView style={styles.safe}><OrderHistory api={api} onBack={() => setHomeSection("HOME")} onTrack={(trackingCode) => { setTrackingCode(trackingCode); setHomeSection("TRACK"); }} /></SafeAreaView>;
   }
 
   if (homeSection === "LOCATIONS") {
@@ -1258,7 +1230,7 @@ export default function App() {
       <Text>Weight: ₦{(quote.weightFareMinor / 100).toLocaleString()}</Text>
       <Text>Size/handling: ₦{(quote.sizeFareMinor / 100).toLocaleString()}</Text>
       {quote.perishableSurchargeMinor > 0 && <Text>Perishable/food surcharge: ₦{(quote.perishableSurchargeMinor / 100).toLocaleString()}</Text>}
-      <Text>Fuel reference: ₦{(quote.fuelReferenceMinor / 100).toLocaleString()} (2 litres)</Text><Text>Refundable protection reserve: ₦{(quote.protectionReserveMinor / 100).toLocaleString()}</Text><Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
+      <Text>Fuel reference: ₦{(quote.fuelReferenceMinor / 100).toLocaleString()} (2 litres)</Text><Pressable style={[styles.choice, includeProtection && styles.choiceActive]} onPress={() => setIncludeProtection(v => !v)} accessibilityRole="checkbox" accessibilityState={{ checked: includeProtection }}><Text style={styles.photoTitle}>{includeProtection ? "✓ " : ""}Refundable Protection Reserve · 10% of declared value</Text></Pressable><Text>Protection: ₦{(quote.protectionReserveMinor / 100).toLocaleString()}</Text><Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
       <Text style={styles.code}>Total: ₦{(quote.totalMinor / 100).toLocaleString()}</Text>    </View>}
     <Text style={styles.heading}>Who pays for this order?</Text>
     <View style={styles.row}>

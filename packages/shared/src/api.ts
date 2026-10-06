@@ -8,6 +8,7 @@ export type ApiDelivery = {
   dimensionsCm: { length: number; width: number; height: number };
   isPerishable: boolean;
   declaredValueMinor: number;
+  includeProtection?: boolean;
   pickup: { label: string; formattedAddress: string; location?: { latitude: number; longitude: number; recordedAt?: string } };
   dropoff: { label: string; formattedAddress: string; location?: { latitude: number; longitude: number; recordedAt?: string } };
   pickupInstructions?: string;
@@ -63,6 +64,7 @@ export type CreateDeliveryInput = {
   dimensionsCm: { length: number; width: number; height: number };
   isPerishable: boolean;
   declaredValueMinor: number;
+  includeProtection?: boolean;
   pickup: { label: string; formattedAddress: string; latitude: number; longitude: number };
   dropoff: { label: string; formattedAddress: string; latitude: number; longitude: number };
   pickupDropOffLocationId?: string;
@@ -468,6 +470,7 @@ export class SwiftDropApi {
     dimensionsCm: { length: number; width: number; height: number };
     isPerishable: boolean;
     declaredValueMinor: number;
+    includeProtection?: boolean;
   }): Promise<{
     currency: string; distanceMeters: number; durationSeconds: number;
     baseFareMinor: number; distanceFareMinor: number; weightFareMinor: number; sizeFareMinor: number;
@@ -480,6 +483,13 @@ export class SwiftDropApi {
     });
     if (!response.ok) throw new Error("Unable to calculate delivery quote");
     return response.json();
+  }
+
+  async customerOrderHistory(status: "ALL" | "DELIVERED" | "IN_TRANSIT" | "CANCELLED" = "ALL"): Promise<{ deliveries: Array<{ id: string; trackingCode: string; status: string; receiverName: string; dropoffAddress: string; quoteTotalMinor: number; quoteCurrency: string; createdAt: string; updatedAt: string; latestLocation?: { latitude: number; longitude: number; recordedAt: string } | null }> }> {
+    const response = await fetch(this.baseUrl + "/api/customer/deliveries?status=" + encodeURIComponent(status), { headers: this.headers() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to load order history");
+    return data;
   }
 
   async paymentStatus(deliveryId: string): Promise<{ payment: { status: string; escrowStatus?: string; amountMinor: number; currency: string; providerReference?: string | null } }> {

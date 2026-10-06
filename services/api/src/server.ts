@@ -151,6 +151,7 @@ const createDeliverySchema = z.object({
   dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
   isPerishable: z.boolean(),
   declaredValueMinor: z.number().int().positive().max(10000000000),
+  includeProtection: z.boolean().default(true),
   pickup: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   dropoff: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   pickupDropOffLocationId: z.string().uuid().optional(),
@@ -166,6 +167,9 @@ const createDeliverySchema = z.object({
     weightFareMinor: z.number().int().nonnegative(),
     sizeFareMinor: z.number().int().nonnegative(),
     perishableSurchargeMinor: z.number().int().nonnegative(),
+    fuelReferenceMinor: z.number().int().nonnegative(),
+    protectionReserveMinor: z.number().int().nonnegative(),
+    pricingVersion: z.number().int().positive(),
     serviceFeeMinor: z.number().int().nonnegative(),
     totalMinor: z.number().int().positive()
   })
@@ -176,13 +180,14 @@ const quoteSchema = z.object({
   weightKg: z.number().positive().max(1000),
   dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
   isPerishable: z.boolean(),
-  declaredValueMinor: z.number().int().positive().max(10000000000)
+  declaredValueMinor: z.number().int().positive().max(10000000000),
+  includeProtection: z.boolean().default(true)
 });
 
 async function calculateQuote(
   pickup: { latitude: number; longitude: number },
   dropoff: { latitude: number; longitude: number },
-  parcel: { weightKg: number; dimensionsCm: { length: number; width: number; height: number }; isPerishable: boolean; declaredValueMinor: number }
+  parcel: { weightKg: number; dimensionsCm: { length: number; width: number; height: number }; isPerishable: boolean; declaredValueMinor: number; includeProtection?: boolean }
 ): Promise<DeliveryQuote> {
   const config = await getActivePricingConfig();
   const earthRadius = 6371000;
@@ -204,7 +209,7 @@ async function calculateQuote(
   const handlingMinor = baseFareMinor + distanceFareMinor + weightFareMinor + sizeFareMinor;
   const perishableSurchargeMinor = parcel.isPerishable ? Math.ceil(handlingMinor * config.perishableSurchargeBps / 10000) : 0;
   const serviceFeeMinor = Math.ceil((handlingMinor + perishableSurchargeMinor) * config.serviceChargeBps / 10000);
-  const protectionReserveMinor = Math.ceil(parcel.declaredValueMinor * config.protectionReserveBps / 10000);
+  const protectionReserveMinor = parcel.includeProtection === false ? 0 : Math.ceil(parcel.declaredValueMinor * config.protectionReserveBps / 10000);
   return {
     currency: "NGN",
     distanceMeters: Math.round(distanceMeters),
@@ -579,7 +584,7 @@ app.get("/api/locations/search", requireAuth("CUSTOMER"), async (req, res) => {
 app.post("/api/quotes", requireAuth("CUSTOMER"), async (req, res) => {
   const parsed = quoteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  try { res.json(await calculateQuote(parsed.data.pickup, parsed.data.dropoff, { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable, declaredValueMinor: parsed.data.declaredValueMinor })); } catch (error) { res.status(503).json({ error: error instanceof Error ? error.message : "Pricing configuration is unavailable" }); }
+  try { res.json(await calculateQuote(parsed.data.pickup, parsed.data.dropoff, { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable, declaredValueMinor: parsed.data.declaredValueMinor, includeProtection: parsed.data.includeProtection })); } catch (error) { res.status(503).json({ error: error instanceof Error ? error.message : "Pricing configuration is unavailable" }); }
 });
 
 app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
@@ -589,7 +594,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   const quote = await calculateQuote(
     { latitude: parsed.data.pickup.latitude, longitude: parsed.data.pickup.longitude },
     { latitude: parsed.data.dropoff.latitude, longitude: parsed.data.dropoff.longitude },
-    { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable, declaredValueMinor: parsed.data.declaredValueMinor }
+    { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable, declaredValueMinor: parsed.data.declaredValueMinor, includeProtection: parsed.data.includeProtection }
   );
   if (quote.currency !== "NGN" || !Number.isSafeInteger(quote.totalMinor) || quote.totalMinor <= 0) {
     return res.status(500).json({ error: "Unable to calculate delivery quote" });
@@ -1605,6 +1610,31 @@ app.get("/api/admin/operations", requireAuth("ADMIN"), async (_req, res) => {
   } });
 });
 
+app.get("/api/customer/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const requested = typeof req.query.status === "string" ? req.query.status : "ALL";
+  const allowed = new Set(["ALL", "DELIVERED", "IN_TRANSIT", "CANCELLED"]);
+  if (!allowed.has(requested)) return res.status(400).json({ error: "Unsupported order history filter" });
+  const clauses = ["d.sender_id=$1"];
+  const params: unknown[] = [identity(req)];
+  if (requested === "DELIVERED") clauses.push("d.status='DELIVERED'");
+  if (requested === "CANCELLED") clauses.push("d.status='CANCELLED'");
+  if (requested === "IN_TRANSIT") clauses.push("d.status IN ('PAYMENT_AUTHORIZED','DRIVER_ASSIGNED','DRIVER_AT_PICKUP','PICKED_UP','IN_TRANSIT','ARRIVED')");
+  const result = await pool!.query(
+    `SELECT d.id,d.tracking_code,d.status,d.receiver_name,d.dropoff_address,d.quote_total_minor,d.quote_currency,d.created_at,d.updated_at,
+      (SELECT json_build_object('latitude',le.latitude,'longitude',le.longitude,'recordedAt',le.recorded_at)
+       FROM location_events le WHERE le.delivery_id=d.id ORDER BY le.recorded_at DESC LIMIT 1) AS latest_location
+     FROM deliveries d WHERE ${clauses.join(" AND ")} ORDER BY d.updated_at DESC LIMIT 100`,
+    params
+  );
+  res.json({ deliveries: result.rows.map(row => ({
+    id: row.id, trackingCode: row.tracking_code, status: row.status, receiverName: row.receiver_name,
+    dropoffAddress: row.dropoff_address, quoteTotalMinor: Number(row.quote_total_minor ?? 0),
+    quoteCurrency: row.quote_currency ?? "NGN", createdAt: row.created_at, updatedAt: row.updated_at,
+    latestLocation: row.latest_location
+  })) });
+});
+
 app.get("/api/admin/deliveries", requireAuth("ADMIN"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
   const status = typeof req.query.status === "string" ? req.query.status : null;
@@ -2452,7 +2482,7 @@ app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Receiver confirmation requires the production database" });
   const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
   const receiverPin = String(req.body?.receiverPin ?? "").trim();
-  if (!receiverPhone || !/^\d{6}$/.test(receiverPin)) return res.status(400).json({ error: "Receiver phone and six-digit PIN are required" });
+  if (!receiverPhone || !/^\d{4}$/.test(receiverPin)) return res.status(400).json({ error: "Receiver phone and four-digit PIN are required" });
 
   // Buy & Deliver has its own escrow record; do not route it through the normal delivery payment table.
   const buyOrderResult = await pool!.query(
