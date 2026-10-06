@@ -84,6 +84,7 @@ export default function App() {
   const [authPhone, setAuthPhone] = React.useState("");
   const [authEmail, setAuthEmail] = React.useState("");
   const [authPassword, setAuthPassword] = React.useState("");
+  const [legalConsent, setLegalConsent] = React.useState(false);
   const [pickup, setPickup] = React.useState("");
   const [dropoff, setDropoff] = React.useState("");
   const [pickupLat, setPickupLat] = React.useState("");
@@ -177,12 +178,16 @@ export default function App() {
 
   async function registerCustomer() {
     try {
+      if (!legalConsent) throw new Error("Please accept the Terms, Privacy Notice, and Acceptable Use Policy to create an account.");
       const data = await api.register({
         fullName: authName.trim(),
         phone: authPhone.trim(),
         email: authEmail.trim() || undefined,
         password: authPassword,
-        role: "CUSTOMER"
+        role: "CUSTOMER",
+        termsAccepted: true,
+        privacyAccepted: true,
+        acceptableUseAccepted: true
       });
       await AsyncStorage.setItem("swiftdrop.customerAccessToken", data.accessToken);
       setSignedIn(true);
@@ -862,6 +867,7 @@ export default function App() {
       <TextInput style={styles.input} placeholder="Phone number" value={authPhone} onChangeText={setAuthPhone} keyboardType="phone-pad" />
       {authMode === "register" && <TextInput style={styles.input} placeholder="Email (optional)" value={authEmail} onChangeText={setAuthEmail} keyboardType="email-address" autoCapitalize="none" />}
       <TextInput style={styles.input} placeholder="Password" value={authPassword} onChangeText={setAuthPassword} secureTextEntry />
+      {authMode === "register" && <Pressable onPress={() => setLegalConsent(v => !v)} style={{ flexDirection: "row", alignItems: "center", marginBottom: 12 }}><Text style={{ fontSize: 20, marginRight: 8 }}>{legalConsent ? "☑" : "☐"}</Text><Text style={{ flex: 1 }}>I accept the SwiftDrop Terms of Service, Privacy Notice, and Acceptable Use Policy.</Text></Pressable>}
       <Pressable style={styles.primary} onPress={() => void (authMode === "login" ? signIn() : registerCustomer())}><Text style={styles.primaryText}>{authMode === "login" ? "Sign in" : "Create account"}</Text></Pressable>
       <Pressable onPress={() => setAuthMode(authMode === "login" ? "register" : "login")}><Text style={styles.link}>{authMode === "login" ? "Create an account" : "Already have an account? Sign in"}</Text></Pressable>
       <Pressable onPress={() => setReceiverMode(true)}><Text style={styles.link}>I am a receiver — confirm a delivery</Text></Pressable>
