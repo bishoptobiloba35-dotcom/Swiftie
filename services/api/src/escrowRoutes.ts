@@ -33,22 +33,14 @@ async function ensureWallet(userId: string, type: string) {
 
 router.post("/escrow/create", requireAuth, async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({error:"Database unavailable"});
-  const parsed = z.object({
-    orderId:z.string().uuid(),
-    totalPaidMinor:z.number().int().positive(),
-    courierShareMinor:z.number().int().nonnegative(),
-    serviceChargeMinor:z.number().int().nonnegative(),
-    protectionReserveMinor:z.number().int().nonnegative(),
-    swiftdropMarginMinor:z.number().int().nonnegative(),
-    merchantShareMinor:z.number().int().nonnegative()
-  }).safeParse(req.body);
+  const parsed = z.object({ orderId:z.string().uuid() }).safeParse(req.body);
   if(!parsed.success) return res.status(400).json({error:"Invalid escrow payload"});
   const userId=authUser(req);
   const client=await pool!.connect();
   try{
     await client.query("BEGIN");
     const order=(await client.query(
-      "SELECT id,customer_id,payment_on_delivery FROM deliveries WHERE id=$1 FOR UPDATE",
+      "SELECT id,customer_id,payment_on_delivery,quote_total_minor,quote_base_fare_minor,quote_service_fee_minor,quote_protection_reserve_minor FROM deliveries WHERE id=$1 FOR UPDATE",
       [parsed.data.orderId]
     )).rows[0];
     if(!order) return res.status(404).json({error:"Order not found"});
@@ -56,15 +48,22 @@ router.post("/escrow/create", requireAuth, async (req, res) => {
     if(order.payment_on_delivery===true) return res.status(409).json({error:"Cash-on-delivery is disabled"});
     const existing=(await client.query("SELECT * FROM escrow_ledgers WHERE order_id=$1 FOR UPDATE",[order.id])).rows[0];
     if(existing){ await client.query("COMMIT"); return res.status(200).json({escrow:existing}); }
-    const sum=parsed.data.courierShareMinor+parsed.data.serviceChargeMinor+parsed.data.protectionReserveMinor+parsed.data.swiftdropMarginMinor+parsed.data.merchantShareMinor;
-    if(sum!==parsed.data.totalPaidMinor) return res.status(400).json({error:"Escrow split does not equal total"});
+    const totalPaidMinor=Number(order.quote_total_minor ?? 0);
+    const baseFareMinor=Number(order.quote_base_fare_minor ?? 0);
+    const serviceChargeMinor=Number(order.quote_service_fee_minor ?? 0);
+    const protectionReserveMinor=Number(order.quote_protection_reserve_minor ?? 0);
+    if(!Number.isSafeInteger(totalPaidMinor)||totalPaidMinor<=0) return res.status(409).json({error:"Order has no authoritative payable total"});
+    const courierShareMinor=Math.floor(baseFareMinor*COURIER_SHARE_BPS/10000);
+    const merchantShareMinor=0;
+    const swiftdropMarginMinor=totalPaidMinor-courierShareMinor-serviceChargeMinor-protectionReserveMinor-merchantShareMinor;
+    if(swiftdropMarginMinor<0) return res.status(409).json({error:"Order pricing cannot produce a valid escrow split"});
     const row=(await client.query(
       `INSERT INTO escrow_ledgers(order_id,total_paid_minor,courier_share_minor,service_charge_minor,protection_reserve_minor,swiftdrop_margin_minor,merchant_share_minor)
        VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [order.id,parsed.data.totalPaidMinor,parsed.data.courierShareMinor,parsed.data.serviceChargeMinor,parsed.data.protectionReserveMinor,parsed.data.swiftdropMarginMinor,parsed.data.merchantShareMinor]
+      [order.id,totalPaidMinor,courierShareMinor,serviceChargeMinor,protectionReserveMinor,swiftdropMarginMinor,merchantShareMinor]
     )).rows[0];
     await client.query("UPDATE deliveries SET escrow_payment_state='pending_payment',escrow_total_paid_minor=$2,escrow_courier_share_minor=$3,escrow_service_charge_minor=$4,escrow_protection_reserve_minor=$5,escrow_swiftdrop_margin_minor=$6,escrow_merchant_share_minor=$7 WHERE id=$1",
-      [order.id,parsed.data.totalPaidMinor,parsed.data.courierShareMinor,parsed.data.serviceChargeMinor,parsed.data.protectionReserveMinor,parsed.data.swiftdropMarginMinor,parsed.data.merchantShareMinor]);
+      [order.id,totalPaidMinor,courierShareMinor,serviceChargeMinor,protectionReserveMinor,swiftdropMarginMinor,merchantShareMinor]);
     await client.query("COMMIT");
     return res.status(201).json({escrow:row});
   }catch(e){await client.query("ROLLBACK"); return res.status(500).json({error:"Unable to create escrow"});}
@@ -123,14 +122,14 @@ router.post("/escrow/:orderId/pin", requireAuth, async (req,res)=>{
       `UPDATE deliveries SET status='DELIVERED',escrow_payment_state='dispute_window',escrow_pin_confirmed_at=now(),escrow_dispute_window_until=$2 WHERE id=$1`,
       [order.id,disputeUntil]
     );
-    if(order.courier_id && Number(order.escrow_courier_share_minor)>0){
+    if(order.courier_user_id && Number(order.escrow_courier_share_minor)>0){
       await client.query(
         `INSERT INTO stakeholder_wallets(user_id,stakeholder_type,balance_minor)
          VALUES($1,'COURIER',$2)
          ON CONFLICT(user_id) DO UPDATE SET balance_minor=stakeholder_wallets.balance_minor+EXCLUDED.balance_minor,updated_at=now()`,
         [order.courier_user_id,Number(order.escrow_courier_share_minor)]
       );
-      const wallet=(await client.query("SELECT id,balance_minor FROM stakeholder_wallets WHERE user_id=$1",[order.courier_id])).rows[0];
+      const wallet=(await client.query("SELECT id,balance_minor FROM stakeholder_wallets WHERE user_id=$1",[order.courier_user_id])).rows[0];
       await client.query(
         `INSERT INTO wallet_transactions(wallet_id,order_id,type,direction,amount_minor,balance_after_minor,idempotency_key)
          VALUES($1,$2,'COURIER_INSTANT_PAYOUT','CREDIT',$3,$4,$5)
