@@ -187,7 +187,7 @@ router.post("/escrow/:orderId/pin", requireAuth(), async (req,res)=>{
     }
     await client.query("COMMIT");
     return res.status(200).json({state:"dispute_window",courierPayout:"instant",courierShareMinor:Number(order.escrow_courier_share_minor),disputeWindowUntil:disputeUntil.toISOString()});
-  }catch(e){await client.query("ROLLBACK");return res.status(500).json({error:"Unable to confirm PIN"});}
+  }catch(e){await client.query("ROLLBACK");return res.status(500).json({error:"Unable to confirm PIN",...(process.env.NODE_ENV === "test" ? {detail:e instanceof Error ? e.message : String(e)} : {})});}
   finally{client.release();}
 });
 
