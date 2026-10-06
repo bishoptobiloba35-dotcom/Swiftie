@@ -56,6 +56,7 @@ const migrations = [
   { id: "057_marketplace_seller_readiness", file: "057_marketplace_seller_readiness.sql" },
   { id: "058_errand_item_price_authorization", file: "058_errand_item_price_authorization.sql" },
   { id: "059_errand_item_refunds", file: "059_errand_item_refunds.sql" },
+  { id: "060_errand_multi_stop", file: "060_errand_multi_stop.sql" },
 ];
 export async function runMigrations(): Promise<void> {
   if (!pool) return;

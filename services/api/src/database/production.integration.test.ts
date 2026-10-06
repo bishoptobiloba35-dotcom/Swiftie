@@ -439,3 +439,42 @@ test("marketplace payment reconciliation schema prevents duplicate refund refere
   )).rowCount;
   assert.equal(index, 1);
 });
+
+
+test("multi-stop errands preserve ordered stops and completion audit state", async () => {
+  if (!db) return;
+  const customer = (await db.query(
+    `INSERT INTO users (role, full_name, phone, email)
+     VALUES ('CUSTOMER','Multi Stop Customer',$1,$2)
+     RETURNING id`,
+    [`+234903${Date.now()}`, `multistop-${Date.now()}@example.test`]
+  )).rows[0];
+  const order = (await db.query(
+    `INSERT INTO buy_orders (customer_user_id,item_description,purchase_budget_minor)
+     VALUES ($1,'Multi-stop errand',100000)
+     RETURNING id`,
+    [customer.id]
+  )).rows[0];
+  await db.query(
+    `INSERT INTO buy_order_stops (buy_order_id,stop_order,stop_type,label,address,latitude,longitude,instructions)
+     VALUES ($1,1,'PICKUP','First stop','Garki, Abuja',9.02,7.48,'Collect the parcel'),
+            ($1,2,'PURCHASE','Second stop','Wuse, Abuja',9.06,7.49,'Purchase the item')`,
+    [order.id]
+  );
+  const ordered = (await db.query(
+    `SELECT stop_order,label,status FROM buy_order_stops WHERE buy_order_id=$1 ORDER BY stop_order`,
+    [order.id]
+  )).rows;
+  assert.deepEqual(ordered.map((row:any) => [Number(row.stop_order), row.label, row.status]), [
+    [1, "First stop", "PENDING"],
+    [2, "Second stop", "PENDING"]
+  ]);
+  const completed = (await db.query(
+    `UPDATE buy_order_stops SET status='COMPLETED',completed_at=now(),completed_by_user_id=$2
+       WHERE buy_order_id=$1 AND stop_order=1
+       RETURNING id,status,completed_by_user_id`,
+    [order.id, customer.id]
+  )).rows[0];
+  assert.equal(completed.status, "COMPLETED");
+  assert.equal(completed.completed_by_user_id, customer.id);
+});

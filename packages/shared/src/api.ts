@@ -372,6 +372,7 @@ export class SwiftDropApi {
     destinationAddress: string;
     destinationLat: number;
     destinationLng: number;
+    stops?: Array<{ stopType?: "TASK" | "PICKUP" | "PURCHASE" | "INSPECT" | "DROP_OFF"; label: string; address: string; latitude: number; longitude: number; instructions?: string }>;
   }): Promise<any> {
     const response = await fetch(this.baseUrl + "/api/errands", {
       method: "POST",

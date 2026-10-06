@@ -33,7 +33,8 @@ const errandSchema = z.object({
   receiverPin: z.string().regex(/^\d{4,6}$/),
   destinationAddress: z.string().trim().min(3).max(500),
   destinationLat: z.number().finite().min(-90).max(90),
-  destinationLng: z.number().finite().min(-180).max(180)
+  destinationLng: z.number().finite().min(-180).max(180),
+  stops: z.array(z.object({ stopType: z.enum(["TASK","PICKUP","PURCHASE","INSPECT","DROP_OFF"]).default("TASK"), label: z.string().trim().min(1).max(160), address: z.string().trim().min(3).max(500), latitude: z.number().finite().min(-90).max(90), longitude: z.number().finite().min(-180).max(180), instructions: z.string().trim().max(1000).optional() })).max(10).default([])
 }).superRefine((value, ctx) => {
   if (value.errandType !== "GENERAL_ERRAND" && value.spendingCeilingMinor <= 0) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["spendingCeilingMinor"], message: "A positive spending ceiling is required for shopping errands" });
@@ -94,8 +95,19 @@ router.post("/errands", requireAuth("CUSTOMER"), async (req, res) => {
       "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'ERRAND_CREATED',$3::jsonb)",
       [errand.id, identity(req), JSON.stringify({ errandType: data.errandType, replacementPolicy: data.replacementPolicy, itemCount: data.items.length })]
     );
+    for (const [index, stop] of data.stops.entries()) {
+      await client.query(
+        `INSERT INTO buy_order_stops (buy_order_id,stop_order,stop_type,label,address,latitude,longitude,instructions)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [errand.id, index + 1, stop.stopType, stop.label, stop.address, stop.latitude, stop.longitude, stop.instructions ?? null]
+      );
+    }
     const createdItems = await client.query(
       "SELECT id,requested_description,quantity,max_authorized_minor,requested_price_minor,replacement_policy,status FROM buy_order_items WHERE buy_order_id=$1 ORDER BY created_at",
+      [errand.id]
+    );
+    const createdStops = await client.query(
+      "SELECT id,stop_order,stop_type,label,address,latitude,longitude,instructions,status,completed_at,completed_by_user_id FROM buy_order_stops WHERE buy_order_id=$1 ORDER BY stop_order",
       [errand.id]
     );
     await client.query("COMMIT");
@@ -121,6 +133,7 @@ router.post("/errands", requireAuth("CUSTOMER"), async (req, res) => {
         createdAt: errand.created_at,
         updatedAt: errand.updated_at
       },
+      stops: createdStops.rows.map((stop) => ({ id: stop.id, order: Number(stop.stop_order), stopType: stop.stop_type, label: stop.label, address: stop.address, latitude: Number(stop.latitude), longitude: Number(stop.longitude), instructions: stop.instructions, status: stop.status, completedAt: stop.completed_at, completedByUserId: stop.completed_by_user_id })),
       items: createdItems.rows.map((item) => ({
         id: item.id,
         description: item.requested_description,
@@ -168,7 +181,7 @@ router.get("/errands/:id", requireAuth("CUSTOMER", "ADMIN", "AGENT"), async (req
   if (role === "AGENT" && (!order.agent_profile_id || order.agent_profile_id !== (await pool.query("SELECT id FROM agent_profiles WHERE user_id=$1",[identity(req)])).rows[0]?.id)) {
     return res.status(403).json({ error: "Not authorized for this errand" });
   }
-  const [items, events, payment] = await Promise.all([
+  const [items, events, payment, stops] = await Promise.all([
     pool.query(`SELECT i.id,i.requested_description,i.quantity,i.max_authorized_minor,i.requested_price_minor,i.replacement_policy,i.status,
        COALESCE((SELECT json_agg(json_build_object(
          'id',r.id,'description',r.proposed_description,'quantity',r.proposed_quantity,'priceMinor',r.proposed_price_minor,
@@ -178,7 +191,9 @@ router.get("/errands/:id", requireAuth("CUSTOMER", "ADMIN", "AGENT"), async (req
     pool.query(`SELECT id,event_type AS "eventType",metadata,created_at AS "createdAt"
        FROM buy_order_events WHERE buy_order_id=$1 ORDER BY created_at ASC LIMIT 200`, [id]),
     pool.query(`SELECT id,status,payment_status,amount_minor,currency,refund_status,refund_amount_minor
-       FROM buy_order_payments WHERE buy_order_id=$1 ORDER BY created_at DESC LIMIT 1`, [id])
+       FROM buy_order_payments WHERE buy_order_id=$1 ORDER BY created_at DESC LIMIT 1`, [id]),
+    pool.query(`SELECT id,stop_order,stop_type,label,address,latitude,longitude,instructions,status,completed_at,completed_by_user_id
+       FROM buy_order_stops WHERE buy_order_id=$1 ORDER BY stop_order`, [id])
   ]);
   res.json({
     errand: {
@@ -214,6 +229,7 @@ router.get("/errands/:id", requireAuth("CUSTOMER", "ADMIN", "AGENT"), async (req
       createdAt: order.created_at,
       updatedAt: order.updated_at
     },
+    stops: stops.rows.map((stop) => ({ id: stop.id, order: Number(stop.stop_order), stopType: stop.stop_type, label: stop.label, address: stop.address, latitude: Number(stop.latitude), longitude: Number(stop.longitude), instructions: stop.instructions, status: stop.status, completedAt: stop.completed_at, completedByUserId: stop.completed_by_user_id })),
     items: items.rows,
     events: events.rows,
     payment: payment.rows[0] ? {
