@@ -1,5 +1,14 @@
 import type { ExpoConfig } from "expo/config";
 
+const apiUrl = process.env.EXPO_PUBLIC_API_URL ?? "";
+const isProduction = process.env.EAS_BUILD_PROFILE === "production" || process.env.NODE_ENV === "production";
+if (isProduction && (!apiUrl || apiUrl.includes("example.com"))) {
+  throw new Error("Production mobile builds require EXPO_PUBLIC_API_URL to point to the real HTTPS SwiftDrop API.");
+}
+if (isProduction && apiUrl && !apiUrl.startsWith("https://")) {
+  throw new Error("Production mobile builds require an HTTPS EXPO_PUBLIC_API_URL.");
+}
+
 const config: ExpoConfig = {
   name: "SwiftDrop Driver",
   slug: "swiftdrop-driver",
@@ -20,13 +29,7 @@ const config: ExpoConfig = {
   },
   plugins: [
     "expo-camera",
-    [
-      "expo-location",
-      {
-        isAndroidBackgroundLocationEnabled: true,
-        isIosBackgroundLocationEnabled: true
-      }
-    ],
+    ["expo-location", { isAndroidBackgroundLocationEnabled: true, isIosBackgroundLocationEnabled: true }],
     "expo-notifications"
   ]
 };

@@ -35,6 +35,8 @@ jobs:
         working-directory: apps/${{ matrix.project }}
         env:
           GOOGLE_MAPS_API_KEY: ci-validation-placeholder
+          EXPO_PUBLIC_API_URL: https://ci-validation.invalid
+          EAS_BUILD_PROFILE: production
         run: npx expo config --type public --json
 
   api-tests:
