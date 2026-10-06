@@ -88,6 +88,17 @@ if (db) {
     assert.ok(await transitionDelivery(delivery.id, "DRIVER_AT_PICKUP", "PICKED_UP", driver.id));
     assert.ok(await transitionDelivery(delivery.id, "PICKED_UP", "IN_TRANSIT", driver.id));
     assert.ok(await transitionDelivery(delivery.id, "IN_TRANSIT", "DISPUTED", driver.id));
+    const perishableDelivery = await createPersistentDelivery({
+      senderId: customer.id, receiverName: "Perishable Receiver", receiverPhone: "+2349070000099", receiverPin: "123123",
+      declaredValueMinor: 100000,
+      pickup: { label: "Perishable Pickup", formattedAddress: "Perishable Pickup", location: { latitude: 9.07, longitude: 7.40 } },
+      dropoff: { label: "Perishable Dropoff", formattedAddress: "Perishable Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
+      weightKg: 1, dimensionsCm: { length: 10, width: 10, height: 10 }, isPerishable: true, paymentMode: "SENDER_ESCROW"
+    });
+    const perishableProofs = (await db.query("SELECT proof_requirements FROM deliveries WHERE id=$1", [perishableDelivery.id])).rows[0].proof_requirements;
+    assert.deepEqual(perishableProofs, { pickup: ["PHOTO"], dropoff: ["PIN", "PHOTO", "SIGNATURE"] });
+
+
 
     const dispute = await createDispute(delivery.id, customer.id, "DAMAGE", "Coverage dispute");
     assert.ok(dispute);
