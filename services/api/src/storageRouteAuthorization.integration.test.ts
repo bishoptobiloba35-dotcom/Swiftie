@@ -95,7 +95,7 @@ test("private pickup objects are protected by delivery ownership at the route", 
     assert.equal(trackingDenied.status, 403);
 
     const trackingAllowed = await fetch(
-      `http://127.0.0.1:${API_PORT}/api/track/${delivery.trackingCode}/pickup-photo?receiverPhone=+2349011111111`
+      `http://127.0.0.1:${API_PORT}/api/track/${delivery.trackingCode}/pickup-photo?receiverPhone=%2B2349011111111`
     );
     assert.equal(trackingAllowed.status, 200);
     assert.equal(await trackingAllowed.text(), photo.toString());
