@@ -31,6 +31,7 @@ import { reconcileProcessingDropOffCommissions } from "./dropOffCommissionWorker
 import { reconcileCancelledMarketplacePayments } from "./marketplacePaymentWorker.js";
 import { reconcilePendingBuyOrderPayments } from "./buyOrderPaymentWorker.js";
 import { recordHttpMetric, renderPrometheusMetrics } from "./metrics.js";
+import { reportExternalError } from "./errorTracking.js";
 
 const app = express();
 
@@ -2620,6 +2621,18 @@ app.use((error: unknown, req: express.Request, res: express.Response, _next: exp
 });
 
 attachRealtime(httpServer);
+
+app.use(async (error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const requestId = String(res.getHeader("x-request-id") ?? "");
+  const status = typeof (error as { status?: unknown })?.status === "number"
+    ? Math.min(599, Math.max(400, Number((error as { status: number }).status)))
+    : 500;
+  const message = error instanceof Error ? error.message : "Unexpected server error";
+  console.error(JSON.stringify({ event: "http_error", requestId, method: req.method, path: req.path, status, error: message }));
+  void reportExternalError({ requestId, method: req.method, path: req.path, status, error });
+  if (res.headersSent) return;
+  return res.status(status).json({ error: status >= 500 ? "Internal server error" : message, requestId });
+});
 const port = Number(process.env.API_PORT || 4000);
 
 
