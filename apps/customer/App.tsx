@@ -708,12 +708,12 @@ export default function App() {
 
   async function createDelivery() {
     try {
-      if (!pickup.trim() || !dropoff.trim() || !receiver.trim() || !phone.trim() || !/^\d{6}$/.test(receiverPin)) throw new Error("Complete the delivery details and enter a 4-digit receiver PIN.");
+      if (!pickup.trim() || !dropoff.trim() || !receiver.trim() || !phone.trim() || !/^\d{4}$/.test(receiverPin)) throw new Error("Complete the delivery details and enter a 4-digit receiver PIN.");
       if (paymentMode === "SENDER_ESCROW" && !email.trim()) throw new Error("Enter your payment email for sender-paid escrow.");
       const coords = coordinates();
       if (![weightKg, lengthCm, widthCm, heightCm].every(value => Number(value) > 0)) throw new Error("Enter parcel weight and all three dimensions.");
       if (!(Number(declaredValue) > 0)) throw new Error("Enter the actual value of the goods before placing the order.");
-      const serverQuote = await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable, declaredValueMinor: Math.round(Number(declaredValue) * 100) });
+      const serverQuote = await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable, declaredValueMinor: Math.round(Number(declaredValue) * 100), includeProtection });
       setQuote(serverQuote);
       const created = await api.createDelivery({
         receiverName: receiver.trim(),
@@ -735,13 +735,11 @@ export default function App() {
       });
       setDelivery(created);
       setTrackingCode(created.trackingCode);
-      if (paymentMode === "SENDER_ESCROW") {
-        const payment = await api.initializePayment(created.id, email.trim());
-        await WebBrowser.openBrowserAsync(payment.authorizationUrl);
-        Alert.alert("Payment", "Complete payment in the browser. SwiftDrop will verify it from the payment provider.");
-      } else {
-        Alert.alert("Receiver payment", "Order created. The receiver will confirm the package at arrival and then pay the final amount through SwiftDrop. No sender escrow is used.");
-      }
+      const escrow = await api.createEscrow(created.id, serverQuote.totalMinor);
+      const payment = await api.payEscrow(created.id, "PAYSTACK_CARD", crypto.randomUUID());
+      if (payment?.authorizationUrl) await WebBrowser.openBrowserAsync(payment.authorizationUrl);
+      Alert.alert("Payment", "Complete payment. SwiftDrop will verify escrow from the payment provider webhook.");
+      void escrow;
     } catch (error) {
       Alert.alert("Delivery failed", error instanceof Error ? error.message : "Unable to create delivery.");
     }
