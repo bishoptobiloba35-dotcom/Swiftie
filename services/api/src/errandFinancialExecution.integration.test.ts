@@ -35,21 +35,27 @@ test("Hire an Errand HTTP boundary executes authorized purchase through delivery
 
     const customerId = randomUUID();
     const agentUserId = randomUUID();
+    const driverUserId = randomUUID();
     const suffix = `${String(process.pid).slice(-4)}${Math.floor(Math.random() * 10000).toString().padStart(4, "0")}`;
 
     await pool.query(
       `INSERT INTO users(id,role,full_name,phone,email,password_hash)
        VALUES($1,'CUSTOMER','Errand Financial Customer',$2,$3,'not-used'),
-             ($4,'AGENT','Errand Financial Agent',$5,$6,'not-used')`,
+             ($4,'AGENT','Errand Financial Agent',$5,$6,'not-used'),
+             ($7,'DRIVER','Errand Financial Driver',$8,$9,'not-used')`,
       [
         customerId, "+234970" + suffix, customerId + "@example.test",
-        agentUserId, "+234971" + suffix, agentUserId + "@example.test"
+        agentUserId, "+234971" + suffix, agentUserId + "@example.test",
+        driverUserId, "+234972" + suffix, driverUserId + "@example.test"
       ]
     );
     const agent = (await pool.query(
       "INSERT INTO agent_profiles(user_id,status) VALUES($1,'APPROVED') RETURNING id",
       [agentUserId]
     )).rows[0];
+
+    const driver = (await pool.query("INSERT INTO drivers(user_id,status,online) VALUES($1,'APPROVED',true) RETURNING id", [driverUserId])).rows[0];
+    await pool.query("INSERT INTO driver_documents(driver_id,document_type,document_url,status) VALUES($1,'DRIVER_LICENSE','integration://errand-financial','APPROVED')", [driver.id]);
 
     const customerToken = "Bearer " + signAccessToken({ userId: customerId, role: "CUSTOMER" });
     const agentToken = "Bearer " + signAccessToken({ userId: agentUserId, role: "AGENT" });
