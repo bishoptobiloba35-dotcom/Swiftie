@@ -73,7 +73,7 @@ test("receiver confirmation route verifies PIN and atomically releases escrow fo
     );
     await pool.query(
       `INSERT INTO float_transactions(type,amount_minor,balance_after_minor,order_id,metadata)
-       VALUES('FUNDING',500000000,500000000,$1,'{"reason":"receiver_confirmation_test_float"}'::jsonb)`,
+       VALUES('FUNDING',600000000,600000000,$1,'{"reason":"receiver_confirmation_test_float"}'::jsonb)`,
       [delivery.id]
     );
 
