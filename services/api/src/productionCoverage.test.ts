@@ -77,13 +77,14 @@ if (db) {
     );
 
     const delivery = await createPersistentDelivery({
-      senderId: customer.id, receiverName: "Coverage Receiver", receiverPhone: "+2349070000000", receiverPin: "454545",
+      senderId: customer.id, receiverName: "Coverage Receiver", receiverPhone: "+2349070000000", receiverPin: "4545",
       declaredValueMinor: 100000,
       pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.07, longitude: 7.40 } },
       dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
-      weightKg: 1, dimensionsCm: { length: 10, width: 10, height: 10 }, isPerishable: false, paymentMode: "RECEIVER_ON_DELIVERY"
+      weightKg: 1, dimensionsCm: { length: 10, width: 10, height: 10 }, isPerishable: false, paymentMode: "SENDER_ESCROW"
     });
-    assert.ok(await transitionDelivery(delivery.id, "CREATED", "DRIVER_ASSIGNED", driver.id));
+    assert.ok(await transitionDelivery(delivery.id, "CREATED", "PAYMENT_AUTHORIZED"));
+    assert.ok(await transitionDelivery(delivery.id, "PAYMENT_AUTHORIZED", "DRIVER_ASSIGNED", driver.id));
     assert.ok(await transitionDelivery(delivery.id, "DRIVER_ASSIGNED", "DRIVER_AT_PICKUP", driver.id));
     assert.ok(await transitionDelivery(delivery.id, "DRIVER_AT_PICKUP", "PICKED_UP", driver.id));
     assert.ok(await transitionDelivery(delivery.id, "PICKED_UP", "IN_TRANSIT", driver.id));
@@ -127,7 +128,7 @@ if (db) {
     assert.equal(messages[1].senderType, "ADMIN");
 
     const escrowDelivery = await createPersistentDelivery({
-      senderId: customer.id, receiverName: "Escrow Receiver", receiverPhone: "+2349070000010", receiverPin: "676767",
+      senderId: customer.id, receiverName: "Escrow Receiver", receiverPhone: "+2349070000010", receiverPin: "6767",
       declaredValueMinor: 100000,
       pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.07, longitude: 7.40 } },
       dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
@@ -148,7 +149,7 @@ if (db) {
        VALUES($1,'DROPOFF','BARCODE','676767','{"source":"integration"}'::jsonb,$2)`,
       [escrowDelivery.id, driverUser.id]
     );
-    const escrowResult = await confirmReceiverAndReleaseEscrow(escrowDelivery.id, "+2349070000010", "676767", 100);
+    const escrowResult = await confirmReceiverAndReleaseEscrow(escrowDelivery.id, "+2349070000010", "6767", 100);
     assert.ok(escrowResult);
     assert.equal(escrowResult?.delivery.status, "DELIVERED");
     assert.equal(escrowResult?.payoutAmountMinor, 90000);
@@ -165,43 +166,19 @@ if (db) {
     assert.equal(escrowState.payout_status, "ELIGIBLE");
     assert.equal(Number(escrowState.amount_minor), 90000);
 
-    const receiverDelivery = await createPersistentDelivery({
-      senderId: customer.id, receiverName: "Receiver-Pay Customer", receiverPhone: "+2349070000011", receiverPin: "787878",
-      declaredValueMinor: 100000,
-      pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.07, longitude: 7.40 } },
-      dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
-      weightKg: 1, dimensionsCm: { length: 10, width: 10, height: 10 }, isPerishable: false, paymentMode: "RECEIVER_ON_DELIVERY"
-    });
-    await db.query(
-      `INSERT INTO payments(delivery_id,provider,amount_minor,currency,status,escrow_status,collection_mode)
-       VALUES($1,'paystack',100000,'NGN','PENDING','NOT_APPLICABLE','RECEIVER_ON_DELIVERY')`,
-      [receiverDelivery.id]
+    await assert.rejects(
+      createPersistentDelivery({
+        senderId: customer.id, receiverName: "Legacy Receiver", receiverPhone: "+2349070000011", receiverPin: "7878",
+        declaredValueMinor: 100000,
+        pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.07, longitude: 7.40 } },
+        dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
+        weightKg: 1, dimensionsCm: { length: 10, width: 10, height: 10 }, isPerishable: false, paymentMode: "RECEIVER_ON_DELIVERY"
+      }),
+      /payment mode|cash|constraint/i
     );
-    await db.query(
-      `UPDATE deliveries SET driver_id=$2,status='ARRIVED' WHERE id=$1`,
-      [receiverDelivery.id, driver.id]
-    );
-    const confirmed = await confirmReceiverOnDeliveryPaymentDue(receiverDelivery.id, "+2349070000011", "787878");
-    assert.ok(confirmed);
-    assert.equal(confirmed?.receiverConfirmedAt != null, true);
-    const settled = await settleReceiverPaymentAndReleasePayout(receiverDelivery.id, "COVERAGE-RECEIVER-PAY-1", 100000, "NGN", 100);
-    assert.ok(settled);
-    assert.equal(settled?.delivery.status, "DELIVERED");
-    assert.equal(settled?.payoutAmountMinor, 100000);
-    const receiverState = (await db.query(
-      `SELECT p.status AS payment_status, p.escrow_status, d.status AS delivery_status,
-              po.status AS payout_status, po.amount_minor
-         FROM payments p JOIN deliveries d ON d.id=p.delivery_id
-         LEFT JOIN payouts po ON po.delivery_id=d.id WHERE d.id=$1`, [receiverDelivery.id]
-    )).rows[0];
-    assert.equal(receiverState.payment_status, "RELEASED");
-    assert.equal(receiverState.escrow_status, "NOT_APPLICABLE");
-    assert.equal(receiverState.delivery_status, "DELIVERED");
-    assert.equal(receiverState.payout_status, "ELIGIBLE");
-    assert.equal(Number(receiverState.amount_minor), 100000);
 
     const payoutDelivery = await createPersistentDelivery({
-      senderId: customer.id, receiverName: "Payout Receiver", receiverPhone: "+2349070000001", receiverPin: "565656",
+      senderId: customer.id, receiverName: "Payout Receiver", receiverPhone: "+2349070000001", receiverPin: "5656",
       declaredValueMinor: 100000,
       pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.07, longitude: 7.40 } },
       dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },

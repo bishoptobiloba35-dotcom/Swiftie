@@ -8,6 +8,7 @@ export type ApiDelivery = {
   dimensionsCm: { length: number; width: number; height: number };
   isPerishable: boolean;
   declaredValueMinor: number;
+  includeProtection?: boolean;
   pickup: { label: string; formattedAddress: string; location?: { latitude: number; longitude: number; recordedAt?: string } };
   dropoff: { label: string; formattedAddress: string; location?: { latitude: number; longitude: number; recordedAt?: string } };
   pickupInstructions?: string;
@@ -28,7 +29,7 @@ export type ApiDelivery = {
     totalMinor: number;
   };
   status: string;
-  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
+  paymentMode?: "SENDER_ESCROW";
   receiverConfirmedAt?: string;
   exceptionStatus?: "NONE" | "FAILED_ATTEMPT" | "RESCHEDULED" | "RETURN_REQUESTED" | "RETURN_IN_TRANSIT" | "RETURNED";
   nextDeliveryAt?: string | null;
@@ -55,7 +56,7 @@ export type ApiDelivery = {
 
 export type CreateDeliveryInput = {
   senderId?: string;
-  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
+  paymentMode?: "SENDER_ESCROW";
   receiverPin: string;
   receiverName: string;
   receiverPhone: string;
@@ -63,6 +64,7 @@ export type CreateDeliveryInput = {
   dimensionsCm: { length: number; width: number; height: number };
   isPerishable: boolean;
   declaredValueMinor: number;
+  includeProtection?: boolean;
   pickup: { label: string; formattedAddress: string; latitude: number; longitude: number };
   dropoff: { label: string; formattedAddress: string; latitude: number; longitude: number };
   pickupDropOffLocationId?: string;
@@ -122,6 +124,36 @@ export class SwiftDropApi {
     if (!response.ok) throw new Error(data.error ?? "Login failed");
     this.setAccessToken(data.accessToken);
     return data;
+  }
+
+  async createEscrow(orderId: string): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/escrow/create", { method:"POST", headers:this.headers(true), body:JSON.stringify({orderId})});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error ?? "Unable to create escrow"); return data.escrow;
+  }
+
+  async payEscrow(orderId: string, method: "PAYSTACK_CARD"|"BANK_TRANSFER"|"USSD"|"SMS_LINK", idempotencyKey: string): Promise<any> {
+    const response=await fetch(this.baseUrl + `/api/escrow/${encodeURIComponent(orderId)}/pay`,{method:"POST",headers:this.headers(true),body:JSON.stringify({method,idempotencyKey})});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error ?? "Unable to start escrow payment"); return data.payment;
+  }
+
+  async confirmEscrowPin(orderId: string, pin: string): Promise<any> {
+    const response=await fetch(this.baseUrl + `/api/escrow/${encodeURIComponent(orderId)}/pin`,{method:"POST",headers:this.headers(true),body:JSON.stringify({pin})});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error ?? "Unable to confirm receiver PIN"); return data;
+  }
+
+  async createVirtualAccount(orderId: string): Promise<any> {
+    const response=await fetch(this.baseUrl+"/api/virtual-account/create",{method:"POST",headers:this.headers(true),body:JSON.stringify({orderId})});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error ?? "Unable to create virtual account"); return data;
+  }
+
+  async walletBalance(): Promise<any> {
+    const response=await fetch(this.baseUrl + "/api/wallet/balance",{headers:this.headers()});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error ?? "Unable to load wallet"); return data.wallet;
+  }
+
+  async withdrawWallet(amountMinor: number, idempotencyKey: string): Promise<any> {
+    const response=await fetch(this.baseUrl + "/api/wallet/withdraw",{method:"POST",headers:this.headers(true),body:JSON.stringify({amountMinor,idempotencyKey})});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error ?? "Unable to request payout"); return data.payout;
   }
 
   async registerDeviceToken(token: string, platform: "IOS" | "ANDROID"): Promise<void> {
@@ -468,6 +500,7 @@ export class SwiftDropApi {
     dimensionsCm: { length: number; width: number; height: number };
     isPerishable: boolean;
     declaredValueMinor: number;
+    includeProtection?: boolean;
   }): Promise<{
     currency: string; distanceMeters: number; durationSeconds: number;
     baseFareMinor: number; distanceFareMinor: number; weightFareMinor: number; sizeFareMinor: number;
@@ -480,6 +513,13 @@ export class SwiftDropApi {
     });
     if (!response.ok) throw new Error("Unable to calculate delivery quote");
     return response.json();
+  }
+
+  async customerOrderHistory(status: "ALL" | "DELIVERED" | "IN_TRANSIT" | "CANCELLED" = "ALL"): Promise<{ deliveries: Array<{ id: string; trackingCode: string; status: string; receiverName: string; dropoffAddress: string; quoteTotalMinor: number; quoteCurrency: string; createdAt: string; updatedAt: string; latestLocation?: { latitude: number; longitude: number; recordedAt: string } | null }> }> {
+    const response = await fetch(this.baseUrl + "/api/customer/deliveries?status=" + encodeURIComponent(status), { headers: this.headers() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to load order history");
+    return data;
   }
 
   async paymentStatus(deliveryId: string): Promise<{ payment: { status: string; escrowStatus?: string; amountMinor: number; currency: string; providerReference?: string | null } }> {

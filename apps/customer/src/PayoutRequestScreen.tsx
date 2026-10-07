@@ -1,0 +1,9 @@
+import React from "react";
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { SwiftDropApi } from "../../../packages/shared/src/api";
+export default function PayoutRequestScreen({api,onBack}:{api:SwiftDropApi;onBack:()=>void}){
+ const [amount,setAmount]=React.useState(""); const [busy,setBusy]=React.useState(false);
+ const submit=async()=>{const amountMinor=Math.round(Number(amount)*100);if(!Number.isFinite(amountMinor)||amountMinor<100000){Alert.alert("Withdrawal","Minimum withdrawal is ₦1,000.");return;}try{setBusy(true);await api.withdrawWallet(amountMinor,crypto.randomUUID());Alert.alert("Payout requested","Paystack Transfers will process the withdrawal.");onBack();}catch(e){Alert.alert("Payout failed",e instanceof Error?e.message:"Unable to request payout");}finally{setBusy(false);}};
+ return <View style={styles.container}><Text style={styles.title}>Payout Request</Text><Text style={styles.muted}>Withdraw from your SwiftDrop wallet through Paystack Transfers.</Text><TextInput style={styles.input} keyboardType="decimal-pad" placeholder="Amount in ₦" value={amount} onChangeText={setAmount}/><Pressable disabled={busy} style={styles.primary} onPress={()=>void submit()}><Text style={styles.primaryText}>{busy?"Processing…":"Request payout"}</Text></Pressable><Pressable style={styles.secondary} onPress={onBack}><Text>Back</Text></Pressable></View>
+}
+const styles=StyleSheet.create({container:{padding:24,gap:16,flex:1},title:{fontSize:28,fontWeight:"800"},muted:{color:"#6B7D73"},input:{borderWidth:1,borderColor:"#E1EBE5",borderRadius:12,padding:16,fontSize:18},primary:{padding:16,borderRadius:12,backgroundColor:"#0B5A3A",alignItems:"center"},primaryText:{color:"#fff",fontWeight:"800"},secondary:{padding:16,borderRadius:12,borderWidth:1,borderColor:"#E1EBE5",alignItems:"center"}});

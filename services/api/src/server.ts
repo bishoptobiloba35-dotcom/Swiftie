@@ -32,6 +32,8 @@ import { reconcileCancelledMarketplacePayments } from "./marketplacePaymentWorke
 import { reconcilePendingBuyOrderPayments } from "./buyOrderPaymentWorker.js";
 import { recordHttpMetric, renderPrometheusMetrics } from "./metrics.js";
 import { reportExternalError } from "./errorTracking.js";
+import { processPhase2EscrowReleases, reconcilePhase2Float } from "./phase2EscrowWorker.js";
+import escrowRoutes from "./escrowRoutes.js";
 
 const app = express();
 
@@ -83,6 +85,7 @@ app.use("/api", marketplaceRoutes);
 app.use("/api", recurringDispatchRoutes);
 app.use("/api", deliveryExceptionRoutes);
 app.use("/api", errandRoutes);
+app.use("/api", escrowRoutes);
 
 type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED" | "RETURNED";
 type DeliveryLocation = { latitude: number; longitude: number; recordedAt?: string };
@@ -105,7 +108,7 @@ type MemoryDelivery = {
   id: string; trackingCode: string; senderId: string; receiverName: string; receiverPhone: string;
   pickup: { label: string; formattedAddress: string; location: DeliveryLocation };
   dropoff: { label: string; formattedAddress: string; location: DeliveryLocation };
-  status: Status; paymentMode: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY"; driverId?: string; pickupPhotoUrl?: string; proofRequirements?: { pickup: string[]; dropoff: string[] }; receiverPin: string;
+  status: Status; paymentMode: "SENDER_ESCROW"; driverId?: string; pickupPhotoUrl?: string; proofRequirements?: { pickup: string[]; dropoff: string[] }; receiverPin: string;
   quote?: DeliveryQuote; createdAt: string; updatedAt: string;
 };
 const deliveries = new Map<string, MemoryDelivery>();
@@ -113,7 +116,7 @@ const locationRateLimit = new Map<string, number>();
 const LOCATION_MIN_INTERVAL_MS = 3000;
 const receiverPinAttempts = new Map<string, { windowStartedAt: number; count: number; blockedUntil: number }>();
 const RECEIVER_PIN_WINDOW_MS = 5 * 60 * 1000;
-const RECEIVER_PIN_MAX_ATTEMPTS = 5;
+const RECEIVER_PIN_MAX_ATTEMPTS = 3;
 const RECEIVER_PIN_BLOCK_MS = 15 * 60 * 1000;
 
 function checkReceiverPinRate(key: string): { allowed: boolean; retryAfterMs: number } {
@@ -145,12 +148,13 @@ const notificationForDelivery = async (deliveryId: string, userId: string, title
 
 
 const createDeliverySchema = z.object({
-  senderId: z.string().uuid().optional(), paymentMode: z.enum(["SENDER_ESCROW","RECEIVER_ON_DELIVERY"]).default("SENDER_ESCROW"), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
-  receiverPin: z.string().regex(/^\d{6}$/, "Receiver PIN must be exactly 6 digits"),
+  senderId: z.string().uuid().optional(), paymentMode: z.literal("SENDER_ESCROW").default("SENDER_ESCROW"), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
+  receiverPin: z.string().regex(/^\d{4}$/, "Receiver PIN must be exactly 4 digits"),
   weightKg: z.number().positive().max(1000),
   dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
   isPerishable: z.boolean(),
   declaredValueMinor: z.number().int().positive().max(10000000000),
+  includeProtection: z.boolean().default(true),
   pickup: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   dropoff: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   pickupDropOffLocationId: z.string().uuid().optional(),
@@ -166,6 +170,9 @@ const createDeliverySchema = z.object({
     weightFareMinor: z.number().int().nonnegative(),
     sizeFareMinor: z.number().int().nonnegative(),
     perishableSurchargeMinor: z.number().int().nonnegative(),
+    fuelReferenceMinor: z.number().int().nonnegative(),
+    protectionReserveMinor: z.number().int().nonnegative(),
+    pricingVersion: z.number().int().positive(),
     serviceFeeMinor: z.number().int().nonnegative(),
     totalMinor: z.number().int().positive()
   })
@@ -176,13 +183,14 @@ const quoteSchema = z.object({
   weightKg: z.number().positive().max(1000),
   dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
   isPerishable: z.boolean(),
-  declaredValueMinor: z.number().int().positive().max(10000000000)
+  declaredValueMinor: z.number().int().positive().max(10000000000),
+  includeProtection: z.boolean().default(true)
 });
 
 async function calculateQuote(
   pickup: { latitude: number; longitude: number },
   dropoff: { latitude: number; longitude: number },
-  parcel: { weightKg: number; dimensionsCm: { length: number; width: number; height: number }; isPerishable: boolean; declaredValueMinor: number }
+  parcel: { weightKg: number; dimensionsCm: { length: number; width: number; height: number }; isPerishable: boolean; declaredValueMinor: number; includeProtection?: boolean }
 ): Promise<DeliveryQuote> {
   const config = await getActivePricingConfig();
   const earthRadius = 6371000;
@@ -204,7 +212,7 @@ async function calculateQuote(
   const handlingMinor = baseFareMinor + distanceFareMinor + weightFareMinor + sizeFareMinor;
   const perishableSurchargeMinor = parcel.isPerishable ? Math.ceil(handlingMinor * config.perishableSurchargeBps / 10000) : 0;
   const serviceFeeMinor = Math.ceil((handlingMinor + perishableSurchargeMinor) * config.serviceChargeBps / 10000);
-  const protectionReserveMinor = Math.ceil(parcel.declaredValueMinor * config.protectionReserveBps / 10000);
+  const protectionReserveMinor = parcel.includeProtection === false ? 0 : Math.ceil(parcel.declaredValueMinor * config.protectionReserveBps / 10000);
   return {
     currency: "NGN",
     distanceMeters: Math.round(distanceMeters),
@@ -286,7 +294,7 @@ app.post("/api/deliveries/:id/rating/receiver", async (req, res) => {
   const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
   const receiverPin = String(req.body?.receiverPin ?? "").trim();
   const parsed = z.object({ stars: z.number().int().min(1).max(5), comment: z.string().max(500).optional() }).safeParse(req.body);
-  if (!receiverPhone || !/^\d{6}$/.test(receiverPin) || !parsed.success) return res.status(400).json({ error: "Receiver phone, six-digit PIN, rating and optional comment are required" });
+  if (!receiverPhone || !/^\d{4}$/.test(receiverPin) || !parsed.success) return res.status(400).json({ error: "Receiver phone, 4-digit PIN, rating and optional comment are required" });
   const delivery = await findByTrackingCode(String(routeParam(req.params.id, "id")).trim().toUpperCase()).catch(() => null) ?? await findDelivery(routeParam(req.params.id, "id"));
   if (!delivery || delivery.status !== "DELIVERED" || delivery.receiverPhone !== receiverPhone || !delivery.driverId) return res.status(403).json({ error: "Receiver details could not be verified" });
   const pinKey = "rating:" + delivery.id + ":" + receiverPhone;
@@ -579,7 +587,7 @@ app.get("/api/locations/search", requireAuth("CUSTOMER"), async (req, res) => {
 app.post("/api/quotes", requireAuth("CUSTOMER"), async (req, res) => {
   const parsed = quoteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  try { res.json(await calculateQuote(parsed.data.pickup, parsed.data.dropoff, { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable, declaredValueMinor: parsed.data.declaredValueMinor })); } catch (error) { res.status(503).json({ error: error instanceof Error ? error.message : "Pricing configuration is unavailable" }); }
+  try { res.json(await calculateQuote(parsed.data.pickup, parsed.data.dropoff, { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable, declaredValueMinor: parsed.data.declaredValueMinor, includeProtection: parsed.data.includeProtection })); } catch (error) { res.status(503).json({ error: error instanceof Error ? error.message : "Pricing configuration is unavailable" }); }
 });
 
 app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
@@ -589,7 +597,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   const quote = await calculateQuote(
     { latitude: parsed.data.pickup.latitude, longitude: parsed.data.pickup.longitude },
     { latitude: parsed.data.dropoff.latitude, longitude: parsed.data.dropoff.longitude },
-    { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable, declaredValueMinor: parsed.data.declaredValueMinor }
+    { weightKg: parsed.data.weightKg, dimensionsCm: parsed.data.dimensionsCm, isPerishable: parsed.data.isPerishable, declaredValueMinor: parsed.data.declaredValueMinor, includeProtection: parsed.data.includeProtection }
   );
   if (quote.currency !== "NGN" || !Number.isSafeInteger(quote.totalMinor) || quote.totalMinor <= 0) {
     return res.status(500).json({ error: "Unable to calculate delivery quote" });
@@ -626,8 +634,8 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
         paymentMode: input.paymentMode,
         quote: input.quote
       });
-      if (input.paymentMode === "RECEIVER_ON_DELIVERY") {
-        await createPayment({ deliveryId: created.id, provider: process.env.PAYMENT_PROVIDER || "paystack", amountMinor: input.quote.totalMinor, currency: "NGN", collectionMode: "RECEIVER_ON_DELIVERY" });
+      if (input.paymentMode !== "SENDER_ESCROW") {
+        return res.status(410).json({ error: "Cash-on-delivery is retired. Every order must use in-app escrow." });
       }
       if (input.pickupDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'PICKUP',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.pickupDropOffLocationId]);
       if (input.dropoffDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'DROPOFF',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.dropoffDropOffLocationId]);
@@ -660,7 +668,7 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
   const userId = identity(req);
   const delivery = databaseEnabled() ? await findDeliveryForUser(routeParam(req.params.id, "id"), userId, "CUSTOMER") : await getOne(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
-  if (delivery.paymentMode === "RECEIVER_ON_DELIVERY") return res.status(409).json({ error: "This order is payable by the receiver on delivery and does not use sender escrow." });
+  if (delivery.paymentMode !== "SENDER_ESCROW") return res.status(410).json({ error: "Cash-on-delivery has been retired. All payments must use in-app escrow." });
   if (!databaseEnabled()) return res.status(503).json({ error: "Payments require the production database" });
 
   const email = String(req.body?.email ?? "").trim();
@@ -719,7 +727,7 @@ app.post("/api/deliveries/:id/payment", requireAuth("CUSTOMER"), async (req, res
     ? await findDeliveryForUser(routeParam(req.params.id, "id"), userId, "CUSTOMER")
     : await getOne(routeParam(req.params.id, "id"));
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
-  if (delivery.paymentMode === "RECEIVER_ON_DELIVERY") return res.status(409).json({ error: "Receiver payment is collected after receiver confirmation." });
+  if (delivery.paymentMode !== "SENDER_ESCROW") return res.status(410).json({ error: "Cash-on-delivery has been retired. All payments must use in-app escrow." });
 
   const amountMinor = delivery.quote?.totalMinor;
   if (!amountMinor || !Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
@@ -952,6 +960,20 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
       const status = event.event === "transfer.success" ? "RELEASED" : event.event === "transfer.failed" ? "FAILED" : "CANCELLED";
       const payout = await updatePayoutProviderStatus(reference,status,failureReason,Number(event?.data?.amount),String(event?.data?.currency ?? ""));
       if(payout) await recordDeliveryEvent({deliveryId:payout.deliveryId,eventType:"PAYOUT_"+status,metadata:{provider:"paystack",reference}});
+      const walletPayout=(await pool!.query(
+        "SELECT pr.*,sw.id AS wallet_id FROM payout_requests pr JOIN stakeholder_wallets sw ON sw.id=pr.wallet_id WHERE pr.provider_reference=$1 FOR UPDATE",
+        [reference]
+      )).rows[0];
+      if(walletPayout){
+        const amount=Number(walletPayout.amount_minor);
+        if(event.event==="transfer.success"){
+          await pool!.query("UPDATE payout_requests SET status='RELEASED',processed_at=COALESCE(processed_at,now()),updated_at=now() WHERE id=$1 AND status='PROCESSING'",[walletPayout.id]);
+          await pool!.query("UPDATE stakeholder_wallets SET pending_minor=GREATEST(0,pending_minor-$2),updated_at=now() WHERE id=$1",[walletPayout.wallet_id,amount]);
+        }else{
+          await pool!.query("UPDATE payout_requests SET status='FAILED',failure_reason=$2,processed_at=COALESCE(processed_at,now()),updated_at=now() WHERE id=$1 AND status='PROCESSING'",[walletPayout.id,failureReason ?? "Paystack transfer failed"]);
+          await pool!.query("UPDATE stakeholder_wallets SET balance_minor=balance_minor+$2,pending_minor=GREATEST(0,pending_minor-$2),updated_at=now() WHERE id=$1",[walletPayout.wallet_id,amount]);
+        }
+      }
     }
     return res.status(200).json({ received: true });
   }
@@ -1122,38 +1144,85 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   }
 
   if (databaseEnabled() && (event?.event === "charge.success" || event?.event === "charge.failed")) {
-    const receiverDeliveryId = String(event?.data?.metadata?.deliveryId ?? "");
-    const receiverReference = String(event?.data?.reference ?? "");
-    if (receiverDeliveryId && receiverReference) {
-      const receiverPayment = await findPayment(receiverDeliveryId);
-      if (receiverPayment?.collectionMode === "RECEIVER_ON_DELIVERY" && receiverPayment.providerReference === receiverReference) {
-        if (event.event === "charge.failed") {
-          await updatePaymentStatus(receiverDeliveryId, "FAILED", receiverReference);
-          await recordDeliveryEvent({ deliveryId: receiverDeliveryId, eventType: "RECEIVER_PAYMENT_FAILED", metadata: { provider: "paystack", reference: receiverReference } });
-          return res.status(200).json({ received: true, duplicate: duplicateWebhook });
-        }
+    const escrowReference = String(event?.data?.reference ?? "");
+    if (escrowReference) {
+      const attempt = (await pool!.query(
+        `SELECT epa.id, epa.order_id, epa.amount_minor, d.customer_id
+           FROM escrow_payment_attempts epa
+           JOIN deliveries d ON d.id=epa.order_id
+          WHERE epa.provider_reference=$1
+             OR epa.order_id IN (
+               SELECT va.order_id FROM virtual_accounts va
+                WHERE va.account_number=$2 AND va.status='ACTIVE'
+             )
+          FOR UPDATE`,
+        [escrowReference, String(event?.data?.authorization?.receiver_bank_account_number ?? "")]
+      )).rows[0];
+      if (attempt) {
         const providerAmount = Number(event?.data?.amount);
         const providerCurrency = String(event?.data?.currency ?? "");
-        if (!Number.isSafeInteger(providerAmount) || providerAmount !== receiverPayment.amountMinor || providerCurrency.trim() !== receiverPayment.currency.trim()) {
-          await updatePaymentStatus(receiverDeliveryId, "FAILED", receiverReference);
-          await recordDeliveryEvent({ deliveryId: receiverDeliveryId, eventType: "RECEIVER_PAYMENT_RECONCILIATION_MISMATCH", metadata: { provider: "paystack", reference: receiverReference, expectedAmount: receiverPayment.amountMinor, expectedCurrency: receiverPayment.currency, providerAmount, providerCurrency } });
-          return res.status(200).json({ received: true, duplicate: duplicateWebhook });
+        const amountMatches = Number.isSafeInteger(providerAmount) &&
+          providerAmount === Number(attempt.amount_minor) &&
+          providerCurrency === "NGN";
+        if (event.event === "charge.failed" || !amountMatches) {
+          await pool!.query(
+            `UPDATE escrow_payment_attempts SET status='FAILED',updated_at=now()
+             WHERE id=$1 AND status='PENDING'`,
+            [attempt.id]
+          );
+          await pool!.query(
+            `UPDATE escrow_ledgers SET state='pending_payment',provider_reference=$2,updated_at=now()
+             WHERE order_id=$1 AND state='pending_payment'`,
+            [attempt.order_id, escrowReference]
+          );
+          await recordDeliveryEvent({deliveryId:attempt.order_id,eventType:"ESCROW_PAYMENT_FAILED",metadata:{provider:"paystack",reference:escrowReference,amountMatches}});
+          return res.status(200).json({received:true,duplicate:duplicateWebhook});
         }
-        const settled = await settleReceiverPaymentAndReleasePayout(
-          receiverDeliveryId,
-          receiverReference,
-          providerAmount,
-          providerCurrency,
-          Number(process.env.DRIVER_PAYOUT_PERCENT ?? 90)
+        const client=await pool!.connect();
+        try {
+          await client.query("BEGIN");
+          await client.query(
+            `UPDATE escrow_payment_attempts SET status='SUCCESS',updated_at=now()
+             WHERE id=$1 AND status='PENDING'`,
+            [attempt.id]
+          );
+          await client.query(
+            `UPDATE escrow_ledgers
+                SET state='paid_escrow',provider='paystack',provider_reference=$2,
+                    funded_at=COALESCE(funded_at,now()),updated_at=now()
+              WHERE order_id=$1 AND state='pending_payment'`,
+            [attempt.order_id,escrowReference]
+          );
+          await client.query(
+            `UPDATE deliveries
+                SET escrow_payment_state='paid_escrow',escrow_paid_at=COALESCE(escrow_paid_at,now())
+              WHERE id=$1 AND escrow_payment_state='pending_payment'`,
+            [attempt.order_id]
+          );
+          await client.query(
+            `UPDATE payments
+                SET status='HELD',escrow_status='HELD',provider_reference=COALESCE(provider_reference,$2),updated_at=now()
+              WHERE delivery_id=$1 AND collection_mode='SENDER_ESCROW'`,
+            [attempt.order_id,escrowReference]
+          );
+          await client.query("COMMIT");
+        } catch (error) {
+          await client.query("ROLLBACK");
+          console.error(JSON.stringify({event:"escrow_payment_webhook_failed",orderId:attempt.order_id,reference:escrowReference,error:error instanceof Error?error.message:"unknown"}));
+          return res.status(500).json({error:"Escrow payment processing failed"});
+        } finally {
+          client.release();
+        }
+        const floatLatest=(await pool!.query("SELECT balance_after_minor FROM float_transactions ORDER BY created_at DESC LIMIT 1")).rows[0];
+        const floatBalance=Number(floatLatest?.balance_after_minor ?? 0);
+        await pool!.query(
+          `INSERT INTO float_transactions(type,amount_minor,balance_after_minor,order_id,provider_reference,metadata)
+           VALUES('ESCROW_IN',$1,$2,$3,$4,'{"reason":"paystack_escrow_funding"}'::jsonb)
+           ON CONFLICT DO NOTHING`,
+          [providerAmount,floatBalance+providerAmount,attempt.order_id,escrowReference]
         );
-        if (!settled) return res.status(409).json({ error: "Receiver payment could not be settled safely" });
-        await notificationForDelivery(receiverDeliveryId, settled.delivery.senderId, "Receiver payment received", "The receiver paid for the delivery. The order is complete and courier payout is now eligible.", "RECEIVER_PAYMENT_RECEIVED");
-        if (settled.delivery.driverId) {
-          const driver = await driverForUser(settled.delivery.driverId);
-          if (driver) await notificationForDelivery(receiverDeliveryId, driver.userId, "Receiver payment received", "The receiver has paid. Your courier payout is now eligible.", "PAYOUT_ELIGIBLE");
-        }
-        publishDeliveryUpdate(receiverDeliveryId, safeDelivery(settled.delivery));
-        return res.status(200).json({ received: true, duplicate: duplicateWebhook, paymentMode: "RECEIVER_ON_DELIVERY", payoutAmountMinor: settled.payoutAmountMinor });
+        await recordDeliveryEvent({deliveryId:attempt.order_id,eventType:"ESCROW_PAYMENT_FUNDED",metadata:{provider:"paystack",reference:escrowReference,amountMinor:providerAmount}});
+        return res.status(200).json({received:true,duplicate:duplicateWebhook,escrow:"paid_escrow"});
       }
     }
   }
@@ -1196,79 +1265,8 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   return res.status(200).json({ received: true, duplicate: duplicateWebhook });
 });
 
-app.post("/api/deliveries/:id/receiver-payment/initialize", async (req, res) => {
-  if (!databaseEnabled()) return res.status(503).json({ error: "Receiver payments require the production database" });
-  const deliveryId = routeParam(req.params.id, "id");
-  const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
-  const receiverPin = String(req.body?.receiverPin ?? "").trim();
-  const email = String(req.body?.email ?? "").trim();
-  if (!receiverPhone || !/^\d{6}$/.test(receiverPin) || !email) {
-    return res.status(400).json({ error: "Receiver phone, six-digit PIN and payment email are required" });
-  }
-  const delivery = await findDelivery(deliveryId);
-  if (!delivery || delivery.paymentMode !== "RECEIVER_ON_DELIVERY") return res.status(404).json({ error: "Receiver-paid delivery not found" });
-  if (delivery.receiverPhone !== receiverPhone) return res.status(403).json({ error: "Receiver details could not be verified" });
-  if (delivery.status !== "ARRIVED" || !delivery.receiverConfirmedAt) {
-    return res.status(409).json({ error: "Confirm receipt first. Payment is collected immediately after receiver confirmation." });
-  }
-  const payment = await findPayment(deliveryId);
-  if (!payment || payment.collectionMode !== "RECEIVER_ON_DELIVERY" || !["PENDING","AUTHORIZED"].includes(payment.status)) {
-    return res.status(409).json({ error: "This receiver payment is no longer awaiting collection." });
-  }
-  if (payment.authorizationUrl && payment.providerReference) {
-    return res.status(200).json({
-      paymentId: payment.id,
-      reference: payment.providerReference,
-      authorizationUrl: payment.authorizationUrl,
-      accessCode: payment.accessCode,
-      amountMinor: payment.amountMinor
-    });
-  }
-  const secret = process.env.PAYSTACK_SECRET_KEY;
-  const provider = process.env.PAYMENT_PROVIDER || "paystack";
-  if (provider !== "paystack" || !secret) return res.status(503).json({ error: "Paystack payment configuration is not ready" });
-  const reference = "SD-ROD-" + delivery.trackingCode + "-" + Date.now();
-  const reservation = await reservePaymentInitialization(deliveryId, reference);
-  if (!reservation.reserved) {
-    if (reservation.payment?.authorizationUrl) return res.status(200).json({
-      paymentId: reservation.payment.id,
-      reference: reservation.payment.providerReference,
-      authorizationUrl: reservation.payment.authorizationUrl,
-      accessCode: reservation.payment.accessCode,
-      amountMinor: reservation.payment.amountMinor
-    });
-    return res.status(409).json({ error: "Payment initialization is already in progress. Retry shortly." });
-  }
-  const response = await fetch("https://api.paystack.co/transaction/initialize", {
-    method: "POST",
-    headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
-    body: JSON.stringify({
-      email,
-      amount: String(payment.amountMinor),
-      currency: "NGN",
-      reference,
-      metadata: { deliveryId, trackingCode: delivery.trackingCode, collectionMode: "RECEIVER_ON_DELIVERY" }
-    }),
-    signal: AbortSignal.timeout(15_000)
-  });
-  const payload = await response.json() as any;
-  if (!response.ok || !payload.status || !payload.data?.authorization_url) {
-    return res.status(502).json({ error: "Receiver payment provider initialization failed" });
-  }
-  const saved = await savePaymentCheckoutSession(deliveryId, payload.data.reference ?? reference, payload.data.authorization_url, payload.data.access_code);
-  if (!saved) return res.status(409).json({ error: "Receiver payment checkout could not be saved. Retry shortly." });
-  await recordDeliveryEvent({
-    deliveryId,
-    eventType: "RECEIVER_PAYMENT_INITIALIZED",
-    metadata: { reference: saved.providerReference, amountMinor: saved.amountMinor, currency: saved.currency, collectionMode: "RECEIVER_ON_DELIVERY" }
-  });
-  return res.status(201).json({
-    paymentId: saved.id,
-    reference: saved.providerReference,
-    authorizationUrl: saved.authorizationUrl,
-    accessCode: saved.accessCode,
-    amountMinor: saved.amountMinor
-  });
+app.post("/api/deliveries/:id/receiver-payment/initialize", requireAuth("CUSTOMER"), async (_req, res) => {
+  return res.status(410).json({ error: "Receiver-paid delivery is retired. Every order must use in-app escrow before receipt." });
 });
 
 app.get("/api/deliveries/:id/payment/status", requireAuth("CUSTOMER", "ADMIN"), async (req, res) => {
@@ -1312,8 +1310,8 @@ app.post("/api/track/:trackingCode/dispute", async (req, res) => {
   const receiverPin = String(req.body?.receiverPin ?? "").trim();
   const reason = String(req.body?.reason ?? "").trim();
   const description = String(req.body?.description ?? "").trim();
-  if (!receiverPhone || !/^\d{6}$/.test(receiverPin) || !reason) {
-    return res.status(400).json({ error: "Receiver phone, six-digit PIN and dispute reason are required" });
+  if (!receiverPhone || !/^\d{4}$/.test(receiverPin) || !reason) {
+    return res.status(400).json({ error: "Receiver phone, 4-digit PIN and dispute reason are required" });
   }
   const delivery = await findByTrackingCode(String(routeParam(req.params.trackingCode, "trackingCode")).trim().toUpperCase());
   if (!delivery || delivery.receiverPhone !== receiverPhone) {
@@ -1603,6 +1601,31 @@ app.get("/api/admin/operations", requireAuth("ADMIN"), async (_req, res) => {
     openDisputes: Number(row.open_disputes ?? 0),
     pendingPayouts: Number(row.pending_payouts ?? 0)
   } });
+});
+
+app.get("/api/customer/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const requested = typeof req.query.status === "string" ? req.query.status : "ALL";
+  const allowed = new Set(["ALL", "DELIVERED", "IN_TRANSIT", "CANCELLED"]);
+  if (!allowed.has(requested)) return res.status(400).json({ error: "Unsupported order history filter" });
+  const clauses = ["d.sender_id=$1"];
+  const params: unknown[] = [identity(req)];
+  if (requested === "DELIVERED") clauses.push("d.status='DELIVERED'");
+  if (requested === "CANCELLED") clauses.push("d.status='CANCELLED'");
+  if (requested === "IN_TRANSIT") clauses.push("d.status IN ('PAYMENT_AUTHORIZED','DRIVER_ASSIGNED','DRIVER_AT_PICKUP','PICKED_UP','IN_TRANSIT','ARRIVED')");
+  const result = await pool!.query(
+    `SELECT d.id,d.tracking_code,d.status,d.receiver_name,d.dropoff_address,d.quote_total_minor,d.quote_currency,d.created_at,d.updated_at,
+      (SELECT json_build_object('latitude',le.latitude,'longitude',le.longitude,'recordedAt',le.recorded_at)
+       FROM location_events le WHERE le.delivery_id=d.id ORDER BY le.recorded_at DESC LIMIT 1) AS latest_location
+     FROM deliveries d WHERE ${clauses.join(" AND ")} ORDER BY d.updated_at DESC LIMIT 100`,
+    params
+  );
+  res.json({ deliveries: result.rows.map(row => ({
+    id: row.id, trackingCode: row.tracking_code, status: row.status, receiverName: row.receiver_name,
+    dropoffAddress: row.dropoff_address, quoteTotalMinor: Number(row.quote_total_minor ?? 0),
+    quoteCurrency: row.quote_currency ?? "NGN", createdAt: row.created_at, updatedAt: row.updated_at,
+    latestLocation: row.latest_location
+  })) });
 });
 
 app.get("/api/admin/deliveries", requireAuth("ADMIN"), async (req, res) => {
@@ -2448,163 +2471,8 @@ app.post("/api/deliveries/:id/complete", requireAuth("DRIVER"), async (req, res)
   return res.status(409).json({ error: "Receiver confirmation is required to complete delivery and release payment" });
 });
 
-app.post("/api/deliveries/:id/receiver-confirm", async (req, res) => {
-  if (!databaseEnabled()) return res.status(503).json({ error: "Receiver confirmation requires the production database" });
-  const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
-  const receiverPin = String(req.body?.receiverPin ?? "").trim();
-  if (!receiverPhone || !/^\d{6}$/.test(receiverPin)) return res.status(400).json({ error: "Receiver phone and six-digit PIN are required" });
-
-  // Buy & Deliver has its own escrow record; do not route it through the normal delivery payment table.
-  const buyOrderResult = await pool!.query(
-    "SELECT bo.*, d.status AS delivery_status, d.driver_id FROM buy_orders bo JOIN deliveries d ON d.id=bo.delivery_id WHERE bo.delivery_id=$1 FOR UPDATE OF bo, d",
-    [routeParam(req.params.id, "id")]
-  );
-  const buyOrder = buyOrderResult.rows[0];
-  if (buyOrder) {
-    if (buyOrder.receiver_phone !== receiverPhone) {
-      return res.status(403).json({ error: "Receiver details could not be verified" });
-    }
-    const pinKey = "buy-confirm:" + buyOrder.id + ":" + receiverPhone;
-    const pinRate = checkReceiverPinRate(pinKey);
-    if (!pinRate.allowed) {
-      return res.status(429).json({ error: "Too many PIN attempts. Try again later.", retryAfterMs: pinRate.retryAfterMs });
-    }
-    if (!await verifyReceiverPin(buyOrder.delivery_id, receiverPin)) {
-      recordReceiverPinFailure(pinKey);
-      return res.status(403).json({ error: "Receiver details could not be verified" });
-    }
-    clearReceiverPinFailures(pinKey);
-    if (buyOrder.payment_status !== "HELD") return res.status(409).json({ error: "Buy & Deliver payment is not currently held for release" });
-    if (buyOrder.delivery_status !== "ARRIVED" || !buyOrder.driver_id) return res.status(409).json({ error: "The courier must arrive before receiver confirmation" });
-    const client = await pool!.connect();
-    try {
-      await client.query("BEGIN");
-      const locked = (await client.query(
-        "SELECT bo.*, d.status AS delivery_status, d.driver_id FROM buy_orders bo JOIN deliveries d ON d.id=bo.delivery_id WHERE bo.id=$1 FOR UPDATE OF bo, d",
-        [buyOrder.id]
-      )).rows[0];
-      if (!locked || locked.payment_status !== "HELD" || locked.delivery_status !== "ARRIVED") {
-        await client.query("ROLLBACK");
-        return res.status(409).json({ error: "Buy & Deliver order changed before receiver confirmation" });
-      }
-      const updatedDelivery = (await client.query(
-        "UPDATE deliveries SET status='DELIVERED', updated_at=now() WHERE id=$1 AND status='ARRIVED' RETURNING id,status,updated_at",
-        [locked.delivery_id]
-      )).rows[0];
-      if (!updatedDelivery) {
-        await client.query("ROLLBACK");
-        return res.status(409).json({ error: "Delivery is no longer awaiting receiver confirmation" });
-      }
-      await client.query(
-        "UPDATE drop_off_parcels SET status='COMPLETED', completed_at=now(), updated_at=now() WHERE delivery_id=$1 AND status='COURIER_COLLECTED'",
-        [locked.delivery_id]
-      );
-      await client.query(
-        "INSERT INTO buy_order_settlements (buy_order_id,agent_id,amount_minor,currency,status) VALUES ($1,$2,$3,$4,'PENDING') ON CONFLICT (buy_order_id) DO NOTHING",
-        [locked.id, locked.agent_id, Number(locked.actual_purchase_minor ?? 0), locked.currency ?? "NGN"]
-      );
-      await client.query(
-        "UPDATE buy_order_payments SET status='RELEASED', updated_at=now() WHERE buy_order_id=$1 AND status='HELD'",
-        [locked.id]
-      );
-      await client.query(
-        "UPDATE buy_orders SET payment_status='RELEASED', status='DELIVERED', updated_at=now() WHERE id=$1 AND payment_status='HELD'",
-        [locked.id]
-      );
-      await client.query(
-        "INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,NULL,'PAYMENT_RELEASED',$2::jsonb)",
-        [locked.id, JSON.stringify({ deliveryId: locked.delivery_id, receiverPhoneVerified: true, releaseReason: "receiver_pin_confirmed" })]
-      );
-      await client.query(
-        "INSERT INTO delivery_events (delivery_id,event_type,actor_user_id,metadata) VALUES ($1,'RECEIVER_CONFIRMED_DELIVERY',$2,$3::jsonb)",
-        [locked.delivery_id, identity(req), JSON.stringify({ buyOrderId: locked.id, escrowReleased: true })]
-      );
-      await client.query("UPDATE drop_off_commission_ledger SET status='AVAILABLE', updated_at=now() WHERE parcel_id IN (SELECT id FROM drop_off_parcels WHERE delivery_id=$1) AND status='EARNED'", [locked.delivery_id]);
-      await client.query("COMMIT");
-      await notificationForDelivery(locked.delivery_id, locked.customer_user_id, "Delivery confirmed", "The receiver confirmed receipt. Your Buy & Deliver payment has been released.", "DELIVERED");
-      publishDeliveryUpdate(locked.delivery_id, safeDelivery(updatedDelivery));
-      return res.json({ delivery: safeDelivery(updatedDelivery), buyOrderId: locked.id, escrowStatus: "RELEASED" });
-    } catch (error) {
-      await client.query("ROLLBACK");
-      return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to release Buy & Deliver payment" });
-    } finally {
-      client.release();
-    }
-  }
-
-  const receiverPaymentDelivery = await findDelivery(routeParam(req.params.id, "id"));
-  if (receiverPaymentDelivery?.paymentMode === "RECEIVER_ON_DELIVERY") {
-    if (receiverPaymentDelivery.status !== "ARRIVED") return res.status(409).json({ error: "The courier must arrive before receiver confirmation." });
-    if (receiverPaymentDelivery.receiverPhone !== receiverPhone) return res.status(403).json({ error: "Receiver details could not be verified" });
-    const pinKey = "receiver-payment:" + receiverPaymentDelivery.id + ":" + receiverPhone;
-    const pinRate = checkReceiverPinRate(pinKey);
-    if (!pinRate.allowed) return res.status(429).json({ error: "Too many PIN attempts. Try again later.", retryAfterMs: pinRate.retryAfterMs });
-    if (!await verifyReceiverPin(receiverPaymentDelivery.id, receiverPin)) {
-      recordReceiverPinFailure(pinKey);
-      return res.status(403).json({ error: "Receiver details could not be verified" });
-    }
-    clearReceiverPinFailures(pinKey);
-    const confirmed = await confirmReceiverOnDeliveryPaymentDue(receiverPaymentDelivery.id, receiverPhone, receiverPin);
-    if (!confirmed) return res.status(409).json({ error: "Receiver confirmation has already been recorded or the payment is no longer awaiting collection." });
-    await notificationForDelivery(
-      confirmed.id,
-      confirmed.senderId,
-      "Receiver confirmed package",
-      "The receiver confirmed the package. Payment is now due from the receiver before courier payout.",
-      "RECEIVER_PAYMENT_DUE"
-    );
-    return res.status(200).json({
-      delivery: safeDelivery(confirmed),
-      paymentMode: "RECEIVER_ON_DELIVERY",
-      paymentRequired: true,
-      amountMinor: confirmed.quote?.totalMinor ?? 0,
-      message: "Package receipt confirmed. The receiver must now complete payment."
-    });
-  }
-
-  const payment = await findPayment(routeParam(req.params.id, "id"));
-  if (!payment || payment.status !== "HELD") return res.status(409).json({ error: "Payment is not currently held for delivery release" });
-  const deliveryForPin = await findDelivery(routeParam(req.params.id, "id"));
-  if (!deliveryForPin || deliveryForPin.receiverPhone !== receiverPhone) return res.status(403).json({ error: "Receiver details could not be verified" });
-  const pinKey = "confirm:" + deliveryForPin.id + ":" + receiverPhone;
-  const pinRate = checkReceiverPinRate(pinKey);
-  if (!pinRate.allowed) return res.status(429).json({ error: "Too many PIN attempts. Try again later.", retryAfterMs: pinRate.retryAfterMs });
-  if (!await verifyReceiverPin(deliveryForPin.id, receiverPin)) {
-    recordReceiverPinFailure(pinKey);
-    return res.status(403).json({ error: "Receiver details could not be verified" });
-  }
-  clearReceiverPinFailures(pinKey);
-  try {
-    const result = await confirmReceiverAndReleaseEscrow(
-      routeParam(req.params.id, "id"),
-      receiverPhone,
-      receiverPin,
-      Number(process.env.DRIVER_PAYOUT_PERCENT ?? 90)
-    );
-    if (!result) return res.status(403).json({ error: "Receiver details could not be verified or delivery is not awaiting confirmation" });
-    await recordDeliveryEvent({
-      deliveryId: result.delivery.id,
-      eventType: "RECEIVER_CONFIRMED_DELIVERY",
-      metadata: { receiverPhoneVerified: true, escrowReleased: true, payoutEligible: result.payoutAmountMinor > 0 }
-    });
-    await pool!.query(
-      "UPDATE drop_off_parcels SET status='COMPLETED', completed_at=now(), updated_at=now() WHERE delivery_id=$1 AND status='COURIER_COLLECTED'",
-      [result.delivery.id]
-    );
-    await pool!.query(
-      "UPDATE drop_off_commission_ledger SET status='AVAILABLE', updated_at=now() WHERE parcel_id IN (SELECT id FROM drop_off_parcels WHERE delivery_id=$1) AND status='EARNED'",
-      [result.delivery.id]
-    );
-    await notificationForDelivery(result.delivery.id, result.delivery.senderId, "Delivery confirmed", "The receiver confirmed receipt. Your held payment has been released for courier payout.", "DELIVERED");
-    if (result.delivery.driverId) {
-      const driver = await driverForUser(result.delivery.driverId);
-      if (driver) await notificationForDelivery(result.delivery.id, driver.userId, "Payment released", "The receiver confirmed receipt. Your courier payout is now eligible.", "PAYOUT_ELIGIBLE");
-    }
-    publishDeliveryUpdate(result.delivery.id, safeDelivery(result.delivery));
-    return res.json({ delivery: safeDelivery(result.delivery), payoutAmountMinor: result.payoutAmountMinor, escrowStatus: "RELEASED" });
-  } catch (error) {
-    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to confirm delivery" });
-  }
+app.post("/api/deliveries/:id/receiver-confirm", requireAuth(), async (_req, res) => {
+  return res.status(410).json({ error: "Legacy receiver confirmation is retired. Use the authenticated escrow PIN endpoint." });
 });
 
 app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -2734,12 +2602,21 @@ async function startServer() {
     void reconcileProcessingDropOffCommissions().catch(() => {});
     void processSupportAiBatch().catch(() => {});
     void processRecurringDispatches().catch(() => {});
+    void processPhase2EscrowReleases().catch(() => {});
+    void reconcilePhase2Float().catch(() => {});
     const supportAiWorker = setInterval(() => {
       void processSupportAiBatch().catch(() => {});
     }, 5000);
     const notificationWorker = setInterval(() => {
       void processNotificationOutbox().catch(() => {});
     }, 5000);
+    const phase2EscrowWorker = setInterval(() => {
+      void processPhase2EscrowReleases().catch(() => {});
+    }, 60_000);
+    const phase2FloatReconciliationWorker = setInterval(() => {
+      const hour = new Date().getHours();
+      if (hour === 18) void reconcilePhase2Float().catch(() => {});
+    }, 60_000);
     const recurringDispatchWorker = setInterval(() => {
       void processRecurringDispatches().catch(() => {});
     }, 60_000);
@@ -2770,6 +2647,8 @@ async function startServer() {
     dropOffCommissionReconciliationWorker.unref();
     buyOrderSettlementReconciliationWorker.unref();
     recurringDispatchWorker.unref();
+    phase2EscrowWorker.unref();
+    phase2FloatReconciliationWorker.unref();
   }
   httpServer.listen(port, () => console.log(`SwiftDrop API listening on port ${port}`));
 }

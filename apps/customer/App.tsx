@@ -9,13 +9,18 @@ import { SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, Alert, Scro
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { SwiftDropApi, type ApiDelivery } from "../../packages/shared/src/api";
 import { haversineDistanceMeters, etaMinutes } from "./src/trackingMath";
+import Phase1Home from "./src/Phase1Home";
+import OrderHistory from "./src/OrderHistory";
+import EscrowPaymentScreen from "./src/EscrowPaymentScreen";
+import WalletScreen from "./src/WalletScreen";
+import PayoutRequestScreen from "./src/PayoutRequestScreen";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 const api = new SwiftDropApi(API_URL);
 
 export default function App() {
   const [signedIn, setSignedIn] = React.useState(false);
-  const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS">("HOME");
+  const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS" | "HISTORY" | "WALLET" | "ESCROW" | "PAYOUT">("HOME");
   const [errandDraft, setErrandDraft] = React.useState({
     errandType: "GENERAL_ERRAND" as "GENERAL_ERRAND" | "PURCHASE_AND_DELIVER" | "SHOP_FOR_ME",
     description: "",
@@ -108,7 +113,6 @@ export default function App() {
   const [widthCm, setWidthCm] = React.useState("");
   const [heightCm, setHeightCm] = React.useState("");
   const [isPerishable, setIsPerishable] = React.useState(false);
-  const [paymentMode, setPaymentMode] = React.useState<"SENDER_ESCROW" | "RECEIVER_ON_DELIVERY">("SENDER_ESCROW");
   const [receiverConfirmPin, setReceiverConfirmPin] = React.useState("");
   const [receiverRatingStars, setReceiverRatingStars] = React.useState(0);
   const [receiverRatingComment, setReceiverRatingComment] = React.useState("");
@@ -116,6 +120,7 @@ export default function App() {
   const [receiverMode, setReceiverMode] = React.useState(false);
   const [email, setEmail] = React.useState("");
   const [quote, setQuote] = React.useState<Awaited<ReturnType<typeof api.quote>> | null>(null);
+  const [includeProtection, setIncludeProtection] = React.useState(true);
   const [delivery, setDelivery] = React.useState<ApiDelivery | null>(null);
   const [trackingCode, setTrackingCode] = React.useState("");
   const [trackingPhone, setTrackingPhone] = React.useState("");
@@ -150,6 +155,12 @@ export default function App() {
       await api.registerDeviceToken(token.data, Platform.OS === "ios" ? "IOS" : "ANDROID");
     } catch {}
   }
+
+  React.useEffect(() => {
+    if (Platform.OS === "web" && typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+      void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    }
+  }, []);
 
   React.useEffect(() => {
     AsyncStorage.getItem("swiftdrop.customerAccessToken").then(token => {
@@ -413,7 +424,7 @@ export default function App() {
     const lat = Number(marketplaceDropoffLat);
     const lng = Number(marketplaceDropoffLng);
     if (!marketplaceReceiverName.trim() || !marketplaceReceiverPhone.trim() || !/^\d{6}$/.test(marketplaceReceiverPin) || !marketplaceDropoffAddress.trim() || !Number.isFinite(lat) || !Number.isFinite(lng)) {
-      Alert.alert("Delivery details", "Enter receiver name, phone, a 6-digit PIN, and a valid drop-off address with GPS coordinates.");
+      Alert.alert("Delivery details", "Enter receiver name, phone, a 4-digit PIN, and a valid drop-off address with GPS coordinates.");
       return;
     }
     try {
@@ -691,7 +702,7 @@ export default function App() {
     try {
       if (![weightKg, lengthCm, widthCm, heightCm].every(value => Number(value) > 0)) throw new Error("Enter parcel weight and all three dimensions first.");
       const coords = coordinates();
-      setQuote(await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable, declaredValueMinor: Math.round(Number(declaredValue) * 100) }));
+      setQuote(await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable, declaredValueMinor: Math.round(Number(declaredValue) * 100), includeProtection }));
     } catch (error) {
       Alert.alert("Quote unavailable", error instanceof Error ? error.message : "Enter valid locations.");
     }
@@ -699,19 +710,20 @@ export default function App() {
 
   async function createDelivery() {
     try {
-      if (!pickup.trim() || !dropoff.trim() || !receiver.trim() || !phone.trim() || !/^\d{6}$/.test(receiverPin)) throw new Error("Complete the delivery details and enter a 6-digit receiver PIN.");
-      if (paymentMode === "SENDER_ESCROW" && !email.trim()) throw new Error("Enter your payment email for sender-paid escrow.");
+      if (!pickup.trim() || !dropoff.trim() || !receiver.trim() || !phone.trim() || !/^\d{4}$/.test(receiverPin)) throw new Error("Complete the delivery details and enter a 4-digit receiver PIN.");
+      if (!email.trim()) throw new Error("Enter your payment email for in-app escrow.");
       const coords = coordinates();
       if (![weightKg, lengthCm, widthCm, heightCm].every(value => Number(value) > 0)) throw new Error("Enter parcel weight and all three dimensions.");
       if (!(Number(declaredValue) > 0)) throw new Error("Enter the actual value of the goods before placing the order.");
-      const serverQuote = await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable, declaredValueMinor: Math.round(Number(declaredValue) * 100) });
+      const serverQuote = await api.quote({ ...coords, weightKg: Number(weightKg), dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) }, isPerishable, declaredValueMinor: Math.round(Number(declaredValue) * 100), includeProtection });
       setQuote(serverQuote);
       const created = await api.createDelivery({
         receiverName: receiver.trim(),
         receiverPhone: phone.trim(),
         receiverPin,
-        paymentMode,
+        paymentMode: "SENDER_ESCROW",
         declaredValueMinor: Math.round(Number(declaredValue) * 100),
+        includeProtection,
         weightKg: Number(weightKg),
         dimensionsCm: { length: Number(lengthCm), width: Number(widthCm), height: Number(heightCm) },
         isPerishable,
@@ -725,13 +737,11 @@ export default function App() {
       });
       setDelivery(created);
       setTrackingCode(created.trackingCode);
-      if (paymentMode === "SENDER_ESCROW") {
-        const payment = await api.initializePayment(created.id, email.trim());
-        await WebBrowser.openBrowserAsync(payment.authorizationUrl);
-        Alert.alert("Payment", "Complete payment in the browser. SwiftDrop will verify it from the payment provider.");
-      } else {
-        Alert.alert("Receiver payment", "Order created. The receiver will confirm the package at arrival and then pay the final amount through SwiftDrop. No sender escrow is used.");
-      }
+      const escrow = await api.createEscrow(created.id);
+      const payment = await api.payEscrow(created.id, "PAYSTACK_CARD", crypto.randomUUID());
+      if (payment?.authorizationUrl) await WebBrowser.openBrowserAsync(payment.authorizationUrl);
+      Alert.alert("Payment", "Complete payment. SwiftDrop will verify escrow from the payment provider webhook.");
+      void escrow;
     } catch (error) {
       Alert.alert("Delivery failed", error instanceof Error ? error.message : "Unable to create delivery.");
     }
@@ -752,24 +762,15 @@ export default function App() {
   }
 
   async function confirmReceipt() {
-    if (!delivery || !trackingPhone.trim() || receiverConfirmPin.length !== 6) {
-      Alert.alert("Receipt confirmation", "Enter the receiver phone number and six-digit PIN.");
+    if (!delivery || receiverConfirmPin.length !== 4) {
+      Alert.alert("Receipt confirmation", "Enter the 4-digit receiver PIN.");
       return;
     }
     try {
-      const result = await api.confirmReceiver(delivery.id, trackingPhone.trim(), receiverConfirmPin);
-      setDelivery(result.delivery);
-      if (result.paymentRequired) {
-        if (!email.trim()) {
-          Alert.alert("Receiver payment", "Package confirmed. Enter the receiver's payment email and tap Pay receiver amount to complete payment.");
-          return;
-        }
-        const payment = await api.initializeReceiverPayment(delivery.id, trackingPhone.trim(), receiverConfirmPin, email.trim());
-        await WebBrowser.openBrowserAsync(payment.authorizationUrl);
-        Alert.alert("Receiver payment", "Complete payment. SwiftDrop will verify the provider webhook and then complete the order.");
-      } else {
-        Alert.alert("Receipt confirmed", "The delivery is complete and the held payment has been released for courier payout.");
-      }
+      const result = await api.confirmEscrowPin(delivery.id, receiverConfirmPin);
+      setDelivery(prev => prev ? { ...prev, status: "DELIVERED" } : prev);
+      Alert.alert("Receipt confirmed", "The delivery is complete. The receiver PIN has been verified and the courier payout is now eligible.");
+      void result;
     } catch (error) {
       Alert.alert("Confirmation failed", error instanceof Error ? error.message : "Unable to confirm receipt");
     }
@@ -812,11 +813,11 @@ export default function App() {
   if (!signedIn && receiverMode) {
     return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.auth}>
       <Text style={styles.logo}>SwiftDrop</Text><Text style={styles.brandTag}>MOVE WITH CONFIDENCE</Text><Text style={styles.eyebrow}>RECEIVER</Text>
-      <Text style={styles.subtitle}>Confirm receipt with your PIN. If the sender selected receiver payment, you will pay the order amount immediately after confirmation.</Text>
+      <Text style={styles.subtitle}>Confirm receipt with your PIN. Payment is secured in-app before delivery. Confirmation releases the held courier payout flow.</Text>
       <TextInput style={styles.input} placeholder="Tracking code" value={trackingCode} onChangeText={setTrackingCode} autoCapitalize="characters" />
       <TextInput style={styles.input} placeholder="Receiver phone number" value={trackingPhone} onChangeText={setTrackingPhone} keyboardType="phone-pad" />
-      <TextInput style={styles.input} placeholder="Six-digit receiver PIN" value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} keyboardType="number-pad" secureTextEntry maxLength={6} />
-      <TextInput style={styles.input} placeholder="Payment email (required if receiver pays)" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+      <TextInput style={styles.input} placeholder="4-digit receiver PIN" value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} keyboardType="number-pad" secureTextEntry maxLength={4} />
+      <TextInput style={styles.input} placeholder="Payment email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
       <Pressable style={styles.primary} onPress={() => void (async () => {
         try {
           const tracked = await api.track(trackingCode.trim().toUpperCase(), trackingPhone.trim());
@@ -875,57 +876,33 @@ export default function App() {
   }
 
   if (homeSection === "HOME") {
-    return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}>
-      <View style={styles.heroHeader}>
-        <View><Text style={styles.logo}>SwiftDrop</Text><Text style={styles.brandTag}>LOGISTICS · SHOPPING · SERVICES</Text></View>
-        <View style={styles.headerActions}><Pressable onPress={() => { setShowNotifications(v => !v); void loadNotifications(); }}><Text style={styles.link}>Alerts {notifications.filter(n => !n.read_at).length ? "•" : ""}</Text></Pressable><Pressable onPress={() => void signOut()}><Text style={styles.link}>Sign out</Text></Pressable></View>
-      </View>
+    return <SafeAreaView style={styles.safe}>
+      <Phase1Home
+        delivery={delivery}
+        notifications={notifications}
+        setHomeSection={setHomeSection}
+        openNotifications={() => { setShowNotifications(v => !v); void loadNotifications(); }}
+        signOut={() => void signOut()}
+      />
+    </SafeAreaView>;
+  }
 
-      <Pressable style={styles.trackSearch} onPress={() => setHomeSection("TRACK")}><Text style={styles.trackIcon}>◉</Text><Text style={styles.trackText}>Track Your Order</Text><Text style={styles.trackArrow}>›</Text></Pressable>
+  if (homeSection === "HISTORY") {
+    return <SafeAreaView style={styles.safe}><OrderHistory api={api} onBack={() => setHomeSection("HOME")} onTrack={(trackingCode) => { setTrackingCode(trackingCode); setHomeSection("TRACK"); }} /></SafeAreaView>;
+  }
 
-      <View style={styles.homeCard}>
-        <Text style={styles.homeHeading}>Get Quote of Order</Text>
-        <View style={styles.homeTwoCol}>
-          <Pressable style={styles.homeChoice} onPress={() => { setHomeSection("ORDER"); }}>
-            <Text style={styles.homeEmoji}>📦</Text><Text style={styles.homeChoiceTitle}>Same state</Text><Text style={styles.homeChoiceSub}>Within your state</Text>
-          </Pressable>
-          <Pressable style={styles.homeChoice} onPress={() => { setHomeSection("ORDER"); }}>
-            <Text style={styles.homeEmoji}>🗺️</Text><Text style={styles.homeChoiceTitle}>Inter state</Text><Text style={styles.homeChoiceSub}>Across Nigerian states</Text>
-          </Pressable>
-        </View>
-      </View>
+  if (homeSection === "WALLET") {
+    return <SafeAreaView style={styles.safe}><WalletScreen api={api} onBack={() => setHomeSection("HOME")} onPayout={() => setHomeSection("PAYOUT")} /></SafeAreaView>;
+  }
 
-      <View style={styles.homeCard}>
-        <Text style={styles.homeHeading}>Place your order</Text>
-        <View style={styles.actionGrid}>
-          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>📦</Text><Text style={styles.tileTitle}>Send within Nigeria</Text></Pressable>
-          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ERRAND")}><Text style={styles.tileEmoji}>🛵</Text><Text style={styles.tileTitle}>Hire an Errand</Text><Text style={styles.tileSub}>Errand · Purchase · Shop for me</Text></Pressable>
-          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>⚡</Text><Text style={styles.tileTitle}>Express drop off</Text></Pressable>
-          <Pressable style={styles.actionTile} onPress={() => setHomeSection("ORDER")}><Text style={styles.tileEmoji}>💳</Text><Text style={styles.tileTitle}>Pay Shipment</Text></Pressable>
-          <Pressable style={styles.actionTile} onPress={() => void openNearbyDropOffLocations()}><Text style={styles.tileEmoji}>📍</Text><Text style={styles.tileTitle}>Drop-off locations</Text><Text style={styles.tileSub}>Merchant & partner points</Text></Pressable>
-        </View>
-      </View>
+  if (homeSection === "PAYOUT") {
+    return <SafeAreaView style={styles.safe}><PayoutRequestScreen api={api} onBack={() => setHomeSection("WALLET")} /></SafeAreaView>;
+  }
 
-      <View style={styles.homeCard}>
-        <View style={styles.sectionHeader}><View><Text style={styles.homeHeading}>SwiftDrop Shop</Text><Text style={styles.muted}>Every product is anchored to its own seller.</Text></View><Pressable onPress={() => { setHomeSection("SHOP"); void loadMarketplace(); }}><Text style={styles.link}>View all</Text></Pressable></View>
-        <View style={styles.shopPreviewRow}>
-          <Pressable style={styles.shopPreview} onPress={() => { setHomeSection("SHOP"); void loadMarketplace(); }}><Text style={styles.productEmoji}>🛍️</Text><Text style={styles.productName}>Shop products</Text><Text style={styles.muted}>Seller profile + recommendations</Text></Pressable>
-          <Pressable style={styles.shopPreview} onPress={() => { setHomeSection("SHOP"); void loadMarketplace("food"); }}><Text style={styles.productEmoji}>🍱</Text><Text style={styles.productName}>Food & perishables</Text><Text style={styles.muted}>Delivery included in price</Text></Pressable>
-        </View>
-      </View>
-
-      <View style={styles.homeCard}>
-        <Text style={styles.eyebrow}>SWIFT AI</Text><Text style={styles.homeHeading}>Ask Swift AI</Text><Text style={styles.muted}>Basic AI explains your orders and app. Premium can take authorized actions.</Text>
-        <Pressable style={styles.secondary} onPress={() => Alert.alert("Swift AI", "Use the Swift AI section below your order workspace to ask questions. Premium actions remain permission-controlled.")}><Text style={styles.secondaryText}>Open Swift AI</Text></Pressable>
-      </View>
-
-      <View style={styles.bottomNav}>
-        <Pressable style={styles.navActive}><Text>⌂</Text><Text>Home</Text></Pressable>
-        <Pressable style={styles.navItem} onPress={() => setHomeSection("ORDER")}><Text>□</Text><Text>Order</Text></Pressable>
-        <Pressable style={styles.navItem} onPress={() => { setHomeSection("SHOP"); void loadMarketplace(); }}><Text>🛍</Text><Text>Shop</Text></Pressable>
-        <Pressable style={styles.navItem} onPress={() => setShowSupport(v => !v)}><Text>?</Text><Text>Support</Text></Pressable>
-      </View>
-    </ScrollView></SafeAreaView>;
+  if (homeSection === "ESCROW") {
+    const escrowAmount = Number(delivery?.quote?.totalMinor ?? quote?.totalMinor ?? 0);
+    if (!delivery || !escrowAmount) return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.homeContainer}><View style={styles.card}><Text style={styles.homeHeading}>Escrow Payment</Text><Text style={styles.muted}>Create an order first. Every payment is secured through in-app escrow; cash is not accepted.</Text><Pressable style={styles.primary} onPress={() => setHomeSection("ORDER")}><Text style={styles.primaryText}>Place your order</Text></Pressable></View></ScrollView></SafeAreaView>;
+    return <SafeAreaView style={styles.safe}><EscrowPaymentScreen api={api} orderId={delivery.id} amountMinor={escrowAmount} onBack={() => setHomeSection("HOME")} /></SafeAreaView>;
   }
 
   if (homeSection === "LOCATIONS") {
@@ -1011,7 +988,7 @@ export default function App() {
               <Text style={styles.muted}>Your payment is authorized. Add the receiver and drop-off details to create the real SwiftDrop delivery and enable tracking.</Text>
               <TextInput style={styles.input} placeholder="Receiver full name" value={marketplaceReceiverName} onChangeText={setMarketplaceReceiverName} />
               <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={marketplaceReceiverPhone} onChangeText={setMarketplaceReceiverPhone} />
-              <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
+              <TextInput style={styles.input} placeholder="4-digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
               <TextInput style={styles.input} placeholder="Drop-off address" value={marketplaceDropoffAddress} onChangeText={setMarketplaceDropoffAddress} />
               <View style={styles.row}>
                 <TextInput style={[styles.input, styles.half]} placeholder="Latitude" keyboardType="decimal-pad" value={marketplaceDropoffLat} onChangeText={setMarketplaceDropoffLat} />
@@ -1085,7 +1062,7 @@ export default function App() {
           <Text style={styles.muted}>These details create the real SwiftDrop delivery after Paystack confirms payment.</Text>
           <TextInput style={styles.input} placeholder="Receiver full name" value={marketplaceReceiverName} onChangeText={setMarketplaceReceiverName} />
           <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={marketplaceReceiverPhone} onChangeText={setMarketplaceReceiverPhone} />
-          <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
+          <TextInput style={styles.input} placeholder="4-digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
           <TextInput style={styles.input} placeholder="Drop-off address" value={marketplaceDropoffAddress} onChangeText={setMarketplaceDropoffAddress} />
           <View style={styles.row}><TextInput style={styles.half} placeholder="Drop-off latitude" keyboardType="decimal-pad" value={marketplaceDropoffLat} onChangeText={setMarketplaceDropoffLat} /><TextInput style={styles.half} placeholder="Drop-off longitude" keyboardType="decimal-pad" value={marketplaceDropoffLng} onChangeText={setMarketplaceDropoffLng} /></View>
         </View>}
@@ -1094,7 +1071,7 @@ export default function App() {
           <Text style={styles.muted}>These details are used to create the real SwiftDrop delivery after Paystack confirms payment.</Text>
           <TextInput style={styles.input} placeholder="Receiver full name" value={marketplaceReceiverName} onChangeText={setMarketplaceReceiverName} />
           <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={marketplaceReceiverPhone} onChangeText={setMarketplaceReceiverPhone} />
-          <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
+          <TextInput style={styles.input} placeholder="4-digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
           <TextInput style={styles.input} placeholder="Drop-off address" value={marketplaceDropoffAddress} onChangeText={setMarketplaceDropoffAddress} />
           <View style={styles.row}><TextInput style={styles.half} placeholder="Drop-off latitude" keyboardType="decimal-pad" value={marketplaceDropoffLat} onChangeText={setMarketplaceDropoffLat} /><TextInput style={styles.half} placeholder="Drop-off longitude" keyboardType="decimal-pad" value={marketplaceDropoffLng} onChangeText={setMarketplaceDropoffLng} /></View>
         </View>}
@@ -1185,7 +1162,7 @@ export default function App() {
         <Text style={styles.homeHeading}>Receiver & destination</Text>
         <TextInput style={styles.input} placeholder="Receiver full name" value={d.receiverName} onChangeText={v => updateErrand({ receiverName: v })} />
         <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={d.receiverPhone} onChangeText={v => updateErrand({ receiverPhone: v })} />
-        <TextInput style={styles.input} placeholder="4-6 digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={d.receiverPin} onChangeText={v => updateErrand({ receiverPin: v })} />
+        <TextInput style={styles.input} placeholder="4-6 digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={d.receiverPin} onChangeText={v => updateErrand({ receiverPin: v })} />
         <TextInput style={styles.input} placeholder="Destination address" value={d.destinationAddress} onChangeText={v => updateErrand({ destinationAddress: v })} />
         <View style={styles.row}><TextInput style={styles.half} placeholder="Latitude" keyboardType="decimal-pad" value={d.destinationLat} onChangeText={v => updateErrand({ destinationLat: v })} /><TextInput style={styles.half} placeholder="Longitude" keyboardType="decimal-pad" value={d.destinationLng} onChangeText={v => updateErrand({ destinationLng: v })} /></View>
         <Pressable style={styles.primary} disabled={errandBusy} onPress={() => void createErrand()}><Text style={styles.primaryText}>{errandBusy ? "Creating errand…" : "Place errand request"}</Text></Pressable>
@@ -1241,7 +1218,7 @@ export default function App() {
     <Text style={styles.hint}>Clear instructions help the courier find the right entrance and complete the handoff without relying on the address alone.</Text>
     <TextInput style={styles.input} placeholder="Receiver name" value={receiver} onChangeText={setReceiver} />
     <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
-    <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={receiverPin} onChangeText={setReceiverPin} />
+    <TextInput style={styles.input} placeholder="4-digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={receiverPin} onChangeText={setReceiverPin} />
     <Text style={styles.hint}>Give this PIN to the receiver. The receiver must use it to confirm receipt before courier payout is released.</Text>
     <TextInput style={styles.input} placeholder="Actual goods value (₦)" keyboardType="decimal-pad" value={declaredValue} onChangeText={setDeclaredValue} />
     <Text style={styles.hint}>Required for pricing, vehicle/risk planning and claims. Declare the genuine value of the goods. A damage claim is limited to the verified actual loss and cannot be increased by an inflated declaration.</Text>
@@ -1258,20 +1235,14 @@ export default function App() {
       <Text>Weight: ₦{(quote.weightFareMinor / 100).toLocaleString()}</Text>
       <Text>Size/handling: ₦{(quote.sizeFareMinor / 100).toLocaleString()}</Text>
       {quote.perishableSurchargeMinor > 0 && <Text>Perishable/food surcharge: ₦{(quote.perishableSurchargeMinor / 100).toLocaleString()}</Text>}
-      <Text>Fuel reference: ₦{(quote.fuelReferenceMinor / 100).toLocaleString()} (2 litres)</Text><Text>Refundable protection reserve: ₦{(quote.protectionReserveMinor / 100).toLocaleString()}</Text><Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
+      <Text>Fuel reference: ₦{(quote.fuelReferenceMinor / 100).toLocaleString()} (2 litres)</Text><Pressable style={[styles.choice, includeProtection && styles.choiceActive]} onPress={() => setIncludeProtection(v => !v)} accessibilityRole="checkbox" accessibilityState={{ checked: includeProtection }}><Text style={styles.photoTitle}>{includeProtection ? "✓ " : ""}Refundable Protection Reserve · 10% of declared value</Text></Pressable><Text>Protection: ₦{(quote.protectionReserveMinor / 100).toLocaleString()}</Text><Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
       <Text style={styles.code}>Total: ₦{(quote.totalMinor / 100).toLocaleString()}</Text>    </View>}
-    <Text style={styles.heading}>Who pays for this order?</Text>
-    <View style={styles.row}>
-      <Pressable style={[styles.choice, paymentMode === "SENDER_ESCROW" && styles.choiceActive]} onPress={() => setPaymentMode("SENDER_ESCROW")}>
-        <Text style={styles.photoTitle}>Sender pays</Text><Text style={styles.muted}>Payment is held until receiver PIN confirmation.</Text>
-      </Pressable>
-      <Pressable style={[styles.choice, paymentMode === "RECEIVER_ON_DELIVERY" && styles.choiceActive]} onPress={() => setPaymentMode("RECEIVER_ON_DELIVERY")}>
-        <Text style={styles.photoTitle}>Receiver pays</Text><Text style={styles.muted}>No escrow. Receiver pays after confirming the package.</Text>
-      </Pressable>
+    <View style={styles.card}>
+      <Text style={styles.heading}>Payment</Text>
+      <Text style={styles.muted}>Every SwiftDrop order is paid through in-app escrow. Cash on delivery is not available.</Text>
+      <Text style={styles.hint}>Payment is held until receiver PIN confirmation, then eligible stakeholder payouts are released according to the escrow ledger.</Text>
     </View>
-    {paymentMode === "SENDER_ESCROW" && <Text style={styles.hint}>Sender payment is held in SwiftDrop's application-level escrow ledger and released only after receiver PIN confirmation.</Text>}
-    {paymentMode === "RECEIVER_ON_DELIVERY" && <Text style={styles.hint}>The receiver confirms the package first, then pays the server-authoritative order total through SwiftDrop. Courier payout waits for verified payment.</Text>}
-    <Pressable style={styles.primary} onPress={() => void createDelivery()}><Text style={styles.primaryText}>{paymentMode === "SENDER_ESCROW" ? "Place order & pay" : "Place order — receiver pays"}</Text></Pressable>
+    <Pressable style={styles.primary} onPress={() => void createDelivery()}><Text style={styles.primaryText}>Place order & pay</Text></Pressable>
     {delivery?.status === "PAYMENT_AUTHORIZED" && <Text style={styles.done}>✓ Payment verified — driver matching can begin.</Text>}
     {delivery && <Text style={styles.code}>Tracking code: {delivery.trackingCode}</Text>}
 
@@ -1331,8 +1302,8 @@ export default function App() {
       </View>}
 {delivery.status === "ARRIVED" && <View style={styles.ratingBox}>
         <Text style={styles.photoTitle}>Receiver confirmation</Text>
-        <Text style={styles.muted}>{delivery.paymentMode === "RECEIVER_ON_DELIVERY" ? "Only confirm after you have physically received the parcel. Your confirmation starts the receiver payment step." : "Only confirm after you have physically received the parcel. This releases the held courier payment."}</Text>
-        <TextInput style={styles.input} placeholder="6-digit receiver PIN" keyboardType="number-pad" maxLength={6} secureTextEntry value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} />
+        <Text style={styles.muted}>"Only confirm after you have physically received the parcel. This releases the held courier payment."</Text>
+        <TextInput style={styles.input} placeholder="4-digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} />
         <Pressable style={styles.primary} onPress={() => void confirmReceipt()}><Text style={styles.primaryText}>I received the parcel & complete delivery</Text></Pressable>
       </View>}
       {delivery.status === "DELIVERED" && <Text style={styles.done}>✓ Delivered and PIN verified</Text>}

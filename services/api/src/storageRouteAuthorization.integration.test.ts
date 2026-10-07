@@ -1,4 +1,4 @@
-import test, { after } from "node:test";
+import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -43,30 +43,14 @@ async function get(path: string, token: string): Promise<Response> {
 
 test("private pickup objects are protected by delivery ownership at the route", async () => {
   if (!pool) return;
-  await runMigrations();
-  server = spawn(
-    process.execPath,
-    ["../../node_modules/tsx/dist/cli.mjs", "src/server.ts"],
-    {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        NODE_ENV: "test",
-        API_PORT: String(API_PORT),
-      },
-      stdio: "ignore"
-    }
-  );
-
   try {
-    await waitForReady();
     const owner = await createUser();
     const other = await createUser();
     const delivery = await createPersistentDelivery({
       senderId: owner.id,
       receiverName: "Storage Receiver",
       receiverPhone: "+2349011111111",
-      receiverPin: "123456",
+      receiverPin: "1234",
       declaredValueMinor: 500000,
       pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.07, longitude: 7.40 } },
       dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
@@ -100,8 +84,6 @@ test("private pickup objects are protected by delivery ownership at the route", 
     assert.equal(trackingAllowed.status, 200);
     assert.equal(await trackingAllowed.text(), photo.toString());
   } finally {
-    server?.kill("SIGTERM");
-    server = null;
   }
 });
 
@@ -136,6 +118,21 @@ test("private KYC objects are restricted to the owning driver or admin", async (
   const adminResponse = await get(`/api/driver/documents/file/${filename}`, admin.token);
   assert.equal(adminResponse.status, 200);
   assert.equal(await adminResponse.text(), body.toString());
+});
+
+before(async () => {
+  if (!pool) return;
+  await runMigrations();
+  server = spawn(
+    process.execPath,
+    ["../../node_modules/tsx/dist/cli.mjs", "src/server.ts"],
+    {
+      cwd: process.cwd(),
+      env: { ...process.env, NODE_ENV: "test", API_PORT: String(API_PORT) },
+      stdio: "ignore"
+    }
+  );
+  await waitForReady();
 });
 
 after(async () => {

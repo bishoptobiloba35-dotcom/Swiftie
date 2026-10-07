@@ -14,6 +14,10 @@ export async function withDatabase<T>(fn: (client: PoolClient) => Promise<T>): P
   }
 }
 
+export function databaseEnabled(): boolean {
+  return Boolean(pool);
+}
+
 export async function pingDatabase(): Promise<boolean> {
   if (!pool) return false;
   const result = await pool.query("SELECT 1 AS ok");
