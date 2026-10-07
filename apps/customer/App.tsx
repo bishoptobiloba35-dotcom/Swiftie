@@ -738,7 +738,7 @@ export default function App() {
       });
       setDelivery(created);
       setTrackingCode(created.trackingCode);
-      const escrow = await api.createEscrow(created.id, serverQuote.totalMinor);
+      const escrow = await api.createEscrow(created.id);
       const payment = await api.payEscrow(created.id, "PAYSTACK_CARD", crypto.randomUUID());
       if (payment?.authorizationUrl) await WebBrowser.openBrowserAsync(payment.authorizationUrl);
       Alert.alert("Payment", "Complete payment. SwiftDrop will verify escrow from the payment provider webhook.");
