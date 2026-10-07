@@ -1,6 +1,7 @@
 import { pool } from "./database/db.js";
 
 const RELEASE_HOURS=72;
+const FLOAT_MIN_RESERVE_MINOR=500000000;
 
 export async function processPhase2EscrowReleases(): Promise<number> {
   if(!pool) return 0;
@@ -63,9 +64,12 @@ export async function processPhase2EscrowReleases(): Promise<number> {
       }
       const heldForSwiftDrop=Number(row.service_charge_minor)+Number(row.swiftdrop_margin_minor);
       if(heldForSwiftDrop>0){
-        const latest=(await client.query("SELECT balance_after_minor FROM float_transactions ORDER BY created_at DESC LIMIT 1")).rows[0];
-        const balance=Number(latest?.balance_after_minor ?? heldForSwiftDrop);
-        const next=Math.max(0,balance-heldForSwiftDrop);
+        const latest=(await client.query("SELECT balance_after_minor FROM float_transactions ORDER BY created_at DESC LIMIT 1 FOR UPDATE")).rows[0];
+        const balance=Number(latest?.balance_after_minor ?? 0);
+        const next=balance-heldForSwiftDrop;
+        if(!Number.isSafeInteger(balance) || next<FLOAT_MIN_RESERVE_MINOR){
+          throw new Error(`Insufficient SwiftDrop float reserve for 72-hour escrow release: order=${row.order_id} balance=${balance} required=${heldForSwiftDrop+FLOAT_MIN_RESERVE_MINOR}`);
+        }
         await client.query(
           `INSERT INTO float_transactions(type,amount_minor,balance_after_minor,order_id,metadata)
            VALUES('ESCROW_OUT',$1,$2,$3,$4::jsonb)
