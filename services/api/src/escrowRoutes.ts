@@ -1,3 +1,4 @@
+import { recoverOutstandingCourierClawbacks } from "./database/deliveryRepository.js";
 import { Router } from "express";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
@@ -315,6 +316,7 @@ router.post("/escrow/:orderId/pin", requireAuth(), async (req,res)=>{
       );
     }
     await client.query("COMMIT");
+    if(order.courier_user_id && Number(order.escrow_courier_share_minor)>0){ try { await recoverOutstandingCourierClawbacks(order.courier_user_id,Number(order.escrow_courier_share_minor),order.id); } catch(error){ console.error(JSON.stringify({event:"courier_clawback_future_earnings_recovery_failed",orderId:order.id,error:error instanceof Error?error.message:"unknown"})); } }
     return res.status(200).json({state:"dispute_window",courierPayout:"instant",courierShareMinor:Number(order.escrow_courier_share_minor),disputeWindowUntil:disputeUntil.toISOString()});
   }catch(e){await client.query("ROLLBACK");return res.status(500).json({error:"Unable to confirm PIN",...(process.env.NODE_ENV === "test" ? {detail:e instanceof Error ? e.message : String(e)} : {})});}
   finally{client.release();}
