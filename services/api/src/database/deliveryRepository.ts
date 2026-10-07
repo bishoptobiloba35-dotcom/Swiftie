@@ -61,6 +61,9 @@ export async function createPayment(input: {
   currency?: string;
   collectionMode?: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
 }): Promise<PaymentRecord> {
+  if (input.collectionMode && input.collectionMode !== "SENDER_ESCROW") {
+    throw new Error("Cash-on-delivery is retired. Every order must use in-app escrow.");
+  }
   if (!pool) throw new Error("DATABASE_URL is not configured");
   const result = await pool.query(
     `INSERT INTO payments (delivery_id, provider, amount_minor, currency, status, collection_mode, escrow_status)
