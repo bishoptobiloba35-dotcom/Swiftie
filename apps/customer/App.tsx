@@ -113,7 +113,6 @@ export default function App() {
   const [widthCm, setWidthCm] = React.useState("");
   const [heightCm, setHeightCm] = React.useState("");
   const [isPerishable, setIsPerishable] = React.useState(false);
-  const paymentMode = "SENDER_ESCROW" as const;
   const [receiverConfirmPin, setReceiverConfirmPin] = React.useState("");
   const [receiverRatingStars, setReceiverRatingStars] = React.useState(0);
   const [receiverRatingComment, setReceiverRatingComment] = React.useState("");
@@ -722,7 +721,7 @@ export default function App() {
         receiverName: receiver.trim(),
         receiverPhone: phone.trim(),
         receiverPin,
-        paymentMode,
+        paymentMode: "SENDER_ESCROW",
         declaredValueMinor: Math.round(Number(declaredValue) * 100),
         includeProtection,
         weightKg: Number(weightKg),
