@@ -128,7 +128,7 @@ router.post("/escrow/:orderId/pin", requireAuth(), async (req,res)=>{
       const driver = (await client.query("SELECT user_id AS courier_user_id FROM drivers WHERE id=$1",[order.driver_id])).rows[0];
       order.courier_user_id = driver?.courier_user_id ?? null;
     }
-    if(!order)return res.status(404).json({error:"Order not found"});
+    if(!order){await client.query("ROLLBACK");return res.status(404).json({error:"Order not found"});}
     if(userId!==order.customer_id && userId!==order.courier_user_id)return res.status(403).json({error:"PIN confirmation not authorized"});
     if(order.escrow_payment_state==="paid_escrow"){
       await client.query("UPDATE escrow_ledgers SET state='arrived',updated_at=now() WHERE order_id=$1 AND state='paid_escrow'",[order.id]);
@@ -287,7 +287,7 @@ router.post("/wallet/withdraw", requireAuth(), async (req,res)=>{
   try{
     await client.query("BEGIN");
     const wallet=(await client.query("SELECT * FROM stakeholder_wallets WHERE user_id=$1 FOR UPDATE",[userId])).rows[0];
-    if(!wallet)return res.status(404).json({error:"Wallet not found"});
+    if(!wallet){await client.query("ROLLBACK");return res.status(404).json({error:"Wallet not found"});}
     if(Number(wallet.balance_minor)<parsed.data.amountMinor)return res.status(409).json({error:"Insufficient available balance"});
     const duplicate=(await client.query("SELECT * FROM payout_requests WHERE idempotency_key=$1",[parsed.data.idempotencyKey])).rows[0];
     if(duplicate){await client.query("COMMIT");return res.json({payout:duplicate});}
