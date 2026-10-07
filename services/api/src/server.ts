@@ -921,6 +921,49 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
     }
     const refundReference = String(event?.data?.refund_reference ?? event?.data?.id ?? "");
     if (transactionReference && databaseEnabled()) {
+      const escrowRefund = (await pool!.query(
+        `SELECT er.*,el.total_paid_minor,el.order_id AS escrow_order_id
+           FROM escrow_refunds er
+           JOIN escrow_ledgers el ON el.order_id=er.order_id
+          WHERE er.transaction_reference=$1
+            AND er.status NOT IN ('PROCESSED','FAILED')
+          ORDER BY er.created_at DESC LIMIT 1`,
+        [transactionReference]
+      )).rows[0];
+      if (escrowRefund) {
+        const refundStatus = String(event.event).replace("refund.", "").toUpperCase();
+        const providerAmount = Number(event?.data?.amount ?? 0);
+        const currency = String(event?.data?.currency ?? "NGN");
+        if (!Number.isSafeInteger(providerAmount) || providerAmount <= 0 || providerAmount !== Number(escrowRefund.amount_minor) || currency !== String(escrowRefund.currency)) {
+          await pool!.query(`UPDATE escrow_refunds SET status='FAILED',updated_at=now() WHERE id=$1 AND status NOT IN ('PROCESSED','FAILED')`,[escrowRefund.id]);
+          await recordDeliveryEvent({deliveryId: escrowRefund.order_id,eventType:"ESCROW_REFUND_RECONCILIATION_MISMATCH",metadata:{transactionReference,refundReference,providerAmount,currency,expectedAmount:Number(escrowRefund.amount_minor),expectedCurrency:escrowRefund.currency}}).catch(()=>{});
+          return res.status(200).json({received:true,reconciliationRequired:true});
+        }
+        await pool!.query(
+          `UPDATE escrow_refunds
+              SET provider_reference=COALESCE($2,provider_reference),status=$3,updated_at=now()
+            WHERE id=$1`,
+          [escrowRefund.id, refundReference || null, refundStatus]
+        );
+        if (refundStatus === "PROCESSED") {
+          const totals = (await pool!.query(
+            `SELECT COALESCE(SUM(amount_minor) FILTER (WHERE status='PROCESSED'),0) AS refunded
+               FROM escrow_refunds WHERE order_id=$1`,[escrowRefund.order_id]
+          )).rows[0];
+          const refunded = Number(totals?.refunded ?? 0);
+          const fullyRefunded = refunded >= Number(escrowRefund.total_paid_minor);
+          await pool!.query(
+            `UPDATE escrow_ledgers
+                SET state=CASE WHEN $2 >= total_paid_minor THEN 'refunded' ELSE 'disputed' END,
+                    updated_at=now()
+              WHERE order_id=$1 AND state IN ('disputed','dispute_window','paid_escrow','picked_up','in_transit','arrived','pin_confirmed')`,
+            [escrowRefund.order_id,refunded]
+          );
+          if (fullyRefunded) await pool!.query(`UPDATE deliveries SET escrow_payment_state='refunded',updated_at=now() WHERE id=$1`,[escrowRefund.order_id]);
+        }
+        await recordDeliveryEvent({deliveryId:escrowRefund.order_id,eventType:"ESCROW_REFUND_"+refundStatus,metadata:{transactionReference,refundReference,amountMinor:providerAmount}}).catch(()=>{});
+        return res.status(200).json({received:true});
+      }
       const result = await pool!.query("SELECT delivery_id FROM payments WHERE provider_reference=$1", [transactionReference]);
       const deliveryId = result.rows[0]?.delivery_id as string | undefined;
       if (deliveryId) {
@@ -1323,6 +1366,15 @@ app.post("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER"), async
   if (!reason) return res.status(400).json({ error: "Dispute reason is required" });
   const dispute = await createDispute(routeParam(req.params.id, "id"), userId, reason, description);
   if (!dispute) return res.status(409).json({ error: "A dispute already exists or database is unavailable" });
+  if (databaseEnabled()) {
+    await pool!.query(
+      `UPDATE escrow_ledgers
+          SET state=CASE WHEN state IN ('paid_escrow','picked_up','in_transit','arrived','pin_confirmed','dispute_window') THEN 'disputed' ELSE state END,
+              updated_at=now()
+        WHERE order_id=$1 AND state NOT IN ('released','refunded')`,
+      [routeParam(req.params.id, "id")]
+    );
+  }
   await recordDeliveryEvent({
     deliveryId: routeParam(req.params.id, "id"),
     eventType: "DISPUTE_OPENED",
@@ -1356,6 +1408,13 @@ app.post("/api/track/:trackingCode/dispute", async (req, res) => {
   if (delivery.status === "CANCELLED") return res.status(409).json({ error: "This delivery is cancelled" });
   const dispute = await createReceiverDispute(delivery.id, receiverPhone, reason, description);
   if (!dispute) return res.status(409).json({ error: "A dispute already exists or database is unavailable" });
+  await pool!.query(
+    `UPDATE escrow_ledgers
+        SET state=CASE WHEN state IN ('paid_escrow','picked_up','in_transit','arrived','pin_confirmed','dispute_window') THEN 'disputed' ELSE state END,
+            updated_at=now()
+      WHERE order_id=$1 AND state NOT IN ('released','refunded')`,
+    [delivery.id]
+  );
   await recordDeliveryEvent({
     deliveryId: delivery.id,
     eventType: "DISPUTE_OPENED",
@@ -1981,6 +2040,27 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
       return res.json({ dispute: resolved, refund: { status: refundStatus, amountMinor: refundAmountMinor, paymentType: "MARKETPLACE_ORDER" } });
     }
 
+    const escrowLedger = (await pool!.query(
+      `SELECT el.*,d.sender_id AS customer_user_id
+         FROM escrow_ledgers el JOIN deliveries d ON d.id=el.order_id
+        WHERE el.order_id=$1 FOR UPDATE`,
+      [routeParam(req.params.id, "id")]
+    )).rows[0];
+    if (escrowLedger) {
+      if (!escrowLedger.provider_reference) return res.status(409).json({ error: "Escrow provider transaction is not reconciled; refund is blocked until payment provenance is verified" });
+      const courierInstantPayout = (await pool!.query(
+        `SELECT 1 FROM wallet_transactions WHERE order_id=$1 AND type='COURIER_INSTANT_PAYOUT' LIMIT 1`,
+        [routeParam(req.params.id, "id")]
+      )).rowCount;
+      if (courierInstantPayout) {
+        return res.status(409).json({ error: "Courier instant payout has already been credited. Refund is blocked until the courier clawback workflow is completed." });
+      }
+      const existingEscrowRefund = (await pool!.query(
+        `SELECT id,status FROM escrow_refunds WHERE order_id=$1 AND status IN ('PENDING','PROCESSING','NEEDS_ATTENTION') LIMIT 1`,
+        [routeParam(req.params.id, "id")]
+      )).rows[0];
+      if (existingEscrowRefund) return res.status(409).json({ error: "An escrow refund is already in progress for this order" });
+    }
     const paymentBefore = await findPayment(routeParam(req.params.id, "id"));
     if (!paymentBefore) return res.status(409).json({ error: "No payment was found for this delivery" });
     const requestedAmount = Number(req.body?.refundAmountMinor);
@@ -2013,6 +2093,13 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
     }
     const refundReference = String(payload.data?.refund_reference ?? payload.data?.id ?? "");
     const refundStatus = String(payload.data?.status ?? "pending");
+    if (escrowLedger) {
+      await pool!.query(
+        `INSERT INTO escrow_refunds(order_id,transaction_reference,provider_reference,amount_minor,currency,status,dispute_id,initiated_by,note)
+         VALUES($1,$2,$3,$4,$5,$6,(SELECT id FROM disputes WHERE delivery_id=$1),$7,$8)`,
+        [routeParam(req.params.id, "id"),escrowLedger.provider_reference,refundReference || null,refundAmountMinor,escrowLedger.currency,refundStatus.toUpperCase()==='PROCESSED'?'PROCESSED':refundStatus.toUpperCase()==='FAILED'?'FAILED':refundStatus.toUpperCase()==='PROCESSING'?'PROCESSING':'PENDING',identity(req),note]
+      );
+    }
     await markPaymentRefund(routeParam(req.params.id, "id"), refundReference, refundStatus, refundAmountMinor);
     const dispute = await resolveDispute(routeParam(req.params.id, "id"), status, note);
     if (!dispute) return res.status(409).json({ error: "The dispute could not be resolved after refund initiation. Review the audit trail before retrying." });
