@@ -68,6 +68,7 @@ const migrations = [
   { id: "070_paystack_webhook_replay_safety", file: "068_paystack_webhook_replay_safety.sql" },
   { id: "071_escrow_courier_clawback", file: "071_escrow_courier_clawback.sql" },
   { id: "072_courier_clawback_liability", file: "072_courier_clawback_liability.sql" },
+  { id: "073_escrow_webhook_idempotency", file: "073_escrow_webhook_idempotency.sql" },
 ];
 
 export async function runMigrations(): Promise<void> {
