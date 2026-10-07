@@ -52,7 +52,10 @@ router.post("/escrow/create", requireAuth(), async (req, res) => {
     const baseFareMinor=Number(order.quote_base_fare_minor ?? 0);
     const serviceChargeMinor=Number(order.quote_service_fee_minor ?? 0);
     const protectionReserveMinor=Number(order.quote_protection_reserve_minor ?? 0);
-    if(!Number.isSafeInteger(totalPaidMinor)||totalPaidMinor<=0) return res.status(409).json({error:"Order has no authoritative payable total"});
+    if(!Number.isSafeInteger(totalPaidMinor)||totalPaidMinor<=0){
+      await client.query("ROLLBACK");
+      return res.status(409).json({error:"Order has no authoritative payable total"});
+    }
     const courierShareMinor=Math.floor(baseFareMinor*COURIER_SHARE_BPS/10000);
     const merchantShareMinor=0;
     const swiftdropMarginMinor=totalPaidMinor-courierShareMinor-serviceChargeMinor-protectionReserveMinor-merchantShareMinor;
@@ -86,7 +89,10 @@ router.post("/escrow/:orderId/pay", requireAuth(), async (req,res)=>{
     if(existing){await client.query("COMMIT");return res.status(200).json({payment:existing});}
     const amountMinor=Number(order.escrow_total_paid_minor);
     const user=(await client.query("SELECT email FROM users WHERE id=$1",[userId])).rows[0];
-    if(!user?.email){await client.query("ROLLBACK");return res.status(409).json({error:"Customer email is required for Paystack payment"});}
+    if(parsed.data.method!=="BANK_TRANSFER" && !user?.email){
+      await client.query("ROLLBACK");
+      return res.status(409).json({error:"Customer email is required for Paystack payment"});
+    }
     let providerReference=parsed.data.providerReference ?? null;
     let authorizationUrl:string|undefined;
     let accessCode:string|undefined;
@@ -241,6 +247,12 @@ router.post("/virtual-account/create", requireAuth(), async (req,res)=>{
      RETURNING *`,
     [userId,order.id,customerPayload.data.customer_code,data.account_name,data.account_number,data.bank?.name ?? null,data.bank?.id ? String(data.bank.id) : null,String(data.id ?? customerPayload.data.customer_code)]
   )).rows[0];
+  await pool!.query(
+    `INSERT INTO escrow_payment_attempts(order_id,method,provider_reference,amount_minor,idempotency_key)
+     VALUES($1,'BANK_TRANSFER',$2,$3,$4)
+     ON CONFLICT(idempotency_key) DO NOTHING`,
+    [order.id, null, Number(order.escrow_total_paid_minor), `dva:${order.id}`]
+  );
   return res.status(201).json({virtualAccount:saved,displayMessage:`Transfer ₦${(Number(order.escrow_total_paid_minor)/100).toLocaleString()} to ${data.account_number} (${data.bank?.name ?? "Paystack bank"})`});
 });
 
