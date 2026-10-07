@@ -388,21 +388,22 @@ router.post("/virtual-account/create", requireAuth(), async (req,res)=>{
     }
   }
 
-  const customerResponse=await fetch("https://api.paystack.co/customer",{method:"POST",headers,body:JSON.stringify({
-    email:user.email,first_name:firstName,last_name:lastName,phone:String(user.phone ?? "")
-  }),signal:AbortSignal.timeout(15_000)});
-  const customerPayload=await customerResponse.json() as any;
-  if(!customerResponse.ok||!customerPayload.status||!customerPayload.data?.customer_code){
-    await pool!.query("UPDATE virtual_accounts SET status='FAILED',updated_at=now() WHERE order_id=$1",[order.id]);
-    return res.status(502).json({error:customerPayload.message ?? "Unable to create Paystack customer for virtual account"});
+  let customerCode = String(provisioning.customer_code ?? "").trim();
+  if (!customerCode) {
+    const customerResponse=await fetch("https://api.paystack.co/customer",{method:"POST",headers,body:JSON.stringify({
+      email:user.email,first_name:firstName,last_name:lastName,phone:String(user.phone ?? "")
+    }),signal:AbortSignal.timeout(15_000)});
+    const customerPayload=await customerResponse.json() as any;
+    if(!customerResponse.ok||!customerPayload.status||!customerPayload.data?.customer_code){
+      await pool!.query("UPDATE virtual_accounts SET status='FAILED',updated_at=now() WHERE order_id=$1",[order.id]);
+      return res.status(502).json({error:customerPayload.message ?? "Unable to create Paystack customer for virtual account"});
+    }
+    customerCode=String(customerCode);
+    await pool!.query("UPDATE virtual_accounts SET customer_code=$2,updated_at=now() WHERE order_id=$1",[order.id,customerCode]);
   }
-  await pool!.query(
-    "UPDATE virtual_accounts SET customer_code=$2,updated_at=now() WHERE order_id=$1",
-    [order.id,customerPayload.data.customer_code]
-  );
 
   const dvaResponse=await fetch("https://api.paystack.co/dedicated_account",{method:"POST",headers,body:JSON.stringify({
-    customer:customerPayload.data.customer_code,
+    customer:customerCode,
     ...(preferredBank ? {preferred_bank:preferredBank} : {}),
     first_name:firstName,last_name:lastName,phone:user.phone
   }),signal:AbortSignal.timeout(15_000)});
@@ -421,7 +422,7 @@ router.post("/virtual-account/create", requireAuth(), async (req,res)=>{
     return res.status(202).json({
       status:"PROVISIONING",
       virtualAccount:(await pool!.query("SELECT * FROM virtual_accounts WHERE order_id=$1",[order.id])).rows[0],
-      customerCode:customerPayload.data.customer_code,
+      customerCode:customerCode,
       message:"Paystack is provisioning the dedicated virtual account. Retry shortly."
     });
   }
@@ -431,7 +432,7 @@ router.post("/virtual-account/create", requireAuth(), async (req,res)=>{
         SET customer_code=$2,account_name=$3,account_number=$4,bank_name=$5,bank_code=$6,provider_reference=$7,provider_slug=$8,status='ACTIVE',updated_at=now()
       WHERE order_id=$1
       RETURNING *`,
-    [order.id,customerPayload.data.customer_code,data.account_name,data.account_number,data.bank?.name ?? null,data.bank?.id ? String(data.bank.id) : null,String(data.id ?? customerPayload.data.customer_code),providerSlug]
+    [order.id,customerCode,data.account_name,data.account_number,data.bank?.name ?? null,data.bank?.id ? String(data.bank.id) : null,String(data.id ?? customerCode),providerSlug]
   )).rows[0];
   await pool!.query(
     `INSERT INTO escrow_payment_attempts(order_id,method,provider_reference,amount_minor,idempotency_key)

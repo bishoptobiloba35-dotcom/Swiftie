@@ -1214,6 +1214,64 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
     }
   }
 
+  if (databaseEnabled() && (event?.event === "dedicatedaccount.assign.success" || event?.event === "dedicatedaccount.assign.failed")) {
+    const dvaData = event?.data ?? {};
+    const customerCode = String(dvaData?.customer_code ?? "").trim();
+    const accountNumber = String(dvaData?.account_number ?? dvaData?.dedicated_account?.account_number ?? "").trim();
+    const providerSlug = String(dvaData?.bank?.slug ?? dvaData?.preferred_bank ?? dvaData?.dedicated_account?.bank?.slug ?? "").trim();
+    const providerReference = String(dvaData?.id ?? dvaData?.dedicated_account?.id ?? "").trim();
+    const client = await pool!.connect();
+    try {
+      await client.query("BEGIN");
+      const account = (await client.query(
+        `SELECT * FROM virtual_accounts
+           WHERE ($1 <> '' AND customer_code=$1)
+              OR ($2 <> '' AND provider_reference=$2)
+              OR ($3 <> '' AND account_number=$3)
+           ORDER BY CASE
+             WHEN $1 <> '' AND customer_code=$1 THEN 0
+             WHEN $2 <> '' AND provider_reference=$2 THEN 1
+             ELSE 2
+           END
+           LIMIT 1
+           FOR UPDATE`,
+        [customerCode, providerReference, accountNumber]
+      )).rows[0];
+      if (!account) { await client.query("COMMIT"); return res.status(200).json({ received: true, ignored: true }); }
+      if (event.event === "dedicatedaccount.assign.failed") {
+        await client.query(`UPDATE virtual_accounts SET status='FAILED',updated_at=now() WHERE id=$1 AND status='PROVISIONING'`,[account.id]);
+        await client.query("COMMIT");
+        return res.status(200).json({ received: true, dva: "failed" });
+      }
+      if (!customerCode || !accountNumber || !providerSlug) {
+        await client.query("ROLLBACK");
+        return res.status(500).json({ error: "Incomplete dedicated virtual account assignment payload" });
+      }
+      const updated=(await client.query(
+        `UPDATE virtual_accounts SET customer_code=$2,account_name=$3,account_number=$4,bank_name=$5,bank_code=$6,
+           provider_reference=COALESCE(NULLIF($7,''),provider_reference),provider_slug=$8,status='ACTIVE',updated_at=now()
+         WHERE id=$1 RETURNING order_id`,
+        [account.id,customerCode,dvaData.account_name ?? dvaData.dedicated_account?.account_name ?? null,accountNumber,
+         dvaData.bank?.name ?? dvaData.dedicated_account?.bank?.name ?? null,
+         dvaData.bank?.id ? String(dvaData.bank.id) : (dvaData.dedicated_account?.bank?.id ? String(dvaData.dedicated_account.bank.id) : null),
+         providerReference,providerSlug]
+      )).rows[0];
+      await client.query(
+        `INSERT INTO escrow_payment_attempts(order_id,method,provider_reference,amount_minor,idempotency_key)
+         SELECT $1,'BANK_TRANSFER',NULL,d.escrow_total_paid_minor,$2 FROM deliveries d
+          WHERE d.id=$1 AND d.escrow_total_paid_minor > 0
+         ON CONFLICT(idempotency_key) DO NOTHING`,
+        [updated.order_id,`dva:${updated.order_id}`]
+      );
+      await client.query("COMMIT");
+      return res.status(200).json({ received: true, dva: "active" });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error(JSON.stringify({ event:"dva_assignment_webhook_failed",error:error instanceof Error?error.message:"unknown" }));
+      return res.status(500).json({ error:"Dedicated virtual account processing failed" });
+    } finally { client.release(); }
+  }
+
   if (databaseEnabled() && (event?.event === "charge.success" || event?.event === "charge.failed")) {
     const escrowReference = String(event?.data?.reference ?? "");
     if (escrowReference) {
