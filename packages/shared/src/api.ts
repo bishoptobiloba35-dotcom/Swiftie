@@ -176,7 +176,7 @@ export class SwiftDropApi {
     if (!response.ok) throw new Error(data.error ?? "Unable to save rating");
   }
 
-  async confirmReceiver(deliveryId: string, receiverPhone: string, receiverPin: string): Promise<{ delivery: ApiDelivery; payoutAmountMinor?: number; escrowStatus?: string; paymentMode?: string; paymentRequired?: boolean; amountMinor?: number }> {
+  async confirmReceiver(deliveryId: string, receiverPhone: string, receiverPin: string): Promise<{ delivery: ApiDelivery; payoutAmountMinor?: number; escrowStatus?: string; paymentMode?: string }> {
     const response = await fetch(this.baseUrl + `/api/deliveries/${encodeURIComponent(deliveryId)}/receiver-confirm`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ receiverPhone, receiverPin })
     });
