@@ -1283,11 +1283,17 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
           `SELECT epa.id, epa.order_id, epa.amount_minor, epa.status, d.customer_id
              FROM escrow_payment_attempts epa
              JOIN deliveries d ON d.id=epa.order_id
-            WHERE epa.provider_reference=$1
-               OR epa.order_id IN (
-                 SELECT va.order_id FROM virtual_accounts va
-                  WHERE va.account_number=$2 AND va.status='ACTIVE'
-               )
+            WHERE epa.method='BANK_TRANSFER'
+              AND (
+                epa.provider_reference=$1
+                OR (
+                  $2 <> ''
+                  AND epa.order_id IN (
+                    SELECT va.order_id FROM virtual_accounts va
+                     WHERE va.account_number=$2 AND va.status='ACTIVE'
+                  )
+                )
+              )
             ORDER BY CASE WHEN epa.provider_reference=$1 THEN 0 ELSE 1 END
             LIMIT 1
             FOR UPDATE OF epa, d`,
