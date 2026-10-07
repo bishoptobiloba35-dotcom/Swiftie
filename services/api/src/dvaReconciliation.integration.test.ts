@@ -95,6 +95,75 @@ test("pending DVA transfers are periodically re-queried through Paystack", async
   }
 });
 
+
+test("funded escrow orders cannot create another payment attempt", async () => {
+  if (!pool) return;
+  await runMigrations();
+  const userId=randomUUID();
+  await pool.query(
+    `INSERT INTO users(id,role,full_name,phone,email,password_hash)
+     VALUES($1,'CUSTOMER','Funded Escrow Test',$2,$3,'not-used')`,
+    [userId,"+234806"+String(Date.now()).slice(-7),userId+"@example.test"]
+  );
+  const delivery=await createPersistentDelivery({
+    senderId:userId,
+    receiverName:"Receiver",
+    receiverPhone:"+2348012345678",
+    receiverPin:"1234",
+    declaredValueMinor:100000,
+    pickup:{label:"Pickup",formattedAddress:"Pickup",location:{latitude:9.07,longitude:7.40}},
+    dropoff:{label:"Dropoff",formattedAddress:"Dropoff",location:{latitude:9.08,longitude:7.41}},
+    weightKg:1,
+    dimensionsCm:{length:10,width:10,height:10},
+    isPerishable:false
+  });
+  await pool.query(
+    `INSERT INTO escrow_ledgers(order_id,total_paid_minor,state)
+     VALUES($1,100000,'paid_escrow')`,
+    [delivery.id]
+  );
+  await pool.query(
+    `UPDATE deliveries SET escrow_payment_state='paid_escrow',escrow_total_paid_minor=100000 WHERE id=$1`,
+    [delivery.id]
+  );
+  await pool.query(
+    `INSERT INTO escrow_payment_attempts(order_id,method,amount_minor,status,idempotency_key)
+     VALUES($1,'PAYSTACK_CARD',100000,'SUCCESS',$2)`,
+    [delivery.id,"funded-"+delivery.id]
+  );
+
+  const state=(await pool.query(
+    `SELECT d.escrow_payment_state,el.state AS escrow_state
+       FROM deliveries d
+       LEFT JOIN escrow_ledgers el ON el.order_id=d.id
+      WHERE d.id=$1`,
+    [delivery.id]
+  )).rows[0];
+  assert.equal(state.escrow_payment_state,"paid_escrow");
+  assert.equal(state.escrow_state,"paid_escrow");
+
+  await pool.query(
+    `INSERT INTO escrow_payment_attempts(order_id,method,provider_reference,amount_minor,idempotency_key)
+     SELECT $1,'BANK_TRANSFER',NULL,d.escrow_total_paid_minor,$2
+       FROM deliveries d
+      WHERE d.id=$1
+        AND d.escrow_total_paid_minor > 0
+        AND d.escrow_payment_state='pending_payment'
+        AND NOT EXISTS (
+          SELECT 1 FROM escrow_payment_attempts existing
+           WHERE existing.order_id=d.id AND existing.status='SUCCESS'
+        )
+     ON CONFLICT(idempotency_key) DO NOTHING`,
+    [delivery.id,"dva-funded-"+delivery.id]
+  );
+
+  const attempts=(await pool.query(
+    `SELECT status,method FROM escrow_payment_attempts WHERE order_id=$1 ORDER BY created_at`,
+    [delivery.id]
+  )).rows;
+  assert.deepEqual(attempts,[{status:"SUCCESS",method:"PAYSTACK_CARD"}]);
+});
+
 after(async () => {
   if (pool) await pool.end();
 });
