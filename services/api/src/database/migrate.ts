@@ -63,6 +63,7 @@ const migrations = [
   { id: "064_swiftdrop_operational_controls", file: "064_swiftdrop_operational_controls.sql" },
   { id: "065_phase2_in_app_escrow", file: "065_phase2_in_app_escrow.sql" },
   { id: "066_phase2_settlement_release", file: "066_phase2_settlement_release.sql" },
+  { id: "067_dva_provisioning_recovery", file: "067_dva_provisioning_recovery.sql" },
 ];
 
 export async function runMigrations(): Promise<void> {
