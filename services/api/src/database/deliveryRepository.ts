@@ -1153,7 +1153,7 @@ export async function recoverCourierEscrowPayout(deliveryId: string): Promise<{ 
         [clawback.id]
       );
       await client.query("COMMIT");
-      return { recovered: false, amountMinor: amount, reason: "insufficient_courier_wallet_funds" };
+      await client.query("INSERT INTO escrow_courier_clawback_liabilities(courier_user_id,clawback_id,original_amount_minor,outstanding_amount_minor,status) SELECT sw.user_id,$1,$2,$2,'OUTSTANDING' FROM stakeholder_wallets sw WHERE sw.id=$3 ON CONFLICT(clawback_id) DO NOTHING",[clawback.id,amount,payout.wallet_id]); return { recovered: false, amountMinor: amount, reason: "insufficient_courier_wallet_funds", liabilityCreated: true };
     }
     const wallet = (await client.query(
       `UPDATE stakeholder_wallets
@@ -1187,7 +1187,7 @@ export async function recoverCourierEscrowPayout(deliveryId: string): Promise<{ 
   }
 }
 
-export async function prepareRefund(deliveryId: string, refundAmountMinor: number, verifiedLossMinor?: number): Promise<{ payment: PaymentRecord; payout: PayoutRecord | null; dispute: DisputeRecord } | null> {
+export async function recoverOutstandingCourierClawbacks(courierUserId: string, incomingAmountMinor: number, orderId?: string): Promise<{ appliedMinor:number; remainingIncomingMinor:number }> {\n  if (!pool || !Number.isSafeInteger(incomingAmountMinor) || incomingAmountMinor <= 0) return { appliedMinor:0, remainingIncomingMinor:Math.max(0,incomingAmountMinor||0) };\n  const client=await pool.connect();\n  try { await client.query("BEGIN"); const rows=(await client.query("SELECT id,outstanding_amount_minor FROM escrow_courier_clawback_liabilities WHERE courier_user_id=$1 AND status='OUTSTANDING' AND outstanding_amount_minor>0 ORDER BY created_at ASC FOR UPDATE",[courierUserId])).rows; let remaining=incomingAmountMinor, applied=0; for(const row of rows){ if(remaining<=0) break; const take=Math.min(remaining,Number(row.outstanding_amount_minor)); await client.query("UPDATE escrow_courier_clawback_liabilities SET outstanding_amount_minor=outstanding_amount_minor-$2,recovered_amount_minor=recovered_amount_minor+$2,status=CASE WHEN outstanding_amount_minor-$2=0 THEN 'RECOVERED' ELSE 'OUTSTANDING' END,recovered_at=CASE WHEN outstanding_amount_minor-$2=0 THEN now() ELSE recovered_at END,updated_at=now() WHERE id=$1",[row.id,take]); await client.query("INSERT INTO wallet_transactions(wallet_id,order_id,type,direction,amount_minor,balance_after_minor,idempotency_key,metadata) SELECT id,$2,'COURIER_ESCROW_CLAWBACK','DEBIT',$3,balance_minor,$4,$5::jsonb FROM stakeholder_wallets WHERE user_id=$1 ON CONFLICT(idempotency_key) DO NOTHING",[courierUserId,orderId??null,take,"future-clawback-"+row.id+"-"+(orderId??"wallet"),JSON.stringify({reason:"future_earnings_clawback",liabilityId:row.id})]); remaining-=take; applied+=take; } await client.query("COMMIT"); return {appliedMinor:applied,remainingIncomingMinor:remaining}; } catch(e){await client.query("ROLLBACK");throw e;} finally{client.release();}\n}\n\nexport async function prepareRefund(deliveryId: string, refundAmountMinor: number, verifiedLossMinor?: number): Promise<{ payment: PaymentRecord; payout: PayoutRecord | null; dispute: DisputeRecord } | null> {
   if (!pool) return null;
   const client = await pool.connect();
   try {
