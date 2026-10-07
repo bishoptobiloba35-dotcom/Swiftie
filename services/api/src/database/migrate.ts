@@ -70,6 +70,7 @@ const migrations = [
   { id: "072_courier_clawback_liability", file: "072_courier_clawback_liability.sql" },
   { id: "073_escrow_webhook_idempotency", file: "073_escrow_webhook_idempotency.sql" },
   { id: "074_dva_requery_rate_limit", file: "074_dva_requery_rate_limit.sql" },
+  { id: "075_one_active_escrow_payment", file: "075_one_active_escrow_payment.sql" },
 ];
 
 export async function runMigrations(): Promise<void> {
