@@ -109,7 +109,7 @@ test("escrow payment attempts allow only one pending attempt per order", async (
   )).rows[0];
   const delivery=(await pool.query(
     `INSERT INTO deliveries(sender_id,tracking_code,receiver_name,receiver_phone,pickup_address,dropoff_address,receiver_pin_hash,status,payment_mode,escrow_payment_state,escrow_total_paid_minor,declared_value_minor)
-     VALUES($1,$2,'Escrow Test Receiver','08000000000','Test Pickup','Test Dropoff','test-pin-hash','PENDING','SENDER_ESCROW','pending_payment',100000,100000) RETURNING id`,
+     VALUES($1,$2,'Escrow Test Receiver','08000000000','Test Pickup','Test Dropoff','test-pin-hash','CREATED','SENDER_ESCROW','pending_payment',100000,100000) RETURNING id`,
     [user.id,`ESC-ACTIVE-${Date.now()}`]
   )).rows[0];
   await pool.query(
