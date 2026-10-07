@@ -20,6 +20,13 @@ function authUser(req: any): string {
   return id;
 }
 
+function normalizeNigeriaPhone(phone: string): string {
+  const digits=phone.replace(/\D/g,"");
+  if(digits.startsWith("234")) return digits;
+  if(digits.startsWith("0")) return "234"+digits.slice(1);
+  return digits;
+}
+
 async function ensureWallet(userId: string, type: string) {
   const result = await pool!.query(
     `INSERT INTO stakeholder_wallets(user_id, stakeholder_type)
@@ -82,7 +89,7 @@ router.post("/escrow/:orderId/pay", requireAuth(), async (req,res)=>{
   const client=await pool!.connect();
   try{
     await client.query("BEGIN");
-    const order=(await client.query("SELECT id,customer_id,escrow_total_paid_minor FROM deliveries WHERE id=$1 FOR UPDATE",[orderId])).rows[0];
+    const order=(await client.query("SELECT id,customer_id,receiver_phone,tracking_code,escrow_total_paid_minor FROM deliveries WHERE id=$1 FOR UPDATE",[orderId])).rows[0];
     if(!order){await client.query("ROLLBACK");return res.status(404).json({error:"Order not found"});}
     if(order.customer_id!==userId){await client.query("ROLLBACK");return res.status(403).json({error:"Order access denied"});}
     const existing=(await client.query("SELECT * FROM escrow_payment_attempts WHERE idempotency_key=$1",[parsed.data.idempotencyKey])).rows[0];
@@ -96,6 +103,8 @@ router.post("/escrow/:orderId/pay", requireAuth(), async (req,res)=>{
     let providerReference=parsed.data.providerReference ?? null;
     let authorizationUrl:string|undefined;
     let accessCode:string|undefined;
+    let ussdCode:string|undefined;
+    let smsMessageId:string|undefined;
     if(parsed.data.method!=="BANK_TRANSFER"){
       const secret=process.env.PAYSTACK_SECRET_KEY;
       if(!secret){await client.query("ROLLBACK");return res.status(503).json({error:"Paystack payment configuration is not ready"});}
@@ -107,13 +116,42 @@ router.post("/escrow/:orderId/pay", requireAuth(), async (req,res)=>{
       providerReference=String(payload.data.reference ?? reference);
       authorizationUrl=payload.data.authorization_url;
       accessCode=payload.data.access_code;
+      ussdCode=payload.data.ussd_code;
+      if(parsed.data.method==="SMS_LINK"){
+        const baseUrl=String(process.env.TERMII_BASE_URL ?? "").replace(/\/$/,"");
+        const apiKey=process.env.TERMII_API_KEY;
+        const senderId=process.env.TERMII_SENDER_ID;
+        if(!baseUrl||!apiKey||!senderId){
+          await client.query("ROLLBACK");
+          return res.status(503).json({error:"Termii SMS payment-link configuration is not ready"});
+        }
+        const smsResponse=await fetch(baseUrl+"/api/sms/send",{
+          method:"POST",
+          headers:{"content-type":"application/json"},
+          body:JSON.stringify({
+            api_key:apiKey,
+            to:normalizeNigeriaPhone(String(order.receiver_phone)),
+            from:senderId,
+            sms:`Your parcel #${order.tracking_code} is arriving. Pay ₦${(amountMinor/100).toLocaleString()}: ${authorizationUrl}`,
+            type:"plain",
+            channel:"dnd"
+          }),
+          signal:AbortSignal.timeout(10000)
+        });
+        const smsPayload=await smsResponse.json() as any;
+        if(!smsResponse.ok||String(smsPayload.code ?? "").toLowerCase()!=="ok"){
+          await client.query("ROLLBACK");
+          return res.status(502).json({error:smsPayload.message ?? "Unable to send SMS payment link"});
+        }
+        smsMessageId=String(smsPayload.message_id ?? smsPayload.message_id_str ?? "");
+      }
     }
     const payment=(await client.query(
       "INSERT INTO escrow_payment_attempts(order_id,method,provider_reference,amount_minor,idempotency_key) VALUES($1,$2,$3,$4,$5) RETURNING *",
       [orderId,parsed.data.method,providerReference,amountMinor,parsed.data.idempotencyKey]
     )).rows[0];
     await client.query("COMMIT");
-    return res.status(201).json({payment,authorizationUrl,accessCode,amountMinor,confirmation:"Payment will be confirmed from the verified provider webhook."});
+    return res.status(201).json({payment,authorizationUrl,accessCode,ussdCode,smsMessageId,amountMinor,confirmation:"Payment will be confirmed from the verified provider webhook."});
   }catch(e){await client.query("ROLLBACK");return res.status(500).json({error:"Unable to start escrow payment"});}
   finally{client.release();}
 });
