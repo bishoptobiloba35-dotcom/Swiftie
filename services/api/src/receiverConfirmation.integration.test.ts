@@ -71,6 +71,11 @@ test("receiver confirmation route verifies PIN and atomically releases escrow fo
        VALUES($1,100000,37500,5000,10000,37500,0,'paid_escrow')`,
       [delivery.id]
     );
+    await pool.query(
+      `INSERT INTO float_transactions(type,amount_minor,balance_after_minor,order_id,metadata)
+       VALUES('FUNDING',500000000,500000000,$1,'{"reason":"receiver_confirmation_test_float"}'::jsonb)`,
+      [delivery.id]
+    );
 
     const endpoint = `http://127.0.0.1:${API_PORT}/api/escrow/${delivery.id}/pin`;
     const token = signAccessToken({ userId: sender, role: "CUSTOMER" });
