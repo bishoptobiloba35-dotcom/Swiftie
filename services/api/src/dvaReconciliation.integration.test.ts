@@ -51,7 +51,7 @@ test("pending DVA transfers are periodically re-queried through Paystack", async
 
   await pool.query(
     `INSERT INTO escrow_payment_attempts(order_id,method,amount_minor,status,provider_reference,idempotency_key)
-     VALUES($1,'PAYSTACK_CARD',78750,'PENDING',$2,$3)
+     VALUES($1,'PAYSTACK_CARD',78750,'SUCCESS',$2,$3)
      ON CONFLICT(idempotency_key) DO NOTHING`,
     [order.id,"card-"+order.id,"card-attempt-"+order.id]
   );
@@ -108,8 +108,8 @@ test("escrow payment attempts allow only one pending attempt per order", async (
     ['Escrow Active Test',`escrow-active-${Date.now()}@example.test`,`080${String(Date.now()).slice(-8)}`]
   )).rows[0];
   const delivery=(await pool.query(
-    `INSERT INTO deliveries(sender_id,customer_id,status,payment_mode,escrow_payment_state,escrow_total_paid_minor)
-     VALUES($1,$1,'PENDING','SENDER_ESCROW','pending_payment',100000) RETURNING id`,
+    `INSERT INTO deliveries(sender_id,status,payment_mode,escrow_payment_state,escrow_total_paid_minor)
+     VALUES($1,'PENDING','SENDER_ESCROW','pending_payment',100000) RETURNING id`,
     [user.id]
   )).rows[0];
   await pool.query(
