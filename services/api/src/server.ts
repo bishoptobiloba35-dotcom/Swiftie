@@ -7,7 +7,8 @@ import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
-import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, listDeliveryProofs, saveDeliveryProof, hasRequiredDropoffProofs, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, confirmReceiverOnDeliveryPaymentDue, settleReceiverPaymentAndReleasePayout, reservePaymentInitialization, savePaymentCheckoutSession, findPayoutByProviderReference, claimPaystackWebhookEvent, retryFailedPayout, flagPayoutReconciliationMismatch } from "./database/deliveryRepository.js";
+import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, listDeliveryProofs, saveDeliveryProof, hasRequiredDropoffProofs, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, confirmReceiverOnDeliveryPaymentDue, settleReceiverPaymentAndReleasePayout, reservePaymentInitialization, savePaymentCheckoutSession, findPayoutByProviderReference, claimPaystackWebhookEvent,
+  finalizePaystackWebhookEvent, retryFailedPayout, flagPayoutReconciliationMismatch } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
 import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, listSupportTicketMessages, recordAdminSupportReply, prepareRefund, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
@@ -782,6 +783,22 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
     }));
   }
   if (duplicateWebhook) return res.status(200).json({ received: true, duplicate: true });
+
+  // A webhook may legitimately be retried after a transient 5xx. Finalize the
+  // durable claim from the actual HTTP outcome so failed processing never becomes
+  // an unrecoverable "duplicate".
+  res.once("finish", () => {
+    void finalizePaystackWebhookEvent(
+      webhookHash,
+      res.statusCode >= 200 && res.statusCode < 300 ? "COMPLETED" : "FAILED"
+    ).catch((error) => {
+      console.error(JSON.stringify({
+        event: "paystack_webhook_claim_finalization_failed",
+        webhookHash,
+        error: error instanceof Error ? error.message : "unknown"
+      }));
+    });
+  });
 
   if (typeof event?.event === "string" && event.event.startsWith("refund.")) {
     const transactionReference = String(event?.data?.transaction_reference ?? event?.data?.transaction?.reference ?? "");
