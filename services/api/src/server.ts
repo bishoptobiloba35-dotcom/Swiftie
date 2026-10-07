@@ -11,7 +11,7 @@ import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryFo
   finalizePaystackWebhookEvent, retryFailedPayout, flagPayoutReconciliationMismatch } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
-import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, listSupportTicketMessages, recordAdminSupportReply, prepareRefund, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
+import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, listSupportTicketMessages, recordAdminSupportReply, prepareRefund, recoverCourierEscrowPayout, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -2053,7 +2053,14 @@ app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), asyn
         [routeParam(req.params.id, "id")]
       )).rowCount;
       if (courierInstantPayout) {
-        return res.status(409).json({ error: "Courier instant payout has already been credited. Refund is blocked until the courier clawback workflow is completed." });
+        const clawback = await recoverCourierEscrowPayout(routeParam(req.params.id, "id"));
+        if (!clawback.recovered) {
+          return res.status(409).json({
+            error: "Courier instant payout must be recovered before the escrow refund can proceed.",
+            reason: clawback.reason,
+            amountMinor: clawback.amountMinor
+          });
+        }
       }
       const existingEscrowRefund = (await pool!.query(
         `SELECT id,status FROM escrow_refunds WHERE order_id=$1 AND status IN ('PENDING','PROCESSING','NEEDS_ATTENTION') LIMIT 1`,
