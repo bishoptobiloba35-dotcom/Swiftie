@@ -64,6 +64,7 @@ const migrations = [
   { id: "065_phase2_in_app_escrow", file: "065_phase2_in_app_escrow.sql" },
   { id: "066_phase2_settlement_release", file: "066_phase2_settlement_release.sql" },
   { id: "067_dva_provisioning_recovery", file: "067_dva_provisioning_recovery.sql" },
+  { id: "068_paystack_webhook_replay_safety", file: "068_paystack_webhook_replay_safety.sql" },
 ];
 
 export async function runMigrations(): Promise<void> {
