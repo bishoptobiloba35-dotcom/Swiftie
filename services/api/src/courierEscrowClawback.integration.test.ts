@@ -149,12 +149,12 @@ test("outstanding courier clawback is recovered from future earnings without a n
   assert.equal(firstRecovery.appliedMinor,100000);
   assert.equal(firstRecovery.remainingIncomingMinor,0);
   assert.equal(Number((await pool.query("SELECT balance_minor FROM stakeholder_wallets WHERE id=$1",[wallet.id])).rows[0].balance_minor),50000);
-  assert.equal(Number((await pool.query("SELECT outstanding_amount_minor FROM escrow_courier_clawback_liabilities WHERE id=$1",[liability.id])).rows[0].outstanding_amount_minor),50000);
+  assert.equal(Number((await pool.query("SELECT outstanding_amount_minor FROM escrow_courier_clawback_liabilities WHERE id=$1",[liability.id])).rows[0].outstanding_amount_minor),100000);
 
-  await pool.query("UPDATE stakeholder_wallets SET balance_minor=100000 WHERE id=$1",[wallet.id]);
+  await pool.query("UPDATE stakeholder_wallets SET balance_minor=150000 WHERE id=$1",[wallet.id]);
   await pool.query(
     `INSERT INTO wallet_transactions(wallet_id,order_id,type,direction,amount_minor,balance_after_minor,idempotency_key)
-     VALUES($1,$2,'COURIER_INSTANT_PAYOUT','CREDIT',50000,100000,$3)`,
+     VALUES($1,$2,'COURIER_INSTANT_PAYOUT','CREDIT',100000,150000,$3)`,
     [wallet.id,delivery.id,"future-earning-2-"+delivery.id]
   );
   const secondRecovery=await recoverOutstandingCourierClawbacks(courierId,50000,delivery.id);
