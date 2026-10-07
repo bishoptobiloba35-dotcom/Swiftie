@@ -890,13 +890,41 @@ export async function claimPaystackWebhookEvent(input: {
 }): Promise<boolean> {
   if (!pool) return false;
   const result = await pool.query(
-    `INSERT INTO paystack_webhook_events (payload_hash, event_type, provider_reference)
-     VALUES ($1,$2,$3)
-     ON CONFLICT (payload_hash) DO NOTHING
-     RETURNING id`,
-    [input.payloadHash, input.eventType, input.providerReference ?? null]
+    `INSERT INTO paystack_webhook_events
+       (payload_hash,event_type,provider_reference,processing_status,received_at)
+     VALUES ($1,$2,$3,'PROCESSING',now())
+     ON CONFLICT (payload_hash) DO UPDATE
+       SET processing_status=CASE
+             WHEN paystack_webhook_events.processing_status='FAILED'
+               OR (paystack_webhook_events.processing_status='PROCESSING'
+                   AND paystack_webhook_events.received_at < now()-interval '5 minutes')
+             THEN 'PROCESSING'
+             ELSE paystack_webhook_events.processing_status
+           END,
+           event_type=EXCLUDED.event_type,
+           provider_reference=COALESCE(paystack_webhook_events.provider_reference,EXCLUDED.provider_reference)
+       WHERE paystack_webhook_events.processing_status='FAILED'
+          OR (paystack_webhook_events.processing_status='PROCESSING'
+              AND paystack_webhook_events.received_at < now()-interval '5 minutes')
+       RETURNING id`,
+    [input.payloadHash,input.eventType,input.providerReference ?? null]
   );
   return Boolean(result.rowCount);
+}
+
+export async function finalizePaystackWebhookEvent(
+  payloadHash: string,
+  outcome: "COMPLETED" | "FAILED"
+): Promise<void> {
+  if (!pool) return;
+  await pool.query(
+    `UPDATE paystack_webhook_events
+        SET processing_status=$2,
+            completed_at=CASE WHEN $2='COMPLETED' THEN now() ELSE completed_at END,
+            failed_at=CASE WHEN $2='FAILED' THEN now() ELSE failed_at END
+      WHERE payload_hash=$1`,
+    [payloadHash,outcome]
+  );
 }
 
 export async function markPayoutReleased(deliveryId: string, providerReference: string): Promise<PayoutRecord | null> {
