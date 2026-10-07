@@ -209,13 +209,19 @@ router.post("/escrow/:orderId/pin", requireAuth(), async (req,res)=>{
       [order.id,disputeUntil]
     );
     if(Number(order.escrow_courier_share_minor)>0){
-      const floatLatest=(await client.query("SELECT balance_after_minor FROM float_transactions ORDER BY created_at DESC LIMIT 1")).rows[0];
-      const floatBalance=Number(floatLatest?.balance_after_minor ?? Number(order.escrow_total_paid_minor));
+      const floatLatest=(await client.query("SELECT balance_after_minor FROM float_transactions ORDER BY created_at DESC LIMIT 1 FOR UPDATE")).rows[0];
+      const floatBalance=Number(floatLatest?.balance_after_minor ?? 0);
       const courierAmount=Number(order.escrow_courier_share_minor);
+      const floatReserve=500000000;
+      const nextFloatBalance=floatBalance-courierAmount;
+      if(!Number.isSafeInteger(floatBalance) || nextFloatBalance<floatReserve){
+        await client.query("ROLLBACK");
+        return res.status(503).json({error:"Courier payout is temporarily unavailable because the protected settlement float is below its reserve"});
+      }
       await client.query(
         `INSERT INTO float_transactions(type,amount_minor,balance_after_minor,order_id,metadata)
          VALUES('PAYOUT',$1,$2,$3,'{"reason":"courier_pin_instant_payout"}'::jsonb)`,
-        [courierAmount,Math.max(0,floatBalance-courierAmount),order.id]
+        [courierAmount,nextFloatBalance,order.id]
       );
     }
     if(order.courier_user_id && Number(order.escrow_courier_share_minor)>0){
