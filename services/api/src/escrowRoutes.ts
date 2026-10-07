@@ -493,10 +493,10 @@ router.post("/wallet/withdraw", requireAuth(), async (req,res)=>{
     // Paystack transfer references are provider identifiers, not client idempotency keys.
     // Generate a server-authoritative, provider-compliant lowercase reference so arbitrary
     // client idempotency-key casing/characters can never make the transfer invalid.
-    const providerReference = createWalletPayoutProviderReference();
+    const walletProviderReference = createWalletPayoutProviderReference();
     const payout=(await client.query(
       "INSERT INTO payout_requests(wallet_id,user_id,amount_minor,idempotency_key,status,provider_reference) VALUES($1,$2,$3,$4,'PROCESSING',$5) ON CONFLICT(idempotency_key) DO NOTHING RETURNING *",
-      [wallet.id,userId,parsed.data.amountMinor,parsed.data.idempotencyKey,providerReference]
+      [wallet.id,userId,parsed.data.amountMinor,parsed.data.idempotencyKey,walletProviderReference]
     )).rows[0];
     if(!payout){await client.query("ROLLBACK");return res.status(409).json({error:"Payout request could not be reserved"});}
     await client.query("UPDATE stakeholder_wallets SET balance_minor=balance_minor-$2,pending_minor=pending_minor+$2,updated_at=now() WHERE id=$1",[wallet.id,parsed.data.amountMinor]);
