@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { pool } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
 import { processPhase2EscrowReleases } from "./phase2EscrowWorker.js";
+import { createPersistentDelivery } from "./database/deliveryRepository.js";
 
 test("72-hour escrow release refuses to consume the protected float reserve", async () => {
   if (!pool) return;
@@ -17,17 +18,31 @@ test("72-hour escrow release refuses to consume the protected float reserve", as
      VALUES($1,'CUSTOMER','Float Reserve Test',$2,$3,'not-used')`,
     [userId,"+234806"+String(process.pid).slice(-7),userId+"@example.test"]
   );
+  const delivery=await createPersistentDelivery({
+    senderId:userId,
+    receiverName:"Float Receiver",
+    receiverPhone:"+2348012345678",
+    receiverPin:"1234",
+    declaredValueMinor:1000000,
+    pickup:{label:"Pickup",formattedAddress:"Pickup",location:{latitude:9.07,longitude:7.40}},
+    dropoff:{label:"Dropoff",formattedAddress:"Dropoff",location:{latitude:9.08,longitude:7.41}},
+    weightKg:1,
+    dimensionsCm:{length:10,width:10,height:10},
+    isPerishable:false
+  });
+  const orderId=delivery.id;
   await pool.query(
-    `INSERT INTO deliveries(
-       id,tracking_code,sender_id,receiver_name,receiver_phone,receiver_pin_hash,
-       payment_mode,payment_on_delivery,status,escrow_payment_state,
-       escrow_total_paid_minor,escrow_courier_share_minor,
-       escrow_service_charge_minor,escrow_protection_reserve_minor,
-       escrow_swiftdrop_margin_minor,escrow_merchant_share_minor
-     ) VALUES($1,$3,$2,'Receiver','+2348012345678','hash',
-       'SENDER_ESCROW',false,'DELIVERED','dispute_window',
-       1000000,500000,50000,100000,350000,0)`,
-    [orderId,userId,trackingCode]
+    `UPDATE deliveries
+        SET status='DELIVERED',
+            escrow_payment_state='dispute_window',
+            escrow_total_paid_minor=1000000,
+            escrow_courier_share_minor=500000,
+            escrow_service_charge_minor=50000,
+            escrow_protection_reserve_minor=100000,
+            escrow_swiftdrop_margin_minor=350000,
+            escrow_merchant_share_minor=0
+      WHERE id=$1`,
+    [orderId]
   );
   await pool.query(
     `INSERT INTO escrow_ledgers(
