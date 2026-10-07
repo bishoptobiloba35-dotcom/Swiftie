@@ -1234,7 +1234,7 @@ export async function recoverOutstandingCourierClawbacks(courierUserId: string, 
       await client.query(
         `INSERT INTO wallet_transactions
           (wallet_id,order_id,type,direction,amount_minor,balance_after_minor,idempotency_key,metadata)
-         VALUES ($1,$2,'COURIER_ESCROW_CLAWBACK','DEBIT',$3,$4,$5,$6::jsonb)
+         VALUES ($1,$2::uuid,'COURIER_ESCROW_CLAWBACK','DEBIT',$3::bigint,$4::bigint,$5,$6::jsonb)
          ON CONFLICT(idempotency_key) DO NOTHING`,
         [wallet.id, orderId ?? null, take, nextBalance, idempotencyKey, JSON.stringify({
           reason: "future_earnings_clawback", liabilityId: row.id, recoveredAmountMinor: take, remainingLiabilityMinor: nextOutstanding
