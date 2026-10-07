@@ -99,6 +99,14 @@ router.post("/escrow/:orderId/pay", requireAuth(), async (req,res)=>{
     if(order.customer_id!==userId){await client.query("ROLLBACK");return res.status(403).json({error:"Order access denied"});}
     const existing=(await client.query("SELECT * FROM escrow_payment_attempts WHERE idempotency_key=$1",[parsed.data.idempotencyKey])).rows[0];
     if(existing){await client.query("COMMIT");return res.status(200).json({payment:existing});}
+    const active=(await client.query(
+      "SELECT * FROM escrow_payment_attempts WHERE order_id=$1 AND status='PENDING' ORDER BY created_at DESC LIMIT 1 FOR UPDATE",
+      [orderId]
+    )).rows[0];
+    if(active){
+      await client.query("COMMIT");
+      return res.status(409).json({error:"An escrow payment is already pending for this order.",payment:active});
+    }
     const amountMinor=Number(order.escrow_total_paid_minor);
     const user=(await client.query("SELECT email FROM users WHERE id=$1",[userId])).rows[0];
     if(parsed.data.method!=="BANK_TRANSFER" && !user?.email){
