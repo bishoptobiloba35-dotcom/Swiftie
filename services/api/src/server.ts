@@ -33,7 +33,7 @@ import { reconcilePendingBuyOrderPayments } from "./buyOrderPaymentWorker.js";
 import { recordHttpMetric, renderPrometheusMetrics } from "./metrics.js";
 import { reportExternalError } from "./errorTracking.js";
 import { processPhase2EscrowReleases, reconcilePhase2Float } from "./phase2EscrowWorker.js";
-import escrowRoutes from "./escrowRoutes.js";
+import escrowRoutes, { reconcileProcessingWalletPayouts } from "./escrowRoutes.js";
 
 const app = express();
 
@@ -960,20 +960,31 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
       const status = event.event === "transfer.success" ? "RELEASED" : event.event === "transfer.failed" ? "FAILED" : "CANCELLED";
       const payout = await updatePayoutProviderStatus(reference,status,failureReason,Number(event?.data?.amount),String(event?.data?.currency ?? ""));
       if(payout) await recordDeliveryEvent({deliveryId:payout.deliveryId,eventType:"PAYOUT_"+status,metadata:{provider:"paystack",reference}});
-      const walletPayout=(await pool!.query(
-        "SELECT pr.*,sw.id AS wallet_id FROM payout_requests pr JOIN stakeholder_wallets sw ON sw.id=pr.wallet_id WHERE pr.provider_reference=$1 FOR UPDATE",
-        [reference]
-      )).rows[0];
-      if(walletPayout){
-        const amount=Number(walletPayout.amount_minor);
-        if(event.event==="transfer.success"){
-          await pool!.query("UPDATE payout_requests SET status='RELEASED',processed_at=COALESCE(processed_at,now()),updated_at=now() WHERE id=$1 AND status='PROCESSING'",[walletPayout.id]);
-          await pool!.query("UPDATE stakeholder_wallets SET pending_minor=GREATEST(0,pending_minor-$2),updated_at=now() WHERE id=$1",[walletPayout.wallet_id,amount]);
-        }else{
-          await pool!.query("UPDATE payout_requests SET status='FAILED',failure_reason=$2,processed_at=COALESCE(processed_at,now()),updated_at=now() WHERE id=$1 AND status='PROCESSING'",[walletPayout.id,failureReason ?? "Paystack transfer failed"]);
-          await pool!.query("UPDATE stakeholder_wallets SET balance_minor=balance_minor+$2,pending_minor=GREATEST(0,pending_minor-$2),updated_at=now() WHERE id=$1",[walletPayout.wallet_id,amount]);
+      const walletClient=await pool!.connect();
+      try{
+        await walletClient.query("BEGIN");
+        const walletPayout=(await walletClient.query(
+          "SELECT pr.*,sw.id AS wallet_id,sw.currency FROM payout_requests pr JOIN stakeholder_wallets sw ON sw.id=pr.wallet_id WHERE pr.provider_reference=$1 FOR UPDATE OF pr,sw",
+          [reference]
+        )).rows[0];
+        if(walletPayout && walletPayout.status==="PROCESSING"){
+          const amount=Number(walletPayout.amount_minor);
+          const currencyMatches=providerCurrency===String(walletPayout.currency ?? "NGN");
+          const amountMatches=providerAmount===amount;
+          if(event.event==="transfer.success" && amountMatches && currencyMatches){
+            await walletClient.query("UPDATE payout_requests SET status='RELEASED',processed_at=COALESCE(processed_at,now()),failure_reason=NULL,updated_at=now() WHERE id=$1 AND status='PROCESSING'",[walletPayout.id]);
+            await walletClient.query("UPDATE stakeholder_wallets SET pending_minor=GREATEST(0,pending_minor-$2),updated_at=now() WHERE id=$1",[walletPayout.wallet_id,amount]);
+          }else{
+            const reason=!amountMatches || !currencyMatches ? "Paystack transfer amount or currency mismatch" : (failureReason ?? "Paystack transfer failed");
+            await walletClient.query("UPDATE payout_requests SET status='FAILED',failure_reason=$2,processed_at=COALESCE(processed_at,now()),updated_at=now() WHERE id=$1 AND status='PROCESSING'",[walletPayout.id,reason]);
+            await walletClient.query("UPDATE stakeholder_wallets SET balance_minor=balance_minor+$2,pending_minor=GREATEST(0,pending_minor-$2),updated_at=now() WHERE id=$1",[walletPayout.wallet_id,amount]);
+          }
         }
-      }
+        await walletClient.query("COMMIT");
+      }catch(error){
+        await walletClient.query("ROLLBACK");
+        console.error(JSON.stringify({event:"wallet_payout_webhook_reconciliation_failed",reference,error:error instanceof Error?error.message:"unknown"}));
+      }finally{walletClient.release();}
     }
     return res.status(200).json({ received: true });
   }
@@ -2617,6 +2628,10 @@ async function startServer() {
       const hour = new Date().getHours();
       if (hour === 18) void reconcilePhase2Float().catch(() => {});
     }, 60_000);
+    const phase2WalletPayoutReconciliationWorker = setInterval(() => {
+      void reconcileProcessingWalletPayouts().catch(() => {});
+    }, 60_000);
+    void reconcileProcessingWalletPayouts().catch(() => {});
     const recurringDispatchWorker = setInterval(() => {
       void processRecurringDispatches().catch(() => {});
     }, 60_000);
@@ -2649,6 +2664,7 @@ async function startServer() {
     recurringDispatchWorker.unref();
     phase2EscrowWorker.unref();
     phase2FloatReconciliationWorker.unref();
+    phase2WalletPayoutReconciliationWorker.unref();
   }
   httpServer.listen(port, () => console.log(`SwiftDrop API listening on port ${port}`));
 }
