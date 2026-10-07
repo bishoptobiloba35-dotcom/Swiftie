@@ -9,7 +9,7 @@ export async function processPhase2EscrowReleases(): Promise<number> {
   try{
     await client.query("BEGIN");
     const rows=(await client.query(
-      `SELECT el.*,d.merchant_user_id
+      `SELECT el.*,d.merchant_user_id,d.sender_id AS customer_user_id
          FROM escrow_ledgers el
          JOIN deliveries d ON d.id=el.order_id
         WHERE el.state='dispute_window'
@@ -40,7 +40,28 @@ export async function processPhase2EscrowReleases(): Promise<number> {
           [wallet.id,row.order_id,merchantShare,Number(balance.balance_minor),`merchant-t72-${row.order_id}`]
         );
       }
-      const heldForSwiftDrop=Number(row.service_charge_minor)+Number(row.protection_reserve_minor)+Number(row.swiftdrop_margin_minor);
+      const protectionReserve=Number(row.protection_reserve_minor);
+      if(row.customer_user_id && protectionReserve>0){
+        const wallet=(await client.query(
+          `INSERT INTO stakeholder_wallets(user_id,stakeholder_type,pending_minor,balance_minor)
+           VALUES($1,'CUSTOMER',0,0)
+           ON CONFLICT(user_id) DO UPDATE SET stakeholder_type='CUSTOMER'
+           RETURNING id`,
+          [row.customer_user_id]
+        )).rows[0];
+        await client.query(
+          "UPDATE stakeholder_wallets SET balance_minor=balance_minor+$2,updated_at=now() WHERE id=$1",
+          [wallet.id,protectionReserve]
+        );
+        const balance=(await client.query("SELECT balance_minor FROM stakeholder_wallets WHERE id=$1",[wallet.id])).rows[0];
+        await client.query(
+          `INSERT INTO wallet_transactions(wallet_id,order_id,type,direction,amount_minor,balance_after_minor,idempotency_key,metadata)
+           VALUES($1,$2,'PROTECTION_RESERVE_RELEASE','CREDIT',$3,$4,$5,'{"reason":"successful_delivery_72_hour_release"}'::jsonb)
+           ON CONFLICT(idempotency_key) DO NOTHING`,
+          [wallet.id,row.order_id,protectionReserve,Number(balance.balance_minor),`protection-release-${row.order_id}`]
+        );
+      }
+      const heldForSwiftDrop=Number(row.service_charge_minor)+Number(row.swiftdrop_margin_minor);
       if(heldForSwiftDrop>0){
         const latest=(await client.query("SELECT balance_after_minor FROM float_transactions ORDER BY created_at DESC LIMIT 1")).rows[0];
         const balance=Number(latest?.balance_after_minor ?? heldForSwiftDrop);
