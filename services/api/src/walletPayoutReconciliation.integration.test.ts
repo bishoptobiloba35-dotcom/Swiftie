@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { pool } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
-import { reconcileProcessingWalletPayouts } from "./escrowRoutes.js";
+import { reconcileProcessingWalletPayouts, createWalletPayoutProviderReference } from "./escrowRoutes.js";
 
-test("wallet payout reconciliation releases an exact Paystack transfer once and is idempotent", async () => {
+test("wallet payout provider references are server-generated and Paystack-compliant", () => {\n  for (let i = 0; i < 20; i += 1) {\n    const reference = createWalletPayoutProviderReference();\n    assert.match(reference, /^sd_wallet_[a-f0-9]{32}$/);\n    assert.ok(reference.length >= 16 && reference.length <= 50);\n  }\n});\n\ntest("wallet payout reconciliation releases an exact Paystack transfer once and is idempotent", async () => {
   if (!pool) return;
   await runMigrations();
   const userId=randomUUID();
