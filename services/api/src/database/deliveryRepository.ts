@@ -15,7 +15,7 @@ export type PaymentRecord = {
   currency: string;
   status: "PENDING" | "AUTHORIZED" | "HELD" | "RELEASED" | "REFUNDED" | "FAILED";
   escrowStatus?: "PENDING" | "HELD" | "RELEASED" | "REFUNDED" | "NOT_APPLICABLE";
-  collectionMode: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
+  collectionMode: "SENDER_ESCROW";
   createdAt: string;
   refundReference?: string;
   refundStatus?: string;
@@ -43,7 +43,7 @@ function paymentFromRow(row: any): PaymentRecord {
     currency: row.currency,
     status: row.status,
     escrowStatus: row.escrow_status ?? undefined,
-    collectionMode: row.collection_mode === "RECEIVER_ON_DELIVERY" ? "RECEIVER_ON_DELIVERY" : "SENDER_ESCROW",
+    collectionMode: "SENDER_ESCROW",
     refundReference: row.refund_reference ?? undefined,
     refundStatus: row.refund_status ?? undefined,
     refundAmountMinor: row.refund_amount_minor == null ? undefined : Number(row.refund_amount_minor),
@@ -59,7 +59,7 @@ export async function createPayment(input: {
   provider: string;
   amountMinor: number;
   currency?: string;
-  collectionMode?: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
+  collectionMode?: "SENDER_ESCROW";
 }): Promise<PaymentRecord> {
   if (input.collectionMode && input.collectionMode !== "SENDER_ESCROW") {
     throw new Error("Cash-on-delivery is retired. Every order must use in-app escrow.");
@@ -236,7 +236,7 @@ export type StoredDelivery = {
   pickupInstructions?: string;
   dropoffInstructions?: string;
   status: string;
-  paymentMode: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
+  paymentMode: "SENDER_ESCROW";
   exceptionStatus?: string;
   nextDeliveryAt?: string | null;
   driverId?: string;
@@ -279,7 +279,7 @@ function rowToDelivery(row: any): StoredDelivery {
     pickupInstructions: row.pickup_instructions ?? undefined,
     dropoffInstructions: row.dropoff_instructions ?? undefined,
     status: row.status,
-    paymentMode: row.payment_mode === "RECEIVER_ON_DELIVERY" ? "RECEIVER_ON_DELIVERY" : "SENDER_ESCROW",
+    paymentMode: "SENDER_ESCROW",
     exceptionStatus: row.exception_status ?? "NONE",
     nextDeliveryAt: row.next_delivery_at ? new Date(row.next_delivery_at).toISOString() : null,
     driverId: row.driver_id ?? undefined,
@@ -363,7 +363,7 @@ export async function createPersistentDelivery(input: {
   dimensionsCm: { length: number; width: number; height: number };
   isPerishable: boolean;
   declaredValueMinor: number;
-  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
+  paymentMode?: "SENDER_ESCROW";
   quote?: StoredDelivery["quote"];
 }): Promise<StoredDelivery> {
   if (input.paymentMode && input.paymentMode !== "SENDER_ESCROW") {
