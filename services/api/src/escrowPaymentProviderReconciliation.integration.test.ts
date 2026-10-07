@@ -68,6 +68,15 @@ test("pending Paystack escrow charge is recovered by provider verification", asy
     assert.equal(row.escrow_state,"paid_escrow");
     assert.equal(row.escrow_payment_state,"paid_escrow");
     assert.equal(row.payment_status,"HELD");
+    const floatEntry=(await pool.query(
+      `SELECT type,amount_minor,order_id,provider_reference
+         FROM float_transactions
+        WHERE provider_reference=$1`,[reference]
+    )).rows[0];
+    assert.equal(floatEntry.type,"ESCROW_IN");
+    assert.equal(Number(floatEntry.amount_minor),100000);
+    assert.equal(floatEntry.order_id,delivery.id);
+    assert.equal(floatEntry.provider_reference,reference);
   } finally {
     globalThis.fetch=originalFetch;
     if(originalSecret===undefined) delete process.env.PAYSTACK_SECRET_KEY;

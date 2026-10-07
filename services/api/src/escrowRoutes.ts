@@ -232,6 +232,24 @@ export async function reconcilePendingEscrowProviderPayments(): Promise<void> {
               SET status='HELD',escrow_status='HELD',provider_reference=COALESCE(provider_reference,$2),updated_at=now()
             WHERE delivery_id=$1 AND collection_mode='SENDER_ESCROW'`,[attempt.order_id,reference]
         );
+        const floatEntry=(await client.query(
+          `SELECT id FROM float_transactions
+             WHERE provider_reference=$1
+             LIMIT 1
+             FOR UPDATE`,[reference]
+        )).rows[0];
+        if(!floatEntry){
+          const floatLatest=(await client.query(
+            "SELECT balance_after_minor FROM float_transactions ORDER BY created_at DESC LIMIT 1 FOR UPDATE"
+          )).rows[0];
+          const floatBalance=Number(floatLatest?.balance_after_minor ?? 0);
+          if(!Number.isSafeInteger(floatBalance)) throw new Error("Invalid escrow float balance");
+          await client.query(
+            `INSERT INTO float_transactions(type,amount_minor,balance_after_minor,order_id,provider_reference,metadata)
+             VALUES('ESCROW_IN',$1,$2,$3,$4,'{"reason":"paystack_escrow_provider_reconciliation"}'::jsonb)`,
+            [Number(attempt.amount_minor),floatBalance+Number(attempt.amount_minor),attempt.order_id,reference]
+          );
+        }
         await client.query("COMMIT");
       }catch(error){
         await client.query("ROLLBACK");
