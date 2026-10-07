@@ -2628,6 +2628,10 @@ async function startServer() {
       const hour = new Date().getHours();
       if (hour === 18) void reconcilePhase2Float().catch(() => {});
     }, 60_000);
+    const dvaRequeryWorker = setInterval(() => {
+      void requeryPendingDvaAccounts().catch(() => {});
+    }, 120_000);
+    void requeryPendingDvaAccounts().catch(() => {});
     const phase2WalletPayoutReconciliationWorker = setInterval(() => {
       void reconcileProcessingWalletPayouts().catch(() => {});
     }, 60_000);
@@ -2664,6 +2668,7 @@ async function startServer() {
     recurringDispatchWorker.unref();
     phase2EscrowWorker.unref();
     phase2FloatReconciliationWorker.unref();
+    dvaRequeryWorker.unref();
     phase2WalletPayoutReconciliationWorker.unref();
   }
   httpServer.listen(port, () => console.log(`SwiftDrop API listening on port ${port}`));
