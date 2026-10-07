@@ -425,7 +425,7 @@ export default function App() {
     const lat = Number(marketplaceDropoffLat);
     const lng = Number(marketplaceDropoffLng);
     if (!marketplaceReceiverName.trim() || !marketplaceReceiverPhone.trim() || !/^\d{6}$/.test(marketplaceReceiverPin) || !marketplaceDropoffAddress.trim() || !Number.isFinite(lat) || !Number.isFinite(lng)) {
-      Alert.alert("Delivery details", "Enter receiver name, phone, a 6-digit PIN, and a valid drop-off address with GPS coordinates.");
+      Alert.alert("Delivery details", "Enter receiver name, phone, a 4-digit PIN, and a valid drop-off address with GPS coordinates.");
       return;
     }
     try {
@@ -763,24 +763,15 @@ export default function App() {
   }
 
   async function confirmReceipt() {
-    if (!delivery || !trackingPhone.trim() || receiverConfirmPin.length !== 6) {
-      Alert.alert("Receipt confirmation", "Enter the receiver phone number and six-digit PIN.");
+    if (!delivery || receiverConfirmPin.length !== 4) {
+      Alert.alert("Receipt confirmation", "Enter the 4-digit receiver PIN.");
       return;
     }
     try {
-      const result = await api.confirmReceiver(delivery.id, trackingPhone.trim(), receiverConfirmPin);
-      setDelivery(result.delivery);
-      if (result.paymentRequired) {
-        if (!email.trim()) {
-          Alert.alert("Receiver payment", "Package confirmed. Enter the receiver's payment email and tap Pay receiver amount to complete payment.");
-          return;
-        }
-        const payment = await api.initializeReceiverPayment(delivery.id, trackingPhone.trim(), receiverConfirmPin, email.trim());
-        await WebBrowser.openBrowserAsync(payment.authorizationUrl);
-        Alert.alert("Receiver payment", "Complete payment. SwiftDrop will verify the provider webhook and then complete the order.");
-      } else {
-        Alert.alert("Receipt confirmed", "The delivery is complete and the held payment has been released for courier payout.");
-      }
+      const result = await api.confirmEscrowPin(delivery.id, receiverConfirmPin);
+      setDelivery(prev => prev ? { ...prev, status: "DELIVERED" } : prev);
+      Alert.alert("Receipt confirmed", "The delivery is complete. The receiver PIN has been verified and the courier payout is now eligible.");
+      void result;
     } catch (error) {
       Alert.alert("Confirmation failed", error instanceof Error ? error.message : "Unable to confirm receipt");
     }
@@ -826,8 +817,8 @@ export default function App() {
       <Text style={styles.subtitle}>Confirm receipt with your PIN. If the sender selected receiver payment, you will pay the order amount immediately after confirmation.</Text>
       <TextInput style={styles.input} placeholder="Tracking code" value={trackingCode} onChangeText={setTrackingCode} autoCapitalize="characters" />
       <TextInput style={styles.input} placeholder="Receiver phone number" value={trackingPhone} onChangeText={setTrackingPhone} keyboardType="phone-pad" />
-      <TextInput style={styles.input} placeholder="Six-digit receiver PIN" value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} keyboardType="number-pad" secureTextEntry maxLength={4} />
-      <TextInput style={styles.input} placeholder="Payment email (required if receiver pays)" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+      <TextInput style={styles.input} placeholder="4-digit receiver PIN" value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} keyboardType="number-pad" secureTextEntry maxLength={4} />
+      <TextInput style={styles.input} placeholder="Payment email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
       <Pressable style={styles.primary} onPress={() => void (async () => {
         try {
           const tracked = await api.track(trackingCode.trim().toUpperCase(), trackingPhone.trim());
