@@ -13,7 +13,7 @@ const COURIER_SHARE_BPS = 7500;
 const ESCROW_DISPUTE_HOURS = 2;
 const MERCHANT_HOLD_HOURS = 72;
 const FLOAT_MIN_RESERVE_MINOR = 500000000;
-const FLOAT_TOPUP_THRESHOLD_MINOR = 300000000;
+const FLOAT_TOPUP_THRESHOLD_MINOR = 300000000;\n\nexport function createWalletPayoutProviderReference(): string {\n  return "sd_wallet_" + randomUUID().replaceAll("-", "");\n}
 
 function authUser(req: any): string {
   const id = identity(req);
@@ -489,7 +489,7 @@ router.post("/wallet/withdraw", requireAuth(), async (req,res)=>{
     // Paystack transfer references are provider identifiers, not client idempotency keys.
     // Generate a server-authoritative, provider-compliant lowercase reference so arbitrary
     // client idempotency-key casing/characters can never make the transfer invalid.
-    const providerReference = "sd_wallet_" + randomUUID().replaceAll("-", "");
+    const providerReference = createWalletPayoutProviderReference();
     const payout=(await client.query(
       "INSERT INTO payout_requests(wallet_id,user_id,amount_minor,idempotency_key,status,provider_reference) VALUES($1,$2,$3,$4,'PROCESSING',$5) ON CONFLICT(idempotency_key) DO NOTHING RETURNING *",
       [wallet.id,userId,parsed.data.amountMinor,parsed.data.idempotencyKey,providerReference]
