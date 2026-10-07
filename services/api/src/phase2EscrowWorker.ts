@@ -16,6 +16,11 @@ export async function processPhase2EscrowReleases(): Promise<number> {
         WHERE el.state='dispute_window'
           AND el.stakeholder_release_at IS NOT NULL
           AND el.stakeholder_release_at<=now()
+          AND NOT EXISTS (
+            SELECT 1 FROM disputes ds
+             WHERE ds.delivery_id=el.order_id
+               AND ds.status IN ('OPEN','UNDER_REVIEW')
+          )
         FOR UPDATE OF el,d
         LIMIT 50`
     )).rows;
