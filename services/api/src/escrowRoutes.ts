@@ -341,35 +341,112 @@ router.post("/wallet/withdraw", requireAuth(), async (req,res)=>{
     if(Number(wallet.balance_minor)<parsed.data.amountMinor)return res.status(409).json({error:"Insufficient available balance"});
     const duplicate=(await client.query("SELECT * FROM payout_requests WHERE idempotency_key=$1",[parsed.data.idempotencyKey])).rows[0];
     if(duplicate){await client.query("COMMIT");return res.json({payout:duplicate});}
-    const payout=(await client.query("INSERT INTO payout_requests(wallet_id,user_id,amount_minor,idempotency_key) VALUES($1,$2,$3,$4) ON CONFLICT(idempotency_key) DO NOTHING RETURNING *",[wallet.id,userId,parsed.data.amountMinor,parsed.data.idempotencyKey])).rows[0];
     if(!wallet.paystack_recipient_code || !wallet.bank_account_verified){
       await client.query("ROLLBACK");
       return res.status(409).json({error:"A verified Paystack payout recipient is required before withdrawal"});
     }
+    const payout=(await client.query(
+      "INSERT INTO payout_requests(wallet_id,user_id,amount_minor,idempotency_key,status,provider_reference) VALUES($1,$2,$3,$4,'PROCESSING',$5) ON CONFLICT(idempotency_key) DO NOTHING RETURNING *",
+      [wallet.id,userId,parsed.data.amountMinor,parsed.data.idempotencyKey,"SD-WALLET-"+parsed.data.idempotencyKey]
+    )).rows[0];
+    if(!payout){await client.query("ROLLBACK");return res.status(409).json({error:"Payout request could not be reserved"});}
     await client.query("UPDATE stakeholder_wallets SET balance_minor=balance_minor-$2,pending_minor=pending_minor+$2,updated_at=now() WHERE id=$1",[wallet.id,parsed.data.amountMinor]);
-    await client.query("UPDATE payout_requests SET status='PROCESSING' WHERE id=$1",[payout.id]);
     await client.query("COMMIT");
+
     const secret=process.env.PAYSTACK_SECRET_KEY;
     if(!secret){
       await pool!.query("UPDATE stakeholder_wallets SET balance_minor=balance_minor+$2,pending_minor=GREATEST(0,pending_minor-$2),updated_at=now() WHERE id=$1",[wallet.id,parsed.data.amountMinor]);
-      await pool!.query("UPDATE payout_requests SET status='FAILED',failure_reason='Paystack transfers are not configured',updated_at=now() WHERE id=$1",[payout.id]);
+      await pool!.query("UPDATE payout_requests SET status='FAILED',failure_reason='Paystack transfers are not configured',processed_at=now(),updated_at=now() WHERE id=$1 AND status='PROCESSING'",[payout.id]);
       return res.status(503).json({error:"Paystack transfers are not configured"});
     }
-    const reference="SD-WALLET-"+payout.id;
-    const providerResponse=await fetch("https://api.paystack.co/transfer",{method:"POST",headers:{authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify({
-      source:"balance",amount:parsed.data.amountMinor,recipient:wallet.paystack_recipient_code,reason:"SwiftDrop wallet withdrawal",reference
-    })});
+
+    const reference=String(payout.provider_reference);
+    let providerResponse: Response;
+    try{
+      providerResponse=await fetch("https://api.paystack.co/transfer",{
+        method:"POST",
+        headers:{authorization:"Bearer "+secret,"content-type":"application/json"},
+        body:JSON.stringify({source:"balance",amount:parsed.data.amountMinor,recipient:wallet.paystack_recipient_code,reason:"SwiftDrop wallet withdrawal",reference}),
+        signal:AbortSignal.timeout(15_000)
+      });
+    }catch(error){
+      return res.status(202).json({
+        payout,
+        provider:"paystack_transfers",
+        status:"PROCESSING",
+        message:"Transfer request may have reached Paystack. The payout is retained for webhook/reconciliation verification.",
+        reconciliationKey:reference,
+        detail:process.env.NODE_ENV==="test" ? (error instanceof Error ? error.message : String(error)) : undefined
+      });
+    }
+
     const providerPayload=await providerResponse.json() as any;
     if(!providerResponse.ok||!providerPayload.status||!providerPayload.data?.reference){
       await pool!.query("UPDATE stakeholder_wallets SET balance_minor=balance_minor+$2,pending_minor=GREATEST(0,pending_minor-$2),updated_at=now() WHERE id=$1",[wallet.id,parsed.data.amountMinor]);
-      await pool!.query("UPDATE payout_requests SET status='FAILED',failure_reason=$2,updated_at=now() WHERE id=$1",[payout.id,String(providerPayload.message ?? "Paystack transfer failed").slice(0,400)]);
+      await pool!.query("UPDATE payout_requests SET status='FAILED',failure_reason=$2,processed_at=now(),updated_at=now() WHERE id=$1 AND status='PROCESSING'",[payout.id,String(providerPayload.message ?? "Paystack transfer failed").slice(0,400)]);
       return res.status(502).json({error:providerPayload.message ?? "Paystack transfer failed"});
     }
-    const updated=(await pool!.query("UPDATE payout_requests SET provider_reference=$2,status='PROCESSING',updated_at=now() WHERE id=$1 RETURNING *",[payout.id,providerPayload.data.reference])).rows[0];
+
+    const providerReference=String(providerPayload.data.reference);
+    const updated=(await pool!.query(
+      "UPDATE payout_requests SET provider_reference=$2,status='PROCESSING',updated_at=now() WHERE id=$1 AND status='PROCESSING' RETURNING *",
+      [payout.id,providerReference]
+    )).rows[0] ?? payout;
     return res.status(201).json({payout:updated,provider:"paystack_transfers"});
-  }catch(e){await client.query("ROLLBACK");return res.status(500).json({error:"Unable to create payout request"});}
-  finally{client.release();}
+  }catch(e){
+    await client.query("ROLLBACK");
+    return res.status(500).json({error:"Unable to create payout request"});
+  }finally{client.release();}
 });
+
+export async function reconcileProcessingWalletPayouts(): Promise<void> {
+  if(!pool || !process.env.PAYSTACK_SECRET_KEY) return;
+  const candidates=(await pool.query(
+    `SELECT id,provider_reference FROM payout_requests
+      WHERE provider='paystack' AND status='PROCESSING' AND provider_reference IS NOT NULL
+      ORDER BY requested_at ASC LIMIT 50`
+  )).rows;
+  for(const candidate of candidates){
+    const reference=String(candidate.provider_reference);
+    try{
+      const response=await fetch("https://api.paystack.co/transfer/verify/"+encodeURIComponent(reference),{
+        headers:{authorization:"Bearer "+process.env.PAYSTACK_SECRET_KEY},
+        signal:AbortSignal.timeout(10_000)
+      });
+      const payload=await response.json() as any;
+      if(!response.ok||!payload.status) continue;
+      const providerStatus=String(payload.data?.status ?? "").toLowerCase();
+      if(!["success","failed","reversed"].includes(providerStatus)) continue;
+      const providerAmount=Number(payload.data?.amount);
+      const providerCurrency=String(payload.data?.currency ?? "");
+      const client=await pool.connect();
+      try{
+        await client.query("BEGIN");
+        const locked=(await client.query(
+          `SELECT pr.*,sw.balance_minor,sw.pending_minor,sw.currency,sw.id AS wallet_id
+             FROM payout_requests pr JOIN stakeholder_wallets sw ON sw.id=pr.wallet_id
+            WHERE pr.id=$1 FOR UPDATE OF pr,sw`,[candidate.id]
+        )).rows[0];
+        if(!locked || locked.status!=="PROCESSING"){await client.query("COMMIT");continue;}
+        const amount=Number(locked.amount_minor);
+        const matches=Number.isSafeInteger(providerAmount) && providerAmount===amount && providerCurrency===String(locked.currency ?? "NGN");
+        if(providerStatus==="success" && matches){
+          await client.query("UPDATE payout_requests SET status='RELEASED',processed_at=COALESCE(processed_at,now()),failure_reason=NULL,updated_at=now() WHERE id=$1 AND status='PROCESSING'",[locked.id]);
+          await client.query("UPDATE stakeholder_wallets SET pending_minor=GREATEST(0,pending_minor-$2),updated_at=now() WHERE id=$1",[locked.wallet_id,amount]);
+        }else{
+          const reason=!matches ? "Paystack transfer amount or currency mismatch" : `Paystack transfer ${providerStatus}`;
+          await client.query("UPDATE payout_requests SET status='FAILED',failure_reason=$2,processed_at=COALESCE(processed_at,now()),updated_at=now() WHERE id=$1 AND status='PROCESSING'",[locked.id,reason]);
+          await client.query("UPDATE stakeholder_wallets SET balance_minor=balance_minor+$2,pending_minor=GREATEST(0,pending_minor-$2),updated_at=now() WHERE id=$1",[locked.wallet_id,amount]);
+        }
+        await client.query("COMMIT");
+      }catch(error){
+        await client.query("ROLLBACK");
+      }finally{client.release();}
+    }catch(error){
+      // Keep PROCESSING so a transient Paystack/network outage can be reconciled later.
+    }
+  }
+}
 
 router.get("/float/balance", requireAuth(), async (req,res)=>{
   if(!databaseEnabled())return res.status(503).json({error:"Database unavailable"});
