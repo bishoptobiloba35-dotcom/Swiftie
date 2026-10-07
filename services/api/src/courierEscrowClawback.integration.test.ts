@@ -1,5 +1,4 @@
 import test, { after } from "node:test";
-import { readFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { pool } from "./database/db.js";
