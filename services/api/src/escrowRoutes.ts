@@ -15,6 +15,10 @@ const MERCHANT_HOLD_HOURS = 72;
 const FLOAT_MIN_RESERVE_MINOR = 500000000;
 const FLOAT_TOPUP_THRESHOLD_MINOR = 300000000;
 
+export function createWalletPayoutProviderReference(): string {
+  return "sd_wallet_" + randomUUID().replaceAll("-", "");
+}
+
 function authUser(req: any): string {
   const id = identity(req);
   if (!id) throw new Error("Authentication required");
@@ -486,9 +490,13 @@ router.post("/wallet/withdraw", requireAuth(), async (req,res)=>{
       await client.query("ROLLBACK");
       return res.status(409).json({error:"A verified Paystack payout recipient is required before withdrawal"});
     }
+    // Paystack transfer references are provider identifiers, not client idempotency keys.
+    // Generate a server-authoritative, provider-compliant lowercase reference so arbitrary
+    // client idempotency-key casing/characters can never make the transfer invalid.
+    const walletProviderReference = createWalletPayoutProviderReference();
     const payout=(await client.query(
       "INSERT INTO payout_requests(wallet_id,user_id,amount_minor,idempotency_key,status,provider_reference) VALUES($1,$2,$3,$4,'PROCESSING',$5) ON CONFLICT(idempotency_key) DO NOTHING RETURNING *",
-      [wallet.id,userId,parsed.data.amountMinor,parsed.data.idempotencyKey,"SD-WALLET-"+parsed.data.idempotencyKey]
+      [wallet.id,userId,parsed.data.amountMinor,parsed.data.idempotencyKey,walletProviderReference]
     )).rows[0];
     if(!payout){await client.query("ROLLBACK");return res.status(409).json({error:"Payout request could not be reserved"});}
     await client.query("UPDATE stakeholder_wallets SET balance_minor=balance_minor-$2,pending_minor=pending_minor+$2,updated_at=now() WHERE id=$1",[wallet.id,parsed.data.amountMinor]);
