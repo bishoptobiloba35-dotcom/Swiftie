@@ -126,7 +126,7 @@ export class SwiftDropApi {
     return data;
   }
 
-  async createEscrow(orderId: string, totalPaidMinor: number): Promise<any> {
+  async createEscrow(orderId: string): Promise<any> {
     const response = await fetch(this.baseUrl + "/api/escrow/create", { method:"POST", headers:this.headers(true), body:JSON.stringify({orderId})});
     const data=await response.json(); if(!response.ok) throw new Error(data.error ?? "Unable to create escrow"); return data.escrow;
   }
