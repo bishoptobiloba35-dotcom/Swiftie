@@ -64,4 +64,6 @@ jobs:
           node-version: 22
       - run: npm install --global npm@11
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Bootstrap base PostgreSQL schema
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/src/database/schema.sql
       - run: npm test --workspace=@swiftdrop/api
