@@ -189,6 +189,42 @@ if (db) {
       /payment mode|cash|constraint/i
     );
 
+    const directModeUser = (await db.query(
+      `INSERT INTO users(role,full_name,phone,email)
+       VALUES('CUSTOMER','Direct Mode Boundary Customer',$1,$2) RETURNING id`,
+      [`+234909${Date.now()}`, `direct-mode-${Date.now()}@example.test`]
+    )).rows[0];
+
+    await assert.rejects(
+      db.query(
+        `INSERT INTO deliveries
+          (sender_id,tracking_code,receiver_name,receiver_phone,pickup_address,dropoff_address,status,receiver_pin_hash,payment_mode)
+         VALUES($1,$2,'Legacy Receiver','+2349070000012','Pickup','Dropoff','CREATED','test-pin-hash','RECEIVER_ON_DELIVERY')`,
+        [directModeUser.id, `DIRECT-COD-${Date.now()}`]
+      ),
+      /deliveries_payment_mode_check|constraint/i
+    );
+
+    const escrowBoundaryDelivery = await createPersistentDelivery({
+      senderId: directModeUser.id, receiverName: "Escrow Boundary Receiver", receiverPhone: "+2349070000013",
+      receiverPin: "8989", declaredValueMinor: 100000,
+      pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.07, longitude: 7.40 } },
+      dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
+      weightKg: 1, dimensionsCm: { length: 10, width: 10, height: 10 }, isPerishable: false, paymentMode: "SENDER_ESCROW"
+    });
+    await db.query(
+      `INSERT INTO payments(delivery_id,provider,amount_minor,currency,status,escrow_status,collection_mode)
+       VALUES($1,'paystack',100000,'NGN','PENDING','PENDING','SENDER_ESCROW')`,
+      [escrowBoundaryDelivery.id]
+    );
+    await assert.rejects(
+      db.query(
+        `UPDATE payments SET collection_mode='RECEIVER_ON_DELIVERY' WHERE delivery_id=$1`,
+        [escrowBoundaryDelivery.id]
+      ),
+      /payments_collection_mode_check|constraint/i
+    );
+
     const payoutDelivery = await createPersistentDelivery({
       senderId: customer.id, receiverName: "Payout Receiver", receiverPhone: "+2349070000001", receiverPin: "5656",
       declaredValueMinor: 100000,

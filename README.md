@@ -42,12 +42,7 @@ The backend is authoritative for delivery state, pricing, GPS events, pickup pro
 
 ## Current financial collection model
 
-Every delivery has an explicit server-side payment mode:
-
-- **Sender pays — SENDER_ESCROW:** the sender pays the quoted total through Paystack; the payment enters the existing held escrow-style ledger and is released for courier payout only after verified receiver PIN confirmation.
-- **Receiver pays — RECEIVER_ON_DELIVERY:** the sender does not prepay and no escrow is used. When the courier arrives, the receiver verifies the package with the receiver phone and PIN. SwiftDrop then opens a Paystack checkout for the exact server-authoritative order total. The order is not marked delivered and the courier payout is not eligible until Paystack verifies the receiver payment.
-- Receiver-paid collections are reconciled by amount, currency, delivery, payment mode and provider reference. Failed or mismatched payments cannot complete the delivery.
-- Marketplace/drop-off merchants remain supported as sellers or SwiftDrop partner locations, but **Merchant is not a user/business mode**.
+Every delivery uses **SENDER_ESCROW**. The sender pays the exact server-authoritative quoted total through Paystack; funds remain in escrow and courier payout is eligible only after successful delivery confirmation through the receiver PIN flow. Cash-on-delivery and receiver-on-delivery collection are retired and rejected at both the application and database boundaries.
 
 ## Current delivery/payment rules
 
