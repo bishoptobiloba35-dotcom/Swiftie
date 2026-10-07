@@ -83,7 +83,7 @@ router.post("/escrow/create", requireAuth(), async (req, res) => {
 router.post("/escrow/:orderId/pay", requireAuth(), async (req,res)=>{
   if(!databaseEnabled()) return res.status(503).json({error:"Database unavailable"});
   const orderId=String(req.params.orderId);
-  const parsed=z.object({method:z.enum(["PAYSTACK_CARD","BANK_TRANSFER","USSD","SMS_LINK"]),providerReference:z.string().max(200).optional(),idempotencyKey:z.string().min(8).max(120)}).safeParse(req.body);
+  const parsed=z.object({method:z.enum(["PAYSTACK_CARD","BANK_TRANSFER","USSD","SMS_LINK"]),idempotencyKey:z.string().min(8).max(120)}).safeParse(req.body);
   if(!parsed.success)return res.status(400).json({error:"Invalid payment request"});
   const userId=authUser(req);
   const client=await pool!.connect();
@@ -100,7 +100,7 @@ router.post("/escrow/:orderId/pay", requireAuth(), async (req,res)=>{
       await client.query("ROLLBACK");
       return res.status(409).json({error:"Customer email is required for Paystack payment"});
     }
-    let providerReference=parsed.data.providerReference ?? null;
+    let providerReference:string|null=null;
     let authorizationUrl:string|undefined;
     let accessCode:string|undefined;
     let ussdCode:string|undefined;
@@ -108,12 +108,13 @@ router.post("/escrow/:orderId/pay", requireAuth(), async (req,res)=>{
     if(parsed.data.method!=="BANK_TRANSFER"){
       const secret=process.env.PAYSTACK_SECRET_KEY;
       if(!secret){await client.query("ROLLBACK");return res.status(503).json({error:"Paystack payment configuration is not ready"});}
-      const reference=providerReference ?? "SD-ESCROW-"+orderId+"-"+Date.now();
+      const reference="SD-ESCROW-"+orderId+"-"+randomUUID().replaceAll("-","");
       const channels=parsed.data.method==="USSD" ? ["ussd"] : ["card","bank","ussd","bank_transfer"];
       const providerResponse=await fetch("https://api.paystack.co/transaction/initialize",{method:"POST",headers:{authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify({email:user.email,amount:String(amountMinor),currency:"NGN",reference,channels,metadata:{deliveryId:orderId,escrow:true}})});
       const payload=await providerResponse.json() as any;
       if(!providerResponse.ok||!payload.status||((parsed.data.method!=="USSD")&&!payload.data?.authorization_url)|| (parsed.data.method==="USSD"&&!payload.data?.ussd_code&&!payload.data?.authorization_url)){await client.query("ROLLBACK");return res.status(502).json({error:payload.message ?? "Paystack payment initialization failed"});}
-      providerReference=String(payload.data.reference ?? reference);
+      const providerReferenceFromPaystack=String(payload.data.reference ?? reference);
+      providerReference=providerReferenceFromPaystack;
       authorizationUrl=payload.data.authorization_url;
       accessCode=payload.data.access_code;
       ussdCode=payload.data.ussd_code;
