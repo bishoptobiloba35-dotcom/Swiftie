@@ -348,13 +348,45 @@ router.post("/virtual-account/create", requireAuth(), async (req,res)=>{
   const lastName=names.join(" ") || "Customer";
   const headers={authorization:"Bearer "+secret,"content-type":"application/json"};
   const preferredBank=process.env.PAYSTACK_DVA_BANK_SLUG || (process.env.PAYSTACK_SECRET_KEY?.startsWith("sk_test_") ? "test-bank" : undefined);
-  const provisioning=(await pool!.query(
+  // Claim DVA provisioning with a single-flight database write. Only the request
+  // that inserts a new row (or successfully claims a FAILED row) may call Paystack.
+  // Concurrent requests must observe PROVISIONING and return 202 instead of creating
+  // multiple Paystack customers/DVAs for the same order.
+  let provisioning=(await pool!.query(
     `INSERT INTO virtual_accounts(user_id,order_id,customer_code,provider_slug,status,updated_at)
      VALUES($1,$2,NULL,$3,'PROVISIONING',now())
-     ON CONFLICT(order_id) DO UPDATE SET user_id=EXCLUDED.user_id,provider_slug=EXCLUDED.provider_slug,status='PROVISIONING',updated_at=now()
+     ON CONFLICT(order_id) DO NOTHING
      RETURNING *`,
     [userId,order.id,preferredBank ?? null]
   )).rows[0];
+
+  if(!provisioning){
+    provisioning=(await pool!.query(
+      `UPDATE virtual_accounts
+          SET user_id=$2,provider_slug=$3,status='PROVISIONING',updated_at=now()
+        WHERE order_id=$1 AND status='FAILED'
+        RETURNING *`,
+      [order.id,userId,preferredBank ?? null]
+    )).rows[0];
+
+    if(!provisioning){
+      const concurrent=(await pool!.query(
+        "SELECT * FROM virtual_accounts WHERE order_id=$1",
+        [order.id]
+      )).rows[0];
+      if(concurrent?.status==="PROVISIONING"){
+        return res.status(202).json({
+          status:"PROVISIONING",
+          virtualAccount:concurrent,
+          message:"Paystack is still provisioning the dedicated virtual account. Retry shortly."
+        });
+      }
+      if(concurrent?.status==="ACTIVE"){
+        return res.status(200).json({virtualAccount:concurrent});
+      }
+      return res.status(409).json({error:"Dedicated virtual account provisioning is already being handled. Retry shortly."});
+    }
+  }
 
   const customerResponse=await fetch("https://api.paystack.co/customer",{method:"POST",headers,body:JSON.stringify({
     email:user.email,first_name:firstName,last_name:lastName,phone:String(user.phone ?? "")
