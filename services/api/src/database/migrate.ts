@@ -71,6 +71,7 @@ const migrations = [
   { id: "073_escrow_webhook_idempotency", file: "073_escrow_webhook_idempotency.sql" },
   { id: "074_dva_requery_rate_limit", file: "074_dva_requery_rate_limit.sql" },
   { id: "075_one_active_escrow_payment", file: "075_one_active_escrow_payment.sql" },
+  { id: "076_retire_receiver_payment_mode", file: "076_retire_receiver_payment_mode.sql" },
 ];
 
 export async function runMigrations(): Promise<void> {
