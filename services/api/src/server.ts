@@ -1258,8 +1258,15 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
       )).rows[0];
       await client.query(
         `INSERT INTO escrow_payment_attempts(order_id,method,provider_reference,amount_minor,idempotency_key)
-         SELECT $1,'BANK_TRANSFER',NULL,d.escrow_total_paid_minor,$2 FROM deliveries d
-          WHERE d.id=$1 AND d.escrow_total_paid_minor > 0
+         SELECT $1,'BANK_TRANSFER',NULL,d.escrow_total_paid_minor,$2
+           FROM deliveries d
+          WHERE d.id=$1
+            AND d.escrow_total_paid_minor > 0
+            AND d.escrow_payment_state='pending_payment'
+            AND NOT EXISTS (
+              SELECT 1 FROM escrow_payment_attempts existing
+               WHERE existing.order_id=d.id AND existing.status='SUCCESS'
+            )
          ON CONFLICT(idempotency_key) DO NOTHING`,
         [updated.order_id,`dva:${updated.order_id}`]
       );

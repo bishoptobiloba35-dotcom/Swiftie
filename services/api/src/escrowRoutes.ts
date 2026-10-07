@@ -94,9 +94,13 @@ router.post("/escrow/:orderId/pay", requireAuth(), async (req,res)=>{
   const client=await pool!.connect();
   try{
     await client.query("BEGIN");
-    const order=(await client.query("SELECT id,customer_id,receiver_phone,tracking_code,escrow_total_paid_minor FROM deliveries WHERE id=$1 FOR UPDATE",[orderId])).rows[0];
+    const order=(await client.query("SELECT d.id,d.customer_id,d.receiver_phone,d.tracking_code,d.escrow_total_paid_minor,d.escrow_payment_state,el.state AS escrow_state FROM deliveries d LEFT JOIN escrow_ledgers el ON el.order_id=d.id WHERE d.id=$1 FOR UPDATE OF d",[orderId])).rows[0];
     if(!order){await client.query("ROLLBACK");return res.status(404).json({error:"Order not found"});}
     if(order.customer_id!==userId){await client.query("ROLLBACK");return res.status(403).json({error:"Order access denied"});}
+    if(order.escrow_payment_state!=="pending_payment" || (order.escrow_state && order.escrow_state!=="pending_payment")){
+      await client.query("ROLLBACK");
+      return res.status(409).json({error:"Escrow is no longer awaiting payment."});
+    }
     const existing=(await client.query("SELECT * FROM escrow_payment_attempts WHERE idempotency_key=$1",[parsed.data.idempotencyKey])).rows[0];
     if(existing){await client.query("COMMIT");return res.status(200).json({payment:existing});}
     const active=(await client.query(
