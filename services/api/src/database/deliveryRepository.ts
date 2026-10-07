@@ -43,7 +43,7 @@ function paymentFromRow(row: any): PaymentRecord {
     currency: row.currency,
     status: row.status,
     escrowStatus: row.escrow_status ?? undefined,
-    collectionMode: row.collection_mode === "RECEIVER_ON_DELIVERY" ? "RECEIVER_ON_DELIVERY" : "SENDER_ESCROW",
+    collectionMode: "SENDER_ESCROW",
     refundReference: row.refund_reference ?? undefined,
     refundStatus: row.refund_status ?? undefined,
     refundAmountMinor: row.refund_amount_minor == null ? undefined : Number(row.refund_amount_minor),
@@ -59,7 +59,7 @@ export async function createPayment(input: {
   provider: string;
   amountMinor: number;
   currency?: string;
-  collectionMode?: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
+  collectionMode?: "SENDER_ESCROW";
 }): Promise<PaymentRecord> {
   if (input.collectionMode && input.collectionMode !== "SENDER_ESCROW") {
     throw new Error("Cash-on-delivery is retired. Every order must use in-app escrow.");
