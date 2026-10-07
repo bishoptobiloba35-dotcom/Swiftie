@@ -222,6 +222,7 @@ export async function reconcilePendingEscrowProviderPayments(): Promise<void> {
         await client.query("COMMIT");
       }catch(error){
         await client.query("ROLLBACK");
+        if(process.env.NODE_ENV==="test") console.error("escrow provider reconciliation test error",error);
       }finally{client.release();}
     }catch{
       // Keep the attempt pending for the next reconciliation cycle.
