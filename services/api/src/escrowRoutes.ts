@@ -247,8 +247,11 @@ router.post("/virtual-account/create", requireAuth(), async (req,res)=>{
   const order=(await pool!.query("SELECT id,customer_id,escrow_total_paid_minor FROM deliveries WHERE id=$1",[parsed.data.orderId])).rows[0];
   if(!order)return res.status(404).json({error:"Order not found"});
   if(order.customer_id!==userId)return res.status(403).json({error:"Order access denied"});
+
   const existing=(await pool!.query("SELECT * FROM virtual_accounts WHERE order_id=$1",[order.id])).rows[0];
-  if(existing)return res.status(200).json({virtualAccount:existing});
+  if(existing?.status==="ACTIVE")return res.status(200).json({virtualAccount:existing});
+  if(existing?.status==="PROVISIONING")return res.status(202).json({status:"PROVISIONING",virtualAccount:existing,message:"Paystack is still provisioning the dedicated virtual account. Retry shortly."});
+
   const secret=process.env.PAYSTACK_SECRET_KEY;
   if(!secret)return res.status(503).json({error:"Paystack virtual accounts are not configured"});
   const user=(await pool!.query("SELECT full_name,email,phone FROM users WHERE id=$1",[userId])).rows[0];
@@ -257,42 +260,97 @@ router.post("/virtual-account/create", requireAuth(), async (req,res)=>{
   const firstName=names.shift() ?? "SwiftDrop";
   const lastName=names.join(" ") || "Customer";
   const headers={authorization:"Bearer "+secret,"content-type":"application/json"};
+  const preferredBank=process.env.PAYSTACK_DVA_BANK_SLUG || (process.env.PAYSTACK_SECRET_KEY?.startsWith("sk_test_") ? "test-bank" : undefined);
+  const provisioning=(await pool!.query(
+    `INSERT INTO virtual_accounts(user_id,order_id,customer_code,provider_slug,status,updated_at)
+     VALUES($1,$2,NULL,$3,'PROVISIONING',now())
+     ON CONFLICT(order_id) DO UPDATE SET user_id=EXCLUDED.user_id,provider_slug=EXCLUDED.provider_slug,status='PROVISIONING',updated_at=now()
+     RETURNING *`,
+    [userId,order.id,preferredBank ?? null]
+  )).rows[0];
+
   const customerResponse=await fetch("https://api.paystack.co/customer",{method:"POST",headers,body:JSON.stringify({
-    email:user.email,first_name:firstName,last_name:lastName,phone:String(order.customer_id===userId?user.phone:"")
-  })});
+    email:user.email,first_name:firstName,last_name:lastName,phone:String(user.phone ?? "")
+  }),signal:AbortSignal.timeout(15_000)});
   const customerPayload=await customerResponse.json() as any;
   if(!customerResponse.ok||!customerPayload.status||!customerPayload.data?.customer_code){
+    await pool!.query("UPDATE virtual_accounts SET status='FAILED',updated_at=now() WHERE order_id=$1",[order.id]);
     return res.status(502).json({error:customerPayload.message ?? "Unable to create Paystack customer for virtual account"});
   }
-  const preferredBank=process.env.PAYSTACK_DVA_BANK_SLUG || (process.env.PAYSTACK_SECRET_KEY?.startsWith("sk_test_") ? "test-bank" : undefined);
+  await pool!.query(
+    "UPDATE virtual_accounts SET customer_code=$2,updated_at=now() WHERE order_id=$1",
+    [order.id,customerPayload.data.customer_code]
+  );
+
   const dvaResponse=await fetch("https://api.paystack.co/dedicated_account",{method:"POST",headers,body:JSON.stringify({
     customer:customerPayload.data.customer_code,
     ...(preferredBank ? {preferred_bank:preferredBank} : {}),
     first_name:firstName,last_name:lastName,phone:user.phone
-  })});
+  }),signal:AbortSignal.timeout(15_000)});
   const dvaPayload=await dvaResponse.json() as any;
   if(!dvaResponse.ok||!dvaPayload.status){
+    await pool!.query("UPDATE virtual_accounts SET status='FAILED',provider_reference=$2,updated_at=now() WHERE order_id=$1",[order.id,String(dvaPayload.data?.id ?? "") || null]);
     return res.status(502).json({error:dvaPayload.message ?? "Unable to create dedicated virtual account"});
   }
   const data=dvaPayload.data ?? {};
+  const providerSlug=String(data.bank?.slug ?? data.preferred_bank ?? preferredBank ?? "") || null;
   if(!data.account_number){
-    return res.status(202).json({status:"PROVISIONING",customerCode:customerPayload.data.customer_code,message:"Paystack is provisioning the dedicated virtual account. Retry shortly."});
+    await pool!.query(
+      "UPDATE virtual_accounts SET provider_slug=$2,provider_reference=$3,status='PROVISIONING',updated_at=now() WHERE order_id=$1",
+      [order.id,providerSlug,String(data.id ?? "") || null]
+    );
+    return res.status(202).json({
+      status:"PROVISIONING",
+      virtualAccount:(await pool!.query("SELECT * FROM virtual_accounts WHERE order_id=$1",[order.id])).rows[0],
+      customerCode:customerPayload.data.customer_code,
+      message:"Paystack is provisioning the dedicated virtual account. Retry shortly."
+    });
   }
+
   const saved=(await pool!.query(
-    `INSERT INTO virtual_accounts(user_id,order_id,customer_code,account_name,account_number,bank_name,bank_code,provider_reference,status)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,'ACTIVE')
-     ON CONFLICT(order_id) DO UPDATE SET customer_code=EXCLUDED.customer_code,account_name=EXCLUDED.account_name,account_number=EXCLUDED.account_number,bank_name=EXCLUDED.bank_name,bank_code=EXCLUDED.bank_code,provider_reference=EXCLUDED.provider_reference,status='ACTIVE',updated_at=now()
-     RETURNING *`,
-    [userId,order.id,customerPayload.data.customer_code,data.account_name,data.account_number,data.bank?.name ?? null,data.bank?.id ? String(data.bank.id) : null,String(data.id ?? customerPayload.data.customer_code)]
+    `UPDATE virtual_accounts
+        SET customer_code=$2,account_name=$3,account_number=$4,bank_name=$5,bank_code=$6,provider_reference=$7,provider_slug=$8,status='ACTIVE',updated_at=now()
+      WHERE order_id=$1
+      RETURNING *`,
+    [order.id,customerPayload.data.customer_code,data.account_name,data.account_number,data.bank?.name ?? null,data.bank?.id ? String(data.bank.id) : null,String(data.id ?? customerPayload.data.customer_code),providerSlug]
   )).rows[0];
   await pool!.query(
     `INSERT INTO escrow_payment_attempts(order_id,method,provider_reference,amount_minor,idempotency_key)
-     VALUES($1,'BANK_TRANSFER',$2,$3,$4)
+     VALUES($1,'BANK_TRANSFER',NULL,$2,$3)
      ON CONFLICT(idempotency_key) DO NOTHING`,
-    [order.id, null, Number(order.escrow_total_paid_minor), `dva:${order.id}`]
+    [order.id,Number(order.escrow_total_paid_minor),`dva:${order.id}`]
   );
   return res.status(201).json({virtualAccount:saved,displayMessage:`Transfer ₦${(Number(order.escrow_total_paid_minor)/100).toLocaleString()} to ${data.account_number} (${data.bank?.name ?? "Paystack bank"})`});
 });
+
+export async function requeryPendingDvaAccounts(): Promise<void> {
+  if(!pool || !process.env.PAYSTACK_SECRET_KEY) return;
+  const rows=(await pool.query(
+    `SELECT va.account_number,va.provider_slug
+       FROM virtual_accounts va
+       JOIN escrow_payment_attempts epa ON epa.order_id=va.order_id
+      WHERE va.status='ACTIVE'
+        AND va.account_number IS NOT NULL
+        AND epa.method='BANK_TRANSFER'
+        AND epa.status='PENDING'
+      GROUP BY va.account_number,va.provider_slug
+      ORDER BY MIN(epa.updated_at) ASC
+      LIMIT 25`
+  )).rows;
+  const date=new Date().toISOString().slice(0,10);
+  for(const row of rows){
+    const providerSlug=String(row.provider_slug ?? process.env.PAYSTACK_DVA_PROVIDER_SLUG ?? "").trim();
+    if(!providerSlug) continue;
+    try{
+      await fetch(
+        "https://api.paystack.co/dedicated_account/requery?account_number="+encodeURIComponent(String(row.account_number))+"&provider_slug="+encodeURIComponent(providerSlug)+"&date="+date,
+        {headers:{authorization:"Bearer "+process.env.PAYSTACK_SECRET_KEY},signal:AbortSignal.timeout(10_000)}
+      );
+    }catch{
+      // Keep the bank-transfer attempt pending; the next scheduled requery retries it.
+    }
+  }
+}
 
 router.get("/wallet/balance", requireAuth(), async (req,res)=>{
   if(!databaseEnabled())return res.status(503).json({error:"Database unavailable"});
