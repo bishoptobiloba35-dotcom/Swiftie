@@ -1,4 +1,5 @@
 import test, { after } from "node:test";
+import { readFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { pool } from "./database/db.js";
@@ -8,6 +9,8 @@ import { createPersistentDelivery } from "./database/deliveryRepository.js";
 
 test("courier escrow clawback is idempotent and never drives wallet negative", async () => {
   if (!pool) return;
+  const schema=await readFile(new URL("./database/schema.sql", import.meta.url), "utf8");
+  await pool.query(schema);
   await runMigrations();
   const courierId=randomUUID();
   const customerId=randomUUID();
