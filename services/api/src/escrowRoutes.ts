@@ -186,7 +186,7 @@ export async function reconcilePendingEscrowProviderPayments(): Promise<void> {
       try{
         await client.query("BEGIN");
         const attempt=(await client.query(
-          `SELECT epa.*,d.customer_id,d.escrow_total_paid_minor
+          `SELECT epa.*,d.sender_id AS customer_id,d.escrow_total_paid_minor
              FROM escrow_payment_attempts epa
              JOIN deliveries d ON d.id=epa.order_id
             WHERE epa.id=$1
