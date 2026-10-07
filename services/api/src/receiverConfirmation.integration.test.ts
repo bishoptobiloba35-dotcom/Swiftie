@@ -93,17 +93,23 @@ test("receiver confirmation route verifies PIN and atomically releases escrow fo
     assert.equal(payload.courierShareMinor, 37500);
 
     const financial = (await pool.query(
-      `SELECT d.status AS delivery_status, d.receiver_confirmed_at, p.status AS payment_status, p.escrow_status,
-              po.status AS payout_status, po.amount_minor AS payout_amount
-         FROM deliveries d JOIN payments p ON p.delivery_id=d.id LEFT JOIN payouts po ON po.delivery_id=d.id
-        WHERE d.id=$1`, [delivery.id]
+      `SELECT d.status AS delivery_status, d.escrow_payment_state, d.escrow_pin_confirmed_at,
+              e.state AS escrow_state, e.pin_confirmed_at, e.dispute_window_until,
+              wt.type AS wallet_tx_type, wt.amount_minor AS wallet_tx_amount
+         FROM deliveries d
+         LEFT JOIN escrow_ledgers e ON e.order_id=d.id
+         LEFT JOIN stakeholder_wallets sw ON sw.user_id=$2
+         LEFT JOIN wallet_transactions wt ON wt.wallet_id=sw.id AND wt.order_id=d.id AND wt.idempotency_key=$3
+        WHERE d.id=$1`, [delivery.id, driverUser, `courier-pin-${delivery.id}`]
     )).rows[0];
     assert.equal(financial.delivery_status, "DELIVERED");
-    assert.ok(financial.receiver_confirmed_at);
-    assert.equal(financial.payment_status, "HELD");
-    assert.equal(financial.escrow_status, "HELD");
-    assert.equal(financial.payout_status, null);
-    assert.equal(Number(financial.payout_amount ?? 0), 0);
+    assert.ok(financial.escrow_pin_confirmed_at);
+    assert.ok(financial.pin_confirmed_at);
+    assert.equal(financial.escrow_payment_state, "dispute_window");
+    assert.equal(financial.escrow_state, "dispute_window");
+    assert.ok(financial.dispute_window_until);
+    assert.equal(financial.wallet_tx_type, "COURIER_INSTANT_PAYOUT");
+    assert.equal(Number(financial.wallet_tx_amount), 37500);
 
     const replay = await fetch(endpoint, {
       method: "POST", headers: authHeaders,
