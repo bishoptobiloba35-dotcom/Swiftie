@@ -98,3 +98,36 @@ test("pending DVA transfers are periodically re-queried through Paystack", async
 after(async () => {
   if (pool) await pool.end();
 });
+
+
+test("escrow payment attempts allow only one pending attempt per order", async () => {
+  if (!pool) return;
+  await runMigrations();
+  const user=(await pool.query(
+    `INSERT INTO users(email,phone,role) VALUES($1,$2,'CUSTOMER') RETURNING id`,
+    [`escrow-active-${Date.now()}@example.test`,`080${String(Date.now()).slice(-8)}`]
+  )).rows[0];
+  const delivery=(await pool.query(
+    `INSERT INTO deliveries(sender_id,customer_id,status,payment_mode,escrow_payment_state,escrow_total_paid_minor)
+     VALUES($1,$1,'PENDING','SENDER_ESCROW','pending_payment',100000) RETURNING id`,
+    [user.id]
+  )).rows[0];
+  await pool.query(
+    `INSERT INTO escrow_payment_attempts(order_id,method,amount_minor,status,idempotency_key)
+     VALUES($1,'PAYSTACK_CARD',100000,'PENDING',$2)`,
+    [delivery.id,`active-${delivery.id}-1`]
+  );
+  await assert.rejects(
+    pool.query(
+      `INSERT INTO escrow_payment_attempts(order_id,method,amount_minor,status,idempotency_key)
+       VALUES($1,'USSD',100000,'PENDING',$2)`,
+      [delivery.id,`active-${delivery.id}-2`]
+    )
+  );
+  await pool.query("UPDATE escrow_payment_attempts SET status='FAILED' WHERE order_id=$1",[delivery.id]);
+  await pool.query(
+    `INSERT INTO escrow_payment_attempts(order_id,method,amount_minor,status,idempotency_key)
+     VALUES($1,'USSD',100000,'PENDING',$2)`,
+    [delivery.id,`active-${delivery.id}-3`]
+  );
+});
