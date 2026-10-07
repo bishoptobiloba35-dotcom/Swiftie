@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { pool } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
-import { recoverCourierEscrowPayout } from "./database/deliveryRepository.js";
+import { recoverCourierEscrowPayout, recoverOutstandingCourierClawbacks } from "./database/deliveryRepository.js";
 import { createPersistentDelivery } from "./database/deliveryRepository.js";
 
 test("courier escrow clawback is idempotent and never drives wallet negative", async () => {
@@ -104,3 +104,64 @@ test("courier escrow clawback pauses when the courier wallet cannot cover the pa
 });
 
 after(async () => { if (pool) await pool.end(); });
+
+test("outstanding courier clawback is recovered from future earnings without a negative wallet", async () => {
+  if (!pool) return;
+  await runMigrations();
+  const courierId=randomUUID();
+  const customerId=randomUUID();
+  const phoneSuffix=String(Math.floor(100000000+Math.random()*899999999));
+  await pool.query(
+    `INSERT INTO users(id,role,full_name,phone,email,password_hash)
+     VALUES($1,'DRIVER','Liability Courier',$2,$3,'not-used'),($4,'CUSTOMER','Liability Customer',$5,$6,'not-used')`,
+    [courierId,"+2348"+phoneSuffix,courierId+"@example.test",customerId,"+2348"+String(Number(phoneSuffix)+1),customerId+"@example.test"]
+  );
+  const delivery=await createPersistentDelivery({
+    senderId:customerId, receiverName:"Receiver", receiverPhone:"+2348012345678", receiverPin:"1234",
+    declaredValueMinor:1000000,
+    pickup:{label:"Pickup",formattedAddress:"Pickup",location:{latitude:9.07,longitude:7.40}},
+    dropoff:{label:"Dropoff",formattedAddress:"Dropoff",location:{latitude:9.08,longitude:7.41}},
+    weightKg:1, dimensionsCm:{length:10,width:10,height:10}, isPerishable:false
+  });
+  const wallet=(await pool.query(
+    `INSERT INTO stakeholder_wallets(user_id,stakeholder_type,balance_minor) VALUES($1,'COURIER',50000) RETURNING id`,[courierId]
+  )).rows[0];
+  await pool.query(
+    `INSERT INTO wallet_transactions(wallet_id,order_id,type,direction,amount_minor,balance_after_minor,idempotency_key)
+     VALUES($1,$2,'COURIER_INSTANT_PAYOUT','CREDIT',200000,50000,$3)`,
+    [wallet.id,delivery.id,"liability-source-"+delivery.id]
+  );
+  const clawback=await recoverCourierEscrowPayout(delivery.id);
+  assert.equal(clawback.recovered,false);
+  const liability=(await pool.query(
+    `SELECT id,outstanding_amount_minor,status FROM escrow_courier_clawback_liabilities WHERE clawback_id=(SELECT id FROM escrow_courier_clawbacks WHERE order_id=$1)`,[delivery.id]
+  )).rows[0];
+  assert.equal(liability.status,"OUTSTANDING");
+  assert.equal(Number(liability.outstanding_amount_minor),150000);
+
+  await pool.query("UPDATE stakeholder_wallets SET balance_minor=150000 WHERE id=$1",[wallet.id]);
+  await pool.query(
+    `INSERT INTO wallet_transactions(wallet_id,order_id,type,direction,amount_minor,balance_after_minor,idempotency_key)
+     VALUES($1,$2,'COURIER_INSTANT_PAYOUT','CREDIT',100000,150000,$3)`,
+    [wallet.id,delivery.id,"future-earning-1-"+delivery.id]
+  );
+  const firstRecovery=await recoverOutstandingCourierClawbacks(courierId,100000,delivery.id);
+  assert.equal(firstRecovery.appliedMinor,100000);
+  assert.equal(firstRecovery.remainingIncomingMinor,0);
+  assert.equal(Number((await pool.query("SELECT balance_minor FROM stakeholder_wallets WHERE id=$1",[wallet.id])).rows[0].balance_minor),50000);
+  assert.equal(Number((await pool.query("SELECT outstanding_amount_minor FROM escrow_courier_clawback_liabilities WHERE id=$1",[liability.id])).rows[0].outstanding_amount_minor),50000);
+
+  await pool.query("UPDATE stakeholder_wallets SET balance_minor=100000 WHERE id=$1",[wallet.id]);
+  await pool.query(
+    `INSERT INTO wallet_transactions(wallet_id,order_id,type,direction,amount_minor,balance_after_minor,idempotency_key)
+     VALUES($1,$2,'COURIER_INSTANT_PAYOUT','CREDIT',50000,100000,$3)`,
+    [wallet.id,delivery.id,"future-earning-2-"+delivery.id]
+  );
+  const secondRecovery=await recoverOutstandingCourierClawbacks(courierId,50000,delivery.id);
+  assert.equal(secondRecovery.appliedMinor,50000);
+  assert.equal(Number((await pool.query("SELECT balance_minor FROM stakeholder_wallets WHERE id=$1",[wallet.id])).rows[0].balance_minor),50000);
+  const settled=(await pool.query("SELECT outstanding_amount_minor,status,recovered_amount_minor FROM escrow_courier_clawback_liabilities WHERE id=$1",[liability.id])).rows[0];
+  assert.equal(Number(settled.outstanding_amount_minor),0);
+  assert.equal(Number(settled.recovered_amount_minor),200000);
+  assert.equal(settled.status,"RECOVERED");
+});
