@@ -49,6 +49,31 @@ test("pending DVA transfers are periodically re-queried through Paystack", async
     [order.id,"dva-requery-"+order.id]
   );
 
+  await pool.query(
+    `INSERT INTO escrow_payment_attempts(order_id,method,amount_minor,status,provider_reference,idempotency_key)
+     VALUES($1,'PAYSTACK_CARD',78750,'PENDING',$2,$3)
+     ON CONFLICT(idempotency_key) DO NOTHING`,
+    [order.id,"card-"+order.id,"card-attempt-"+order.id]
+  );
+  const bound=(await pool.query(
+    `SELECT epa.id,epa.method
+       FROM escrow_payment_attempts epa
+      WHERE epa.method='BANK_TRANSFER'
+        AND (
+          epa.provider_reference=$1
+          OR (
+            $2 <> '' AND epa.order_id IN (
+              SELECT va.order_id FROM virtual_accounts va
+               WHERE va.account_number=$2 AND va.status='ACTIVE'
+            )
+          )
+        )
+      ORDER BY CASE WHEN epa.provider_reference=$1 THEN 0 ELSE 1 END
+      LIMIT 1`,
+    ["dva-reference-"+order.id,accountNumber]
+  )).rows[0];
+  assert.equal(bound.method,"BANK_TRANSFER");
+
   const originalFetch=globalThis.fetch;
   const originalSecret=process.env.PAYSTACK_SECRET_KEY;
   process.env.PAYSTACK_SECRET_KEY="sk_test_dva_requery";
