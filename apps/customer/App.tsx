@@ -712,7 +712,7 @@ export default function App() {
   async function createDelivery() {
     try {
       if (!pickup.trim() || !dropoff.trim() || !receiver.trim() || !phone.trim() || !/^\d{4}$/.test(receiverPin)) throw new Error("Complete the delivery details and enter a 4-digit receiver PIN.");
-      if (paymentMode === "SENDER_ESCROW" && !email.trim()) throw new Error("Enter your payment email for sender-paid escrow.");
+      if (!email.trim()) throw new Error("Enter your payment email for in-app escrow.");
       const coords = coordinates();
       if (![weightKg, lengthCm, widthCm, heightCm].every(value => Number(value) > 0)) throw new Error("Enter parcel weight and all three dimensions.");
       if (!(Number(declaredValue) > 0)) throw new Error("Enter the actual value of the goods before placing the order.");
