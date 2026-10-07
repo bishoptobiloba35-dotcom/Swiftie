@@ -157,6 +157,80 @@ router.post("/escrow/:orderId/pay", requireAuth(), async (req,res)=>{
   finally{client.release();}
 });
 
+
+export async function reconcilePendingEscrowProviderPayments(): Promise<void> {
+  if(!pool || !process.env.PAYSTACK_SECRET_KEY) return;
+  const rows=(await pool.query(
+    `SELECT epa.id,epa.order_id,epa.provider_reference,epa.amount_minor
+       FROM escrow_payment_attempts epa
+      WHERE epa.status='PENDING'
+        AND epa.method IN ('PAYSTACK_CARD','USSD','SMS_LINK')
+        AND epa.provider_reference IS NOT NULL
+      ORDER BY epa.updated_at ASC
+      LIMIT 50`
+  )).rows;
+  for(const row of rows){
+    const reference=String(row.provider_reference);
+    try{
+      const response=await fetch("https://api.paystack.co/transaction/verify/"+encodeURIComponent(reference),{
+        headers:{authorization:"Bearer "+process.env.PAYSTACK_SECRET_KEY},
+        signal:AbortSignal.timeout(10_000)
+      });
+      const payload=await response.json() as any;
+      if(!response.ok||!payload.status) continue;
+      const providerStatus=String(payload.data?.status ?? "").toLowerCase();
+      if(!["success","failed","abandoned"].includes(providerStatus)) continue;
+      const providerAmount=Number(payload.data?.amount);
+      const providerCurrency=String(payload.data?.currency ?? "");
+      const client=await pool.connect();
+      try{
+        await client.query("BEGIN");
+        const attempt=(await client.query(
+          `SELECT epa.*,d.sender_id AS customer_id,d.escrow_total_paid_minor
+             FROM escrow_payment_attempts epa
+             JOIN deliveries d ON d.id=epa.order_id
+            WHERE epa.id=$1
+            FOR UPDATE OF epa,d`,[row.id]
+        )).rows[0];
+        if(!attempt || attempt.status!=="PENDING"){await client.query("COMMIT");continue;}
+        const amountMatches=Number.isSafeInteger(providerAmount) && providerAmount===Number(attempt.amount_minor) && providerCurrency==="NGN";
+        if(providerStatus!=="success" || !amountMatches){
+          await client.query("UPDATE escrow_payment_attempts SET status='FAILED',updated_at=now() WHERE id=$1 AND status='PENDING'",[attempt.id]);
+          await client.query("COMMIT");
+          continue;
+        }
+        await client.query(
+          `UPDATE escrow_payment_attempts SET status='SUCCESS',updated_at=now()
+             WHERE id=$1 AND status='PENDING'`,[attempt.id]
+        );
+        await client.query(
+          `UPDATE escrow_ledgers
+              SET state='paid_escrow',provider='paystack',provider_reference=$2,
+                  funded_at=COALESCE(funded_at,now()),updated_at=now()
+            WHERE order_id=$1 AND state='pending_payment'`,[attempt.order_id,reference]
+        );
+        await client.query(
+          `UPDATE deliveries
+              SET escrow_payment_state='paid_escrow',escrow_paid_at=COALESCE(escrow_paid_at,now())
+            WHERE id=$1 AND escrow_payment_state='pending_payment'`,[attempt.order_id]
+        );
+        await client.query(
+          `UPDATE payments
+              SET status='HELD',escrow_status='HELD',provider_reference=COALESCE(provider_reference,$2),updated_at=now()
+            WHERE delivery_id=$1 AND collection_mode='SENDER_ESCROW'`,[attempt.order_id,reference]
+        );
+        await client.query("COMMIT");
+      }catch(error){
+        await client.query("ROLLBACK");
+        console.error("escrow provider reconciliation error",error);
+      }finally{client.release();}
+    }catch(error){
+      console.error("escrow provider verification error",error);
+      // Keep the attempt pending for the next reconciliation cycle.
+    }
+  }
+}
+
 router.post("/escrow/:orderId/pin", requireAuth(), async (req,res)=>{
   if(!databaseEnabled())return res.status(503).json({error:"Database unavailable"});
   const parsed=z.object({pin:z.string().regex(/^\d{4}$/)}).safeParse(req.body);
