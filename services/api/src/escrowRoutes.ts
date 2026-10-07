@@ -13,7 +13,11 @@ const COURIER_SHARE_BPS = 7500;
 const ESCROW_DISPUTE_HOURS = 2;
 const MERCHANT_HOLD_HOURS = 72;
 const FLOAT_MIN_RESERVE_MINOR = 500000000;
-const FLOAT_TOPUP_THRESHOLD_MINOR = 300000000;\n\nexport function createWalletPayoutProviderReference(): string {\n  return "sd_wallet_" + randomUUID().replaceAll("-", "");\n}
+const FLOAT_TOPUP_THRESHOLD_MINOR = 300000000;
+
+export function createWalletPayoutProviderReference(): string {
+  return "sd_wallet_" + randomUUID().replaceAll("-", "");
+}
 
 function authUser(req: any): string {
   const id = identity(req);
