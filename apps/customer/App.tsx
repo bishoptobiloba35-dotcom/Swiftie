@@ -814,7 +814,7 @@ export default function App() {
   if (!signedIn && receiverMode) {
     return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.auth}>
       <Text style={styles.logo}>SwiftDrop</Text><Text style={styles.brandTag}>MOVE WITH CONFIDENCE</Text><Text style={styles.eyebrow}>RECEIVER</Text>
-      <Text style={styles.subtitle}>Confirm receipt with your PIN. If the sender selected receiver payment, you will pay the order amount immediately after confirmation.</Text>
+      <Text style={styles.subtitle}>Confirm receipt with your PIN. Payment is secured in-app before delivery. Confirmation releases the held courier payout flow.</Text>
       <TextInput style={styles.input} placeholder="Tracking code" value={trackingCode} onChangeText={setTrackingCode} autoCapitalize="characters" />
       <TextInput style={styles.input} placeholder="Receiver phone number" value={trackingPhone} onChangeText={setTrackingPhone} keyboardType="phone-pad" />
       <TextInput style={styles.input} placeholder="4-digit receiver PIN" value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} keyboardType="number-pad" secureTextEntry maxLength={4} />
