@@ -10,7 +10,6 @@ test("72-hour escrow release refuses to consume the protected float reserve", as
   if (!pool) return;
   await runMigrations();
   const userId=randomUUID();
-  const orderId=randomUUID();
   const ledgerId=randomUUID();
   const trackingCode=`FLOAT-TEST-${randomUUID().replaceAll("-","").slice(0,12)}`;
   await pool.query(
