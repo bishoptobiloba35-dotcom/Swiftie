@@ -1217,41 +1217,53 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   if (databaseEnabled() && (event?.event === "charge.success" || event?.event === "charge.failed")) {
     const escrowReference = String(event?.data?.reference ?? "");
     if (escrowReference) {
-      const attempt = (await pool!.query(
-        `SELECT epa.id, epa.order_id, epa.amount_minor, d.customer_id
-           FROM escrow_payment_attempts epa
-           JOIN deliveries d ON d.id=epa.order_id
-          WHERE epa.provider_reference=$1
-             OR epa.order_id IN (
-               SELECT va.order_id FROM virtual_accounts va
-                WHERE va.account_number=$2 AND va.status='ACTIVE'
-             )
-          FOR UPDATE`,
-        [escrowReference, String(event?.data?.authorization?.receiver_bank_account_number ?? "")]
-      )).rows[0];
-      if (attempt) {
-        const providerAmount = Number(event?.data?.amount);
-        const providerCurrency = String(event?.data?.currency ?? "");
-        const amountMatches = Number.isSafeInteger(providerAmount) &&
-          providerAmount === Number(attempt.amount_minor) &&
-          providerCurrency === "NGN";
-        if (event.event === "charge.failed" || !amountMatches) {
-          await pool!.query(
-            `UPDATE escrow_payment_attempts SET status='FAILED',updated_at=now()
-             WHERE id=$1 AND status='PENDING'`,
-            [attempt.id]
-          );
-          await pool!.query(
-            `UPDATE escrow_ledgers SET state='pending_payment',provider_reference=$2,updated_at=now()
-             WHERE order_id=$1 AND state='pending_payment'`,
-            [attempt.order_id, escrowReference]
-          );
-          await recordDeliveryEvent({deliveryId:attempt.order_id,eventType:"ESCROW_PAYMENT_FAILED",metadata:{provider:"paystack",reference:escrowReference,amountMatches}});
-          return res.status(200).json({received:true,duplicate:duplicateWebhook});
-        }
-        const client=await pool!.connect();
-        try {
-          await client.query("BEGIN");
+      const receiverAccountNumber = String(event?.data?.authorization?.receiver_bank_account_number ?? "");
+      const client=await pool!.connect();
+      try {
+        await client.query("BEGIN");
+        const attempt = (await client.query(
+          `SELECT epa.id, epa.order_id, epa.amount_minor, epa.status, d.customer_id
+             FROM escrow_payment_attempts epa
+             JOIN deliveries d ON d.id=epa.order_id
+            WHERE epa.provider_reference=$1
+               OR epa.order_id IN (
+                 SELECT va.order_id FROM virtual_accounts va
+                  WHERE va.account_number=$2 AND va.status='ACTIVE'
+               )
+            ORDER BY CASE WHEN epa.provider_reference=$1 THEN 0 ELSE 1 END
+            LIMIT 1
+            FOR UPDATE OF epa, d`,
+          [escrowReference, receiverAccountNumber]
+        )).rows[0];
+
+        if (attempt) {
+          if (attempt.status !== "PENDING") {
+            await client.query("COMMIT");
+            return res.status(200).json({received:true,duplicate:true,escrow:attempt.status === "SUCCESS" ? "paid_escrow" : undefined});
+          }
+
+          const providerAmount = Number(event?.data?.amount);
+          const providerCurrency = String(event?.data?.currency ?? "");
+          const amountMatches = Number.isSafeInteger(providerAmount) &&
+            providerAmount === Number(attempt.amount_minor) &&
+            providerCurrency === "NGN";
+
+          if (event.event === "charge.failed" || !amountMatches) {
+            await client.query(
+              `UPDATE escrow_payment_attempts SET status='FAILED',updated_at=now()
+               WHERE id=$1 AND status='PENDING'`,
+              [attempt.id]
+            );
+            await client.query(
+              `UPDATE escrow_ledgers SET state='pending_payment',provider_reference=CASE WHEN provider_reference IS NULL THEN $2 ELSE provider_reference END,updated_at=now()
+               WHERE order_id=$1 AND state='pending_payment'`,
+              [attempt.order_id, escrowReference]
+            );
+            await client.query("COMMIT");
+            await recordDeliveryEvent({deliveryId:attempt.order_id,eventType:"ESCROW_PAYMENT_FAILED",metadata:{provider:"paystack",reference:escrowReference,amountMatches}});
+            return res.status(200).json({received:true,duplicate:duplicateWebhook});
+          }
+
           await client.query(
             `UPDATE escrow_payment_attempts SET status='SUCCESS',updated_at=now()
              WHERE id=$1 AND status='PENDING'`,
@@ -1276,24 +1288,29 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
               WHERE delivery_id=$1 AND collection_mode='SENDER_ESCROW'`,
             [attempt.order_id,escrowReference]
           );
+
+          const floatLatest=(await client.query("SELECT balance_after_minor FROM float_transactions ORDER BY created_at DESC LIMIT 1 FOR UPDATE")).rows[0];
+          const floatBalance=Number(floatLatest?.balance_after_minor ?? 0);
+          if (!Number.isSafeInteger(floatBalance)) {
+            throw new Error("Invalid escrow float balance");
+          }
+          await client.query(
+            `INSERT INTO float_transactions(type,amount_minor,balance_after_minor,order_id,provider_reference,metadata)
+             VALUES('ESCROW_IN',$1,$2,$3,$4,'{"reason":"paystack_escrow_funding"}'::jsonb)
+             ON CONFLICT (type,provider_reference) DO NOTHING`,
+            [providerAmount,floatBalance+providerAmount,attempt.order_id,escrowReference]
+          );
           await client.query("COMMIT");
-        } catch (error) {
-          await client.query("ROLLBACK");
-          console.error(JSON.stringify({event:"escrow_payment_webhook_failed",orderId:attempt.order_id,reference:escrowReference,error:error instanceof Error?error.message:"unknown"}));
-          return res.status(500).json({error:"Escrow payment processing failed"});
-        } finally {
-          client.release();
+          await recordDeliveryEvent({deliveryId:attempt.order_id,eventType:"ESCROW_PAYMENT_FUNDED",metadata:{provider:"paystack",reference:escrowReference,amountMinor:providerAmount}});
+          return res.status(200).json({received:true,duplicate:duplicateWebhook,escrow:"paid_escrow"});
         }
-        const floatLatest=(await pool!.query("SELECT balance_after_minor FROM float_transactions ORDER BY created_at DESC LIMIT 1")).rows[0];
-        const floatBalance=Number(floatLatest?.balance_after_minor ?? 0);
-        await pool!.query(
-          `INSERT INTO float_transactions(type,amount_minor,balance_after_minor,order_id,provider_reference,metadata)
-           VALUES('ESCROW_IN',$1,$2,$3,$4,'{"reason":"paystack_escrow_funding"}'::jsonb)
-           ON CONFLICT DO NOTHING`,
-          [providerAmount,floatBalance+providerAmount,attempt.order_id,escrowReference]
-        );
-        await recordDeliveryEvent({deliveryId:attempt.order_id,eventType:"ESCROW_PAYMENT_FUNDED",metadata:{provider:"paystack",reference:escrowReference,amountMinor:providerAmount}});
-        return res.status(200).json({received:true,duplicate:duplicateWebhook,escrow:"paid_escrow"});
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        console.error(JSON.stringify({event:"escrow_payment_webhook_failed",reference:escrowReference,error:error instanceof Error?error.message:"unknown"}));
+        return res.status(500).json({error:"Escrow payment processing failed"});
+      } finally {
+        client.release();
       }
     }
   }
