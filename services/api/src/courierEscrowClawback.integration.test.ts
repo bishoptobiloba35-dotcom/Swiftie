@@ -17,7 +17,7 @@ test("courier escrow clawback is idempotent and never drives wallet negative", a
   await pool.query(
     `INSERT INTO users(id,role,full_name,phone,email,password_hash)
      VALUES($1,'COURIER','Clawback Courier',$2,$3,'not-used'),($4,'CUSTOMER','Clawback Customer',$5,$6,'not-used')`,
-    [courierId,"+234806"+String(process.pid).slice(-7),courierId+"@example.test",customerId,"+234807"+String(process.pid).slice(-7),customerId+"@example.test"]
+    [courierId,"+2348"+String(Math.floor(100000000+Math.random()*899999999)),courierId+"@example.test",customerId,"+2348"+String(Math.floor(100000000+Math.random()*899999999)),customerId+"@example.test"]
   );
   const delivery=await createPersistentDelivery({
     senderId:customerId,
@@ -71,7 +71,7 @@ test("courier escrow clawback pauses when the courier wallet cannot cover the pa
   await pool.query(
     `INSERT INTO users(id,role,full_name,phone,email,password_hash)
      VALUES($1,'COURIER','Short Courier',$2,$3,'not-used'),($4,'CUSTOMER','Short Customer',$5,$6,'not-used')`,
-    [courierId,"+234809"+String(process.pid).slice(-7),courierId+"@example.test",customerId,"+234810"+String(process.pid).slice(-7),customerId+"@example.test"]
+    [courierId,"+2348"+String(Math.floor(100000000+Math.random()*899999999)),courierId+"@example.test",customerId,"+2348"+String(Math.floor(100000000+Math.random()*899999999)),customerId+"@example.test"]
   );
   const delivery=await createPersistentDelivery({
     senderId:customerId,
