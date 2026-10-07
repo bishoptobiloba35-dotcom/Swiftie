@@ -1297,7 +1297,7 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
           await client.query(
             `INSERT INTO float_transactions(type,amount_minor,balance_after_minor,order_id,provider_reference,metadata)
              VALUES('ESCROW_IN',$1,$2,$3,$4,'{"reason":"paystack_escrow_funding"}'::jsonb)
-             ON CONFLICT (type,provider_reference) DO NOTHING`,
+             ON CONFLICT DO NOTHING`,
             [providerAmount,floatBalance+providerAmount,attempt.order_id,escrowReference]
           );
           await client.query("COMMIT");
