@@ -1106,6 +1106,87 @@ export async function markDisputeUnderReview(deliveryId: string): Promise<Disput
   return result.rows[0] ? rowToDispute(result.rows[0]) : null;
 }
 
+export async function recoverCourierEscrowPayout(deliveryId: string): Promise<{ recovered: boolean; amountMinor: number; reason?: string }> {
+  if (!pool) return { recovered: false, amountMinor: 0, reason: "database_unavailable" };
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const payout = (await client.query(
+      `SELECT wt.id,wt.wallet_id,wt.amount_minor,sw.balance_minor
+         FROM wallet_transactions wt
+         JOIN stakeholder_wallets sw ON sw.id=wt.wallet_id
+        WHERE wt.order_id=$1 AND wt.type='COURIER_INSTANT_PAYOUT' AND wt.direction='CREDIT'
+        ORDER BY wt.created_at DESC LIMIT 1
+        FOR UPDATE OF wt,sw`,
+      [deliveryId]
+    )).rows[0];
+    if (!payout) {
+      await client.query("ROLLBACK");
+      return { recovered: true, amountMinor: 0 };
+    }
+    const existing = (await client.query(
+      `SELECT * FROM escrow_courier_clawbacks WHERE order_id=$1 FOR UPDATE`,
+      [deliveryId]
+    )).rows[0];
+    if (existing?.status === "RECOVERED") {
+      await client.query("COMMIT");
+      return { recovered: true, amountMinor: Number(existing.amount_minor) };
+    }
+    const amount = Number(payout.amount_minor);
+    const balance = Number(payout.balance_minor);
+    if (!Number.isSafeInteger(amount) || amount <= 0) {
+      await client.query("ROLLBACK");
+      return { recovered: false, amountMinor: 0, reason: "invalid_payout_amount" };
+    }
+    const clawback = existing ?? (await client.query(
+      `INSERT INTO escrow_courier_clawbacks(order_id,wallet_transaction_id,amount_minor,status)
+       VALUES($1,$2,$3,'PROCESSING') RETURNING *`,
+      [deliveryId,payout.id,amount]
+    )).rows[0];
+    if (!existing) {
+      // The original credit remains immutable. Recovery is represented by a separate
+      // debit transaction so the wallet ledger stays append-only and auditable.
+    }
+    if (balance < amount) {
+      await client.query(
+        `UPDATE escrow_courier_clawbacks SET status='INSUFFICIENT_FUNDS',updated_at=now() WHERE id=$1`,
+        [clawback.id]
+      );
+      await client.query("COMMIT");
+      return { recovered: false, amountMinor: amount, reason: "insufficient_courier_wallet_funds" };
+    }
+    const wallet = (await client.query(
+      `UPDATE stakeholder_wallets
+          SET balance_minor=balance_minor-$2,updated_at=now()
+        WHERE id=$1 AND balance_minor >= $2
+        RETURNING id,balance_minor`,
+      [payout.wallet_id,amount]
+    )).rows[0];
+    if (!wallet) {
+      await client.query(`UPDATE escrow_courier_clawbacks SET status='INSUFFICIENT_FUNDS',updated_at=now() WHERE id=$1`,[clawback.id]);
+      await client.query("COMMIT");
+      return { recovered: false, amountMinor: amount, reason: "insufficient_courier_wallet_funds" };
+    }
+    await client.query(
+      `INSERT INTO wallet_transactions(wallet_id,order_id,type,direction,amount_minor,balance_after_minor,idempotency_key,metadata)
+       VALUES($1,$2,'COURIER_ESCROW_CLAWBACK','DEBIT',$3,$4,$5,$6::jsonb)
+       ON CONFLICT(idempotency_key) DO NOTHING`,
+      [payout.wallet_id,deliveryId,amount,Number(wallet.balance_minor),`courier-clawback-${deliveryId}`,JSON.stringify({reason:"escrow_refund",sourceWalletTransactionId:payout.id})]
+    );
+    await client.query(
+      `UPDATE escrow_courier_clawbacks SET status='RECOVERED',recovered_at=now(),updated_at=now() WHERE id=$1`,
+      [clawback.id]
+    );
+    await client.query("COMMIT");
+    return { recovered: true, amountMinor: amount };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function prepareRefund(deliveryId: string, refundAmountMinor: number, verifiedLossMinor?: number): Promise<{ payment: PaymentRecord; payout: PayoutRecord | null; dispute: DisputeRecord } | null> {
   if (!pool) return null;
   const client = await pool.connect();
