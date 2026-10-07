@@ -8,8 +8,6 @@ import { createPersistentDelivery } from "./database/deliveryRepository.js";
 
 test("courier escrow clawback is idempotent and never drives wallet negative", async () => {
   if (!pool) return;
-  const schema=await readFile(new URL("./database/schema.sql", import.meta.url), "utf8");
-  await pool.query(schema);
   await runMigrations();
   const courierId=randomUUID();
   const customerId=randomUUID();
