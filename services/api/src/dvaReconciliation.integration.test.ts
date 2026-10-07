@@ -104,8 +104,8 @@ test("escrow payment attempts allow only one pending attempt per order", async (
   if (!pool) return;
   await runMigrations();
   const user=(await pool.query(
-    `INSERT INTO users(email,phone,role) VALUES($1,$2,'CUSTOMER') RETURNING id`,
-    [`escrow-active-${Date.now()}@example.test`,`080${String(Date.now()).slice(-8)}`]
+    `INSERT INTO users(full_name,email,phone,role) VALUES($1,$2,$3,'CUSTOMER') RETURNING id`,
+    ['Escrow Active Test',`escrow-active-${Date.now()}@example.test`,`080${String(Date.now()).slice(-8)}`]
   )).rows[0];
   const delivery=(await pool.query(
     `INSERT INTO deliveries(sender_id,customer_id,status,payment_mode,escrow_payment_state,escrow_total_paid_minor)
