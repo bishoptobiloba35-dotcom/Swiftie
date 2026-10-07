@@ -83,6 +83,18 @@ if (db) {
       dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
       weightKg: 1, dimensionsCm: { length: 10, width: 10, height: 10 }, isPerishable: false, paymentMode: "SENDER_ESCROW"
     });
+    const perishableDelivery = await createPersistentDelivery({
+      senderId: customer.id, receiverName: "Perishable Receiver", receiverPhone: "+2349070000099", receiverPin: "1234",
+      declaredValueMinor: 100000,
+      pickup: { label: "Perishable Pickup", formattedAddress: "Perishable Pickup", location: { latitude: 9.07, longitude: 7.40 } },
+      dropoff: { label: "Perishable Dropoff", formattedAddress: "Perishable Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
+      weightKg: 1, dimensionsCm: { length: 10, width: 10, height: 10 }, isPerishable: true, paymentMode: "SENDER_ESCROW"
+    });
+    const proofRequirements = (await db.query(
+      "SELECT proof_requirements FROM deliveries WHERE id=$1", [perishableDelivery.id]
+    )).rows[0].proof_requirements;
+    assert.deepEqual(proofRequirements, { pickup: ["PHOTO"], dropoff: ["PIN", "PHOTO", "SIGNATURE"] });
+
     assert.ok(await transitionDelivery(delivery.id, "CREATED", "PAYMENT_AUTHORIZED"));
     assert.ok(await transitionDelivery(delivery.id, "PAYMENT_AUTHORIZED", "DRIVER_ASSIGNED", driver.id));
     assert.ok(await transitionDelivery(delivery.id, "DRIVER_ASSIGNED", "DRIVER_AT_PICKUP", driver.id));
