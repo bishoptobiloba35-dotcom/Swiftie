@@ -52,13 +52,17 @@ test("pending DVA transfers are periodically re-queried through Paystack", async
   const originalFetch=globalThis.fetch;
   const originalSecret=process.env.PAYSTACK_SECRET_KEY;
   process.env.PAYSTACK_SECRET_KEY="sk_test_dva_requery";
+  let requeryCalls=0;
   globalThis.fetch=(async (input: RequestInfo | URL) => {
+    requeryCalls++;
     const url=String(input);
     assert.match(url,/dedicated_account\/requery\?account_number=9930000902&provider_slug=test-bank&date=\d{4}-\d{2}-\d{2}/);
     return new Response(JSON.stringify({status:true,message:"requery accepted"}),{status:200});
   }) as typeof fetch;
   try {
     await requeryPendingDvaAccounts();
+    await requeryPendingDvaAccounts();
+    assert.equal(requeryCalls,1);
   } finally {
     globalThis.fetch=originalFetch;
     if(originalSecret===undefined) delete process.env.PAYSTACK_SECRET_KEY;
