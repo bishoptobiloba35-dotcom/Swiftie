@@ -11,6 +11,7 @@ test("72-hour escrow release refuses to consume the protected float reserve", as
   const userId=randomUUID();
   const orderId=randomUUID();
   const ledgerId=randomUUID();
+  const trackingCode=`FLOAT-TEST-${randomUUID().replaceAll("-","").slice(0,12)}`;
   await pool.query(
     `INSERT INTO users(id,role,full_name,phone,email,password_hash)
      VALUES($1,'CUSTOMER','Float Reserve Test',$2,$3,'not-used')`,
@@ -23,10 +24,10 @@ test("72-hour escrow release refuses to consume the protected float reserve", as
        escrow_total_paid_minor,escrow_courier_share_minor,
        escrow_service_charge_minor,escrow_protection_reserve_minor,
        escrow_swiftdrop_margin_minor,escrow_merchant_share_minor
-     ) VALUES($1,'FLOAT-TEST-' || substr(replace($1::text,'-',''),1,10),$2,'Receiver','+2348012345678','hash',
+     ) VALUES($1,$3,$2,'Receiver','+2348012345678','hash',
        'SENDER_ESCROW',false,'DELIVERED','dispute_window',
        1000000,500000,50000,100000,350000,0)`,
-    [orderId,userId]
+    [orderId,userId,trackingCode]
   );
   await pool.query(
     `INSERT INTO escrow_ledgers(
