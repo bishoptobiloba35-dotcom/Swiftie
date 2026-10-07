@@ -2758,7 +2758,7 @@ async function startServer() {
     }, 60_000);
     const dvaRequeryWorker = setInterval(() => {
       void requeryPendingDvaAccounts().catch(() => {});
-    }, 120_000);
+    }, 600_000);
     void requeryPendingDvaAccounts().catch(() => {});
     const escrowProviderReconciliationWorker = setInterval(() => {
       void reconcilePendingEscrowProviderPayments().catch(() => {});

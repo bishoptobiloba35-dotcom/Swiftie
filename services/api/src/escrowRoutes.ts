@@ -445,14 +445,15 @@ router.post("/virtual-account/create", requireAuth(), async (req,res)=>{
 export async function requeryPendingDvaAccounts(): Promise<void> {
   if(!pool || !process.env.PAYSTACK_SECRET_KEY) return;
   const rows=(await pool.query(
-    `SELECT va.account_number,va.provider_slug
+    `SELECT va.id,va.account_number,va.provider_slug
        FROM virtual_accounts va
        JOIN escrow_payment_attempts epa ON epa.order_id=va.order_id
       WHERE va.status='ACTIVE'
         AND va.account_number IS NOT NULL
         AND epa.method='BANK_TRANSFER'
         AND epa.status='PENDING'
-      GROUP BY va.account_number,va.provider_slug
+        AND (va.last_requery_at IS NULL OR va.last_requery_at <= now()-interval '10 minutes')
+      GROUP BY va.id,va.account_number,va.provider_slug
       ORDER BY MIN(epa.updated_at) ASC
       LIMIT 25`
   )).rows;
@@ -460,13 +461,30 @@ export async function requeryPendingDvaAccounts(): Promise<void> {
   for(const row of rows){
     const providerSlug=String(row.provider_slug ?? process.env.PAYSTACK_DVA_PROVIDER_SLUG ?? "").trim();
     if(!providerSlug) continue;
+
+    // Claim the requery slot atomically so multiple API instances cannot issue
+    // duplicate requests inside Paystack's ten-minute per-account window.
+    const claimed=(await pool.query(
+      `UPDATE virtual_accounts
+          SET last_requery_at=now(),updated_at=now()
+        WHERE id=$1
+          AND status='ACTIVE'
+          AND (last_requery_at IS NULL OR last_requery_at <= now()-interval '10 minutes')
+        RETURNING id`,
+      [row.id]
+    )).rows[0];
+    if(!claimed) continue;
+
     try{
-      await fetch(
+      const response=await fetch(
         "https://api.paystack.co/dedicated_account/requery?account_number="+encodeURIComponent(String(row.account_number))+"&provider_slug="+encodeURIComponent(providerSlug)+"&date="+date,
         {headers:{authorization:"Bearer "+process.env.PAYSTACK_SECRET_KEY},signal:AbortSignal.timeout(10_000)}
       );
-    }catch{
-      // Keep the bank-transfer attempt pending; the next scheduled requery retries it.
+      if(!response.ok){
+        console.error(JSON.stringify({event:"dva_requery_rejected",accountNumber:String(row.account_number),providerSlug}));
+      }
+    }catch(error){
+      console.error(JSON.stringify({event:"dva_requery_failed",accountNumber:String(row.account_number),providerSlug,error:error instanceof Error?error.message:"unknown"}));
     }
   }
 }
