@@ -72,12 +72,27 @@ const migrations = [
 
 export async function runMigrations(): Promise<void> {
   if (!pool) return;
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      id TEXT PRIMARY KEY,
-      applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-  `);
+  // Serialize migration bootstrap across concurrent API/test processes. The advisory
+  // lock must be acquired before the schema_migrations table is created; locking
+  // only inside each migration transaction still permits a CREATE TABLE race.
+  const bootstrapClient = await pool.connect();
+  try {
+    await bootstrapClient.query("BEGIN");
+    await bootstrapClient.query("SELECT pg_advisory_xact_lock(hashtext('swiftdrop:schema-migrations'))");
+    await bootstrapClient.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        id TEXT PRIMARY KEY,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await bootstrapClient.query("COMMIT");
+  } catch (error) {
+    await bootstrapClient.query("ROLLBACK");
+    throw error;
+  } finally {
+    bootstrapClient.release();
+  }
+
   for (const migration of migrations) {
     const migrationUrl = new URL("./migrations/" + migration.file, import.meta.url);
     const sql = await readFile(migrationUrl, "utf8");
