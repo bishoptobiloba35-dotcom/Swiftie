@@ -33,7 +33,7 @@ import { reconcilePendingBuyOrderPayments } from "./buyOrderPaymentWorker.js";
 import { recordHttpMetric, renderPrometheusMetrics } from "./metrics.js";
 import { reportExternalError } from "./errorTracking.js";
 import { processPhase2EscrowReleases, reconcilePhase2Float } from "./phase2EscrowWorker.js";
-import escrowRoutes, { reconcileProcessingWalletPayouts } from "./escrowRoutes.js";
+import escrowRoutes, { reconcileProcessingWalletPayouts, requeryPendingDvaAccounts } from "./escrowRoutes.js";
 
 const app = express();
 
