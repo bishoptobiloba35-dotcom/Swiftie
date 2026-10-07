@@ -215,10 +215,11 @@ export async function updatePaymentStatus(
 export type DeliveryProofType = "PHOTO" | "SIGNATURE" | "BARCODE" | "ID";
 export type DeliveryProofPhase = "PICKUP" | "DROPOFF";
 
-function proofRequirementsForDeclaredValue(declaredValueMinor: number): { pickup: string[]; dropoff: string[] } {
+function proofRequirementsForDeclaredValue(declaredValueMinor: number, isPerishable: boolean): { pickup: string[]; dropoff: string[] } {
   const photoThreshold = Number(process.env.SWIFTDROP_PROOF_PHOTO_THRESHOLD_MINOR ?? 500000);
   const signatureThreshold = Number(process.env.SWIFTDROP_PROOF_SIGNATURE_THRESHOLD_MINOR ?? 1000000);
   const dropoff = ["PIN"];
+  if (isPerishable) dropoff.push("PHOTO", "SIGNATURE");
   if (Number.isFinite(photoThreshold) && photoThreshold > 0 && declaredValueMinor >= photoThreshold) dropoff.push("PHOTO");
   if (Number.isFinite(signatureThreshold) && signatureThreshold > 0 && declaredValueMinor >= signatureThreshold) dropoff.push("SIGNATURE");
   return { pickup: ["PHOTO"], dropoff };
@@ -384,7 +385,7 @@ export async function createPersistentDelivery(input: {
       input.pickup.formattedAddress, input.pickup.location.latitude, input.pickup.location.longitude, input.pickupInstructions?.trim() || null,
       input.dropoff.formattedAddress, input.dropoff.location.latitude, input.dropoff.location.longitude, input.dropoffInstructions?.trim() || null,
       hashPin(input.receiverPin), input.weightKg ?? null, input.dimensionsCm?.length ?? null, input.dimensionsCm?.width ?? null, input.dimensionsCm?.height ?? null, input.isPerishable ?? false, input.declaredValueMinor,
-      JSON.stringify(proofRequirementsForDeclaredValue(input.declaredValueMinor)),
+      JSON.stringify(proofRequirementsForDeclaredValue(input.declaredValueMinor, input.isPerishable ?? false)),
       input.quote?.distanceMeters ?? null, input.quote?.durationSeconds ?? null,
       input.quote?.baseFareMinor ?? null, input.quote?.distanceFareMinor ?? null,
       input.quote?.weightFareMinor ?? null, input.quote?.sizeFareMinor ?? null, input.quote?.perishableSurchargeMinor ?? null,
