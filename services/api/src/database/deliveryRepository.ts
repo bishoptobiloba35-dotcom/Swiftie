@@ -1106,7 +1106,7 @@ export async function markDisputeUnderReview(deliveryId: string): Promise<Disput
   return result.rows[0] ? rowToDispute(result.rows[0]) : null;
 }
 
-export async function recoverCourierEscrowPayout(deliveryId: string): Promise<{ recovered: boolean; amountMinor: number; reason?: string }> {
+export async function recoverCourierEscrowPayout(deliveryId: string): Promise<{ recovered: boolean; amountMinor: number; reason?: string; liabilityCreated?: boolean }> {
   if (!pool) return { recovered: false, amountMinor: 0, reason: "database_unavailable" };
   const client = await pool.connect();
   try {
