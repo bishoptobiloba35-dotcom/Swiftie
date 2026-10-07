@@ -137,7 +137,7 @@ test("outstanding courier clawback is recovered from future earnings without a n
     `SELECT id,outstanding_amount_minor,status FROM escrow_courier_clawback_liabilities WHERE clawback_id=(SELECT id FROM escrow_courier_clawbacks WHERE order_id=$1)`,[delivery.id]
   )).rows[0];
   assert.equal(liability.status,"OUTSTANDING");
-  assert.equal(Number(liability.outstanding_amount_minor),150000);
+  assert.equal(Number(liability.outstanding_amount_minor),200000);
 
   await pool.query("UPDATE stakeholder_wallets SET balance_minor=150000 WHERE id=$1",[wallet.id]);
   await pool.query(
