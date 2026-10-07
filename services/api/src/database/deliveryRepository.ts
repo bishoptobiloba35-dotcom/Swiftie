@@ -1243,9 +1243,9 @@ export async function recoverOutstandingCourierClawbacks(courierUserId: string, 
 
       await client.query(
         `UPDATE escrow_courier_clawback_liabilities
-            SET outstanding_amount_minor=$2,recovered_amount_minor=$3,
-                status=CASE WHEN $2=0 THEN 'RECOVERED' ELSE 'OUTSTANDING' END,
-                recovered_at=CASE WHEN $2=0 THEN now() ELSE recovered_at END,updated_at=now()
+            SET outstanding_amount_minor=$2::bigint,recovered_amount_minor=$3::bigint,
+                status=CASE WHEN $2::bigint=0 THEN 'RECOVERED' ELSE 'OUTSTANDING' END,
+                recovered_at=CASE WHEN $2::bigint=0 THEN now() ELSE recovered_at END,updated_at=now()
           WHERE id=$1`,
         [row.id, nextOutstanding, nextRecovered]
       );
