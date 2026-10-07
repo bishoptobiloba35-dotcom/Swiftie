@@ -34,7 +34,7 @@ import { reconcilePendingBuyOrderPayments } from "./buyOrderPaymentWorker.js";
 import { recordHttpMetric, renderPrometheusMetrics } from "./metrics.js";
 import { reportExternalError } from "./errorTracking.js";
 import { processPhase2EscrowReleases, reconcilePhase2Float } from "./phase2EscrowWorker.js";
-import escrowRoutes, { reconcileProcessingWalletPayouts, requeryPendingDvaAccounts } from "./escrowRoutes.js";
+import escrowRoutes, { reconcileProcessingWalletPayouts, requeryPendingDvaAccounts, reconcilePendingEscrowProviderPayments } from "./escrowRoutes.js";
 
 const app = express();
 
@@ -2649,6 +2649,10 @@ async function startServer() {
       void requeryPendingDvaAccounts().catch(() => {});
     }, 120_000);
     void requeryPendingDvaAccounts().catch(() => {});
+    const escrowProviderReconciliationWorker = setInterval(() => {
+      void reconcilePendingEscrowProviderPayments().catch(() => {});
+    }, 120_000);
+    void reconcilePendingEscrowProviderPayments().catch(() => {});
     const phase2WalletPayoutReconciliationWorker = setInterval(() => {
       void reconcileProcessingWalletPayouts().catch(() => {});
     }, 60_000);
@@ -2686,6 +2690,7 @@ async function startServer() {
     phase2EscrowWorker.unref();
     phase2FloatReconciliationWorker.unref();
     dvaRequeryWorker.unref();
+    escrowProviderReconciliationWorker.unref();
     phase2WalletPayoutReconciliationWorker.unref();
   }
   httpServer.listen(port, () => console.log(`SwiftDrop API listening on port ${port}`));
