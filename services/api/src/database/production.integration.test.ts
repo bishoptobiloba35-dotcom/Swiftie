@@ -14,6 +14,7 @@ import {
   createPersistentDelivery,
   prepareRefund,
   savePickupPhoto,
+  saveDeliveryProof,
   transitionDelivery,
   updatePaymentStatus,
   updatePayoutProviderStatus
@@ -99,6 +100,13 @@ if (!db) {
     assert.equal((await transitionDelivery(delivery.id, "PICKED_UP", "IN_TRANSIT", driver.id))?.status, "IN_TRANSIT");
     assert.equal((await transitionDelivery(delivery.id, "IN_TRANSIT", "ARRIVED", driver.id))?.status, "ARRIVED");
     await updatePaymentStatus(delivery.id, "HELD");
+    assert.ok(await saveDeliveryProof({
+      deliveryId: delivery.id,
+      phase: "DROPOFF",
+      proofType: "PHOTO",
+      storageKey: "supabase://integration/delivery-photo",
+      capturedByUserId: driverUser.id
+    }));
 
     const completed = await confirmReceiverAndReleaseEscrow(
       delivery.id,
