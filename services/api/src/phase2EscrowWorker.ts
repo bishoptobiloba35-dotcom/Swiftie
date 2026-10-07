@@ -106,7 +106,10 @@ export async function reconcilePhase2Float(reconciledBy?: string): Promise<void>
          FROM escrow_ledgers
         WHERE state IN ('paid_escrow','picked_up','in_transit','arrived','pin_confirmed','dispute_window')`
     )).rows[0];
-    const expected=Number(held?.held ?? 0);
+    const walletLiability=(await client.query(
+      "SELECT COALESCE(SUM(balance_minor+pending_minor),0) AS total FROM stakeholder_wallets"
+    )).rows[0];
+    const expected=Number(held?.held ?? 0)+Number(walletLiability?.total ?? 0);
     const variance=recorded-expected;
     await client.query(
       `INSERT INTO float_reconciliations(reconciliation_date,expected_balance_minor,recorded_balance_minor,variance_minor,reconciled_by,status)
