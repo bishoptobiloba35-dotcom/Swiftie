@@ -112,7 +112,7 @@ router.post("/escrow/:orderId/pay", requireAuth(), async (req,res)=>{
       const channels=parsed.data.method==="USSD" ? ["ussd"] : ["card","bank","ussd","bank_transfer"];
       const providerResponse=await fetch("https://api.paystack.co/transaction/initialize",{method:"POST",headers:{authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify({email:user.email,amount:String(amountMinor),currency:"NGN",reference,channels,metadata:{deliveryId:orderId,escrow:true}})});
       const payload=await providerResponse.json() as any;
-      if(!providerResponse.ok||!payload.status||!payload.data?.authorization_url){await client.query("ROLLBACK");return res.status(502).json({error:payload.message ?? "Paystack payment initialization failed"});}
+      if(!providerResponse.ok||!payload.status||((parsed.data.method!=="USSD")&&!payload.data?.authorization_url)|| (parsed.data.method==="USSD"&&!payload.data?.ussd_code&&!payload.data?.authorization_url)){await client.query("ROLLBACK");return res.status(502).json({error:payload.message ?? "Paystack payment initialization failed"});}
       providerReference=String(payload.data.reference ?? reference);
       authorizationUrl=payload.data.authorization_url;
       accessCode=payload.data.access_code;
