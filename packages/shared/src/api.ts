@@ -185,17 +185,6 @@ export class SwiftDropApi {
     return data;
   }
 
-  async initializeReceiverPayment(deliveryId: string, receiverPhone: string, receiverPin: string, email: string): Promise<{ paymentId: string; reference: string; authorizationUrl: string; accessCode?: string; amountMinor: number }> {
-    const response = await fetch(this.baseUrl + `/api/deliveries/${encodeURIComponent(deliveryId)}/receiver-payment/initialize`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ receiverPhone, receiverPin, email })
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error ?? "Receiver payment initialization failed");
-    return data;
-  }
-
   async rateReceiverDelivery(deliveryId: string, receiverPhone: string, receiverPin: string, stars: number, comment?: string): Promise<void> {
     const response = await fetch(this.baseUrl + `/api/deliveries/${encodeURIComponent(deliveryId)}/rating/receiver`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ receiverPhone, receiverPin, stars, comment })
