@@ -8,7 +8,7 @@ export default function EscrowPaymentScreen({ api, orderId, amountMinor, onBack 
   const pay=async(method:"PAYSTACK_CARD"|"BANK_TRANSFER"|"USSD"|"SMS_LINK")=>{
     try{
       setBusy(true);
-      await api.createEscrow(orderId,amountMinor);
+      await api.createEscrow(orderId);
       if(method==="BANK_TRANSFER"){
         const va=await api.createVirtualAccount(orderId);
         setVirtualAccount(va.virtualAccount ?? null);
