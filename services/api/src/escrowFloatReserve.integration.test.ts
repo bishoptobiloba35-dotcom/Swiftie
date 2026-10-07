@@ -18,12 +18,12 @@ test("72-hour escrow release refuses to consume the protected float reserve", as
   );
   await pool.query(
     `INSERT INTO deliveries(
-       id,sender_id,receiver_name,receiver_phone,receiver_pin_hash,
+       id,tracking_code,sender_id,receiver_name,receiver_phone,receiver_pin_hash,
        payment_mode,payment_on_delivery,status,escrow_payment_state,
        escrow_total_paid_minor,escrow_courier_share_minor,
        escrow_service_charge_minor,escrow_protection_reserve_minor,
        escrow_swiftdrop_margin_minor,escrow_merchant_share_minor
-     ) VALUES($1,$2,'Receiver','+2348012345678','hash',
+     ) VALUES($1,'FLOAT-TEST-' || substr(replace($1::text,'-',''),1,10),$2,'Receiver','+2348012345678','hash',
        'SENDER_ESCROW',false,'DELIVERED','dispute_window',
        1000000,500000,50000,100000,350000,0)`,
     [orderId,userId]
