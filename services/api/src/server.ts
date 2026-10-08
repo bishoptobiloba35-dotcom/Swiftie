@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
 import path from "node:path";
-import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual, randomInt } from "node:crypto";
 import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
@@ -149,12 +149,14 @@ const notificationForDelivery = async (deliveryId: string, userId: string, title
 
 
 const createDeliverySchema = z.object({
-  senderId: z.string().uuid().optional(), paymentMode: z.literal("SENDER_ESCROW").default("SENDER_ESCROW"), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
-  receiverPin: z.string().regex(/^\d{4}$/, "Receiver PIN must be exactly 4 digits"),
+  senderId: z.string().uuid().optional(), paymentMode: z.enum(["SENDER_ESCROW","RECEIVER_ESCROW"]).default("SENDER_ESCROW"), deliveryType: z.enum(["EXPRESS","STANDARD"]).default("EXPRESS"), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
+
   weightKg: z.number().positive().max(1000),
   dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
   isPerishable: z.boolean(),
   declaredValueMinor: z.number().int().positive().max(10000000000),
+  goodsAmountMinor: z.number().int().nonnegative().max(10000000000).default(0),
+  stationId: z.string().uuid().optional(),
   includeProtection: z.boolean().default(true),
   pickup: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   dropoff: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
@@ -595,6 +597,8 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   const parsed = createDeliverySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const input = { ...parsed.data, senderId: identity(req) };
+  if (parsed.data.goodsAmountMinor > parsed.data.declaredValueMinor) return res.status(400).json({ error: "Goods amount cannot exceed declared value" });
+  if (parsed.data.deliveryType === "STANDARD" && !parsed.data.stationId) return res.status(400).json({ error: "A verified station is required for Standard delivery" });
   const quote = await calculateQuote(
     { latitude: parsed.data.pickup.latitude, longitude: parsed.data.pickup.longitude },
     { latitude: parsed.data.dropoff.latitude, longitude: parsed.data.dropoff.longitude },
@@ -603,8 +607,15 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   if (quote.currency !== "NGN" || !Number.isSafeInteger(quote.totalMinor) || quote.totalMinor <= 0) {
     return res.status(500).json({ error: "Unable to calculate delivery quote" });
   }
-  parsed.data.quote = quote;
-  const pin = parsed.data.receiverPin;
+  const serverPin = String(randomInt(0, 10000)).padStart(4, "0");
+  const effectiveQuote = parsed.data.paymentMode === "RECEIVER_ESCROW"
+    ? { ...quote, protectionReserveMinor: 0, totalMinor: quote.totalMinor - quote.protectionReserveMinor }
+    : quote;
+  parsed.data.quote = effectiveQuote;
+  const senderDepositAmountMinor = parsed.data.paymentMode === "RECEIVER_ESCROW"
+    ? Math.ceil((effectiveQuote.totalMinor - effectiveQuote.serviceFeeMinor) * 0.5)
+    : 0;
+  const pin = serverPin;
   try {
     if (databaseEnabled()) {
       const selectedLocationIds = [input.pickupDropOffLocationId, input.dropoffDropOffLocationId].filter((id): id is string => Boolean(id));
@@ -625,6 +636,10 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
         dropoffInstructions: input.dropoffInstructions,
         receiverName: input.receiverName,
         receiverPhone: input.receiverPhone,
+        goodsAmountMinor: input.goodsAmountMinor,
+        senderDepositAmountMinor,
+        deliveryType: input.deliveryType,
+        stationId: input.stationId,
         pickup: { label: input.pickup.label, formattedAddress: input.pickup.formattedAddress, location: { latitude: input.pickup.latitude, longitude: input.pickup.longitude } },
         dropoff: { label: input.dropoff.label, formattedAddress: input.dropoff.formattedAddress, location: { latitude: input.dropoff.latitude, longitude: input.dropoff.longitude } },
         receiverPin: pin,
@@ -635,9 +650,6 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
         paymentMode: input.paymentMode,
         quote: input.quote
       });
-      if (input.paymentMode !== "SENDER_ESCROW") {
-        return res.status(410).json({ error: "Cash-on-delivery is retired. Every order must use in-app escrow." });
-      }
       if (input.pickupDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'PICKUP',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.pickupDropOffLocationId]);
       if (input.dropoffDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'DROPOFF',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.dropoffDropOffLocationId]);
       return res.status(201).json(safeDelivery(created));
