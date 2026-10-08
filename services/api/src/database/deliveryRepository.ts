@@ -237,6 +237,11 @@ export type StoredDelivery = {
   dropoffInstructions?: string;
   status: string;
   paymentMode: "SENDER_ESCROW" | "RECEIVER_ESCROW";
+  deliveryType: "EXPRESS" | "STANDARD";
+  goodsAmountMinor: number;
+  receiverUserId?: string;
+  senderDepositAmountMinor: number;
+  stationId?: string;
   exceptionStatus?: string;
   nextDeliveryAt?: string | null;
   driverId?: string;
@@ -280,6 +285,11 @@ function rowToDelivery(row: any): StoredDelivery {
     dropoffInstructions: row.dropoff_instructions ?? undefined,
     status: row.status,
     paymentMode: row.payment_mode === "RECEIVER_ESCROW" ? "RECEIVER_ESCROW" : "SENDER_ESCROW",
+    deliveryType: row.delivery_type === "STANDARD" ? "STANDARD" : "EXPRESS",
+    goodsAmountMinor: Number(row.goods_amount_minor ?? 0),
+    receiverUserId: row.receiver_user_id ?? undefined,
+    senderDepositAmountMinor: Number(row.sender_deposit_amount_minor ?? 0),
+    stationId: row.station_id ?? undefined,
     exceptionStatus: row.exception_status ?? "NONE",
     nextDeliveryAt: row.next_delivery_at ? new Date(row.next_delivery_at).toISOString() : null,
     driverId: row.driver_id ?? undefined,
@@ -384,7 +394,7 @@ export async function createPersistentDelivery(input: {
        weight_kg, length_cm, width_cm, height_cm, is_perishable, declared_value_minor,
        proof_requirements, quote_distance_meters, quote_duration_seconds, quote_base_fare_minor,
        quote_distance_fare_minor, quote_weight_fare_minor, quote_size_fare_minor, quote_perishable_surcharge_minor, quote_fuel_reference_minor, quote_protection_reserve_minor, quote_pricing_version, quote_service_fee_minor, quote_total_minor, quote_currency)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'CREATED',$16,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'CREATED',$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40)
      RETURNING *`,
     [id, code, input.senderId, input.receiverName, input.receiverPhone, input.paymentMode ?? "SENDER_ESCROW", input.deliveryType ?? "EXPRESS", input.goodsAmountMinor ?? 0, input.receiverUserId ?? null, input.senderDepositAmountMinor ?? 0, input.stationId ?? null,
       input.pickup.formattedAddress, input.pickup.location.latitude, input.pickup.location.longitude, input.pickupInstructions?.trim() || null,
