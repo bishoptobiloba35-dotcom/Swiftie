@@ -10,7 +10,8 @@ import { assertFeatureEnabled } from "./featureFlags.js";
 
 const router = Router();
 
-router.use((_req, res, next) => {
+router.use((req, res, next) => {
+  if (!req.originalUrl.startsWith("/api/marketplace")) return next();
   try { assertFeatureEnabled("MARKETPLACE"); next(); }
   catch { res.status(403).json({ error: "Marketplace is disabled", code: "FEATURE_DISABLED" }); }
 });
