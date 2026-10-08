@@ -22,18 +22,18 @@ test("receiver escrow and standard delivery require both feature and legal gates
   assert.equal(featureEnabled("STANDARD_DELIVERY"), false);
   assert.equal(legalGateEnabled("LICENSED_ESCROW_PARTNER"), false);
   assert.equal(legalGateEnabled("STATION_AGENT_LIABILITY"), false);
+  assert.throws(
+    () => assertFeatureAndLegalGate("RECEIVER_ESCROW", "LICENSED_ESCROW_PARTNER"),
+    /Legal gate/
+  );
 
   process.env.SWIFTDROP_LEGAL_GATE_LICENSED_ESCROW_PARTNER = "true";
   process.env.SWIFTDROP_LEGAL_GATE_STATION_AGENT_LIABILITY = "true";
 
   assert.equal(featureEnabled("RECEIVER_ESCROW"), true);
   assert.equal(featureEnabled("STANDARD_DELIVERY"), true);
-
   assert.doesNotThrow(() => assertFeatureAndLegalGate("RECEIVER_ESCROW", "LICENSED_ESCROW_PARTNER"));
-  assert.throws(
-    () => assertFeatureAndLegalGate("STANDARD_DELIVERY", "STATION_AGENT_LIABILITY"),
-    /Legal gate/
-  );
+  assert.doesNotThrow(() => assertFeatureAndLegalGate("STANDARD_DELIVERY", "STATION_AGENT_LIABILITY"));
 
   delete process.env.SWIFTDROP_ENABLE_RECEIVER_ESCROW;
   delete process.env.SWIFTDROP_ENABLE_STANDARD_DELIVERY;
