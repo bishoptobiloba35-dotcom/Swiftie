@@ -184,7 +184,7 @@ if (db) {
         declaredValueMinor: 100000,
         pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.07, longitude: 7.40 } },
         dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
-        weightKg: 1, dimensionsCm: { length: 10, width: 10, height: 10 }, isPerishable: false, paymentMode: "RECEIVER_ON_DELIVERY"
+        weightKg: 1, dimensionsCm: { length: 10, width: 10, height: 10 }, isPerishable: false, paymentMode: "RECEIVER_ON_DELIVERY" as never
       }),
       /payment mode|cash|constraint/i
     );
@@ -204,6 +204,20 @@ if (db) {
       ),
       /deliveries_payment_mode_check|constraint/i
     );
+
+    const receiverEscrowDelivery = await createPersistentDelivery({
+      senderId: directModeUser.id, receiverName: "Receiver Escrow", receiverPhone: "+2349070000014",
+      receiverPin: "9090", declaredValueMinor: 200000, goodsAmountMinor: 120000,
+      deliveryType: "EXPRESS", senderDepositAmountMinor: 30000,
+      pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.07, longitude: 7.40 } },
+      dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },
+      weightKg: 1, dimensionsCm: { length: 10, width: 10, height: 10 }, isPerishable: false, paymentMode: "RECEIVER_ESCROW"
+    });
+    assert.equal(receiverEscrowDelivery.paymentMode, "RECEIVER_ESCROW");
+    assert.equal(receiverEscrowDelivery.goodsAmountMinor, 120000);
+    assert.equal(receiverEscrowDelivery.senderDepositAmountMinor, 30000);
+    const receiverPayment = await createPayment({ deliveryId: receiverEscrowDelivery.id, provider: "paystack", amountMinor: 150000, currency: "NGN", collectionMode: "RECEIVER_ESCROW" });
+    assert.equal(receiverPayment.collectionMode, "RECEIVER_ESCROW");
 
     const escrowBoundaryDelivery = await createPersistentDelivery({
       senderId: directModeUser.id, receiverName: "Escrow Boundary Receiver", receiverPhone: "+2349070000013",
