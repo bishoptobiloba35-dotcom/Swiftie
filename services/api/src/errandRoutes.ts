@@ -4,8 +4,15 @@ import { pool } from "./database/db.js";
 import { requireAuth } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
 import { hashPin } from "./security.js";
+import { assertFeatureEnabled } from "./featureFlags.js";
 
 const router = Router();
+
+router.use((req, res, next) => {
+  if (!req.originalUrl.startsWith("/api/errands")) return next();
+  try { assertFeatureEnabled("ERRANDS"); next(); }
+  catch { res.status(403).json({ error: "Errands are disabled", code: "FEATURE_DISABLED" }); }
+});
 
 const errandItemSchema = z.object({
   description: z.string().trim().min(1).max(500),

@@ -5,8 +5,16 @@ import { pool } from "./database/db.js";
 import { requireAuth } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
 import { deletePrivateObject, getPrivateObject, putPrivateObject } from "./storage.js";
+import { assertFeatureEnabled } from "./featureFlags.js";
 
 const router = Router();
+
+router.use((req, res, next) => {
+  const url = req.originalUrl;
+  if (!url.startsWith("/api/agent/") && !url.startsWith("/api/agents/")) return next();
+  try { assertFeatureEnabled("AGENT_ROLE"); next(); }
+  catch { res.status(403).json({ error: "Agent capability is disabled", code: "FEATURE_DISABLED" }); }
+});
 
 function orderId(req: any): string {
   return String(req.params.id ?? "").trim();

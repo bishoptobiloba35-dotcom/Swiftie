@@ -6,8 +6,15 @@ import { requireAuth } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
 import { deletePrivateObject, getPrivateObject, putPrivateObject } from "./storage.js";
 import { hashPin } from "./security.js";
+import { assertFeatureEnabled } from "./featureFlags.js";
 
 const router = Router();
+
+router.use((req, res, next) => {
+  if (!req.originalUrl.startsWith("/api/marketplace")) return next();
+  try { assertFeatureEnabled("MARKETPLACE"); next(); }
+  catch { res.status(403).json({ error: "Marketplace is disabled", code: "FEATURE_DISABLED" }); }
+});
 
 const publicMarketplaceOrder = (row: any) => ({
   id: row.id,

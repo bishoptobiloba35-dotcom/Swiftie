@@ -4,8 +4,15 @@ import { pool } from "./database/db.js";
 import { requireAuth } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
 import { canDispatchBusiness } from "./aiPolicy.js";
+import { assertFeatureEnabled } from "./featureFlags.js";
 
 const router = Router();
+
+router.use((req, res, next) => {
+  if (!req.originalUrl.startsWith("/api/business/recurring-dispatches")) return next();
+  try { assertFeatureEnabled("RECURRING_DELIVERIES"); next(); }
+  catch { res.status(403).json({ error: "Recurring deliveries are disabled", code: "FEATURE_DISABLED" }); }
+});
 
 const recurringBuyOrderTemplateSchema = z.object({
   itemDescription: z.string().trim().min(1).max(500),

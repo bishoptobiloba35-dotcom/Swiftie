@@ -19,3 +19,17 @@ test("receiver escrow and standard delivery are independently flaggable", () => 
   delete process.env.SWIFTDROP_ENABLE_RECEIVER_ESCROW;
   delete process.env.SWIFTDROP_ENABLE_STANDARD_DELIVERY;
 });
+
+
+test("dormant production capabilities are disabled by default", () => {
+  delete process.env.SWIFTDROP_ENABLE_AGENT_ROLE;
+  delete process.env.SWIFTDROP_ENABLE_CORPORATE_ACCOUNTS;
+  delete process.env.SWIFTDROP_ENABLE_RECURRING_DELIVERIES;
+  assert.equal(featureEnabled("AGENT_ROLE"), false);
+  assert.equal(featureEnabled("CORPORATE_ACCOUNTS"), false);
+  assert.equal(featureEnabled("RECURRING_DELIVERIES"), false);
+});
+
+// Server-gated dormant capability coverage intentionally remains opt-in.
+
+// Path-scoped gates are verified by integration CI.
