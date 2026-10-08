@@ -15,7 +15,7 @@ export type PaymentRecord = {
   currency: string;
   status: "PENDING" | "AUTHORIZED" | "HELD" | "RELEASED" | "REFUNDED" | "FAILED";
   escrowStatus?: "PENDING" | "HELD" | "RELEASED" | "REFUNDED" | "NOT_APPLICABLE";
-  collectionMode: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
+  collectionMode: "SENDER_ESCROW" | "RECEIVER_ESCROW";
   createdAt: string;
   refundReference?: string;
   refundStatus?: string;
@@ -43,7 +43,7 @@ function paymentFromRow(row: any): PaymentRecord {
     currency: row.currency,
     status: row.status,
     escrowStatus: row.escrow_status ?? undefined,
-    collectionMode: row.collection_mode === "RECEIVER_ON_DELIVERY" ? "RECEIVER_ON_DELIVERY" : "SENDER_ESCROW",
+    collectionMode: row.collection_mode === "RECEIVER_ESCROW" ? "RECEIVER_ESCROW" : "SENDER_ESCROW",
     refundReference: row.refund_reference ?? undefined,
     refundStatus: row.refund_status ?? undefined,
     refundAmountMinor: row.refund_amount_minor == null ? undefined : Number(row.refund_amount_minor),
@@ -59,18 +59,18 @@ export async function createPayment(input: {
   provider: string;
   amountMinor: number;
   currency?: string;
-  collectionMode?: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
+  collectionMode?: "SENDER_ESCROW" | "RECEIVER_ESCROW";
 }): Promise<PaymentRecord> {
-  if (input.collectionMode && input.collectionMode !== "SENDER_ESCROW") {
-    throw new Error("Cash-on-delivery is retired. Every order must use in-app escrow.");
+  if (input.collectionMode && !["SENDER_ESCROW","RECEIVER_ESCROW"].includes(input.collectionMode)) {
+    throw new Error("Unsupported payment mode.");
   }
   if (!pool) throw new Error("DATABASE_URL is not configured");
   const result = await pool.query(
     `INSERT INTO payments (delivery_id, provider, amount_minor, currency, status, collection_mode, escrow_status)
-     VALUES ($1,$2,$3,$4,'PENDING',$5,CASE WHEN $5='RECEIVER_ON_DELIVERY' THEN 'NOT_APPLICABLE' ELSE 'PENDING' END)
+     VALUES ($1,$2,$3,$4,'PENDING',$5,'PENDING')
      ON CONFLICT (delivery_id) DO UPDATE SET amount_minor=EXCLUDED.amount_minor,
        currency=EXCLUDED.currency, collection_mode=EXCLUDED.collection_mode,
-       escrow_status=CASE WHEN EXCLUDED.collection_mode='RECEIVER_ON_DELIVERY' THEN 'NOT_APPLICABLE' ELSE payments.escrow_status END,
+       escrow_status=COALESCE(payments.escrow_status,'PENDING'),
        updated_at=now()
      RETURNING *`,
     [input.deliveryId, input.provider, input.amountMinor, input.currency ?? "NGN", input.collectionMode ?? "SENDER_ESCROW"]
@@ -236,7 +236,7 @@ export type StoredDelivery = {
   pickupInstructions?: string;
   dropoffInstructions?: string;
   status: string;
-  paymentMode: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
+  paymentMode: "SENDER_ESCROW" | "RECEIVER_ESCROW";
   exceptionStatus?: string;
   nextDeliveryAt?: string | null;
   driverId?: string;
@@ -279,7 +279,7 @@ function rowToDelivery(row: any): StoredDelivery {
     pickupInstructions: row.pickup_instructions ?? undefined,
     dropoffInstructions: row.dropoff_instructions ?? undefined,
     status: row.status,
-    paymentMode: row.payment_mode === "RECEIVER_ON_DELIVERY" ? "RECEIVER_ON_DELIVERY" : "SENDER_ESCROW",
+    paymentMode: row.payment_mode === "RECEIVER_ESCROW" ? "RECEIVER_ESCROW" : "SENDER_ESCROW",
     exceptionStatus: row.exception_status ?? "NONE",
     nextDeliveryAt: row.next_delivery_at ? new Date(row.next_delivery_at).toISOString() : null,
     driverId: row.driver_id ?? undefined,
@@ -363,11 +363,16 @@ export async function createPersistentDelivery(input: {
   dimensionsCm: { length: number; width: number; height: number };
   isPerishable: boolean;
   declaredValueMinor: number;
-  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ON_DELIVERY";
+  goodsAmountMinor?: number;
+  receiverUserId?: string;
+  senderDepositAmountMinor?: number;
+  deliveryType?: "EXPRESS" | "STANDARD";
+  stationId?: string;
+  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ESCROW";
   quote?: StoredDelivery["quote"];
 }): Promise<StoredDelivery> {
-  if (input.paymentMode && input.paymentMode !== "SENDER_ESCROW") {
-    throw new Error("Cash-on-delivery is retired. Every order must use in-app escrow.");
+  if (input.paymentMode && !["SENDER_ESCROW","RECEIVER_ESCROW"].includes(input.paymentMode)) {
+    throw new Error("Unsupported payment mode.");
   }
   if (!pool) throw new Error("DATABASE_URL is not configured");
   const id = randomUUID();
@@ -375,13 +380,13 @@ export async function createPersistentDelivery(input: {
   const result = await pool.query(
     `INSERT INTO deliveries
       (id, tracking_code, sender_id, receiver_name, receiver_phone,
-       payment_mode, pickup_address, pickup_lat, pickup_lng, pickup_instructions, dropoff_address, dropoff_lat, dropoff_lng, dropoff_instructions, status, receiver_pin_hash,
+       payment_mode, delivery_type, goods_amount_minor, receiver_user_id, sender_deposit_amount_minor, station_id, pickup_address, pickup_lat, pickup_lng, pickup_instructions, dropoff_address, dropoff_lat, dropoff_lng, dropoff_instructions, status, receiver_pin_hash,
        weight_kg, length_cm, width_cm, height_cm, is_perishable, declared_value_minor,
        proof_requirements, quote_distance_meters, quote_duration_seconds, quote_base_fare_minor,
        quote_distance_fare_minor, quote_weight_fare_minor, quote_size_fare_minor, quote_perishable_surcharge_minor, quote_fuel_reference_minor, quote_protection_reserve_minor, quote_pricing_version, quote_service_fee_minor, quote_total_minor, quote_currency)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'CREATED',$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'CREATED',$16,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
      RETURNING *`,
-    [id, code, input.senderId, input.receiverName, input.receiverPhone, input.paymentMode ?? "SENDER_ESCROW",
+    [id, code, input.senderId, input.receiverName, input.receiverPhone, input.paymentMode ?? "SENDER_ESCROW", input.deliveryType ?? "EXPRESS", input.goodsAmountMinor ?? 0, input.receiverUserId ?? null, input.senderDepositAmountMinor ?? 0, input.stationId ?? null,
       input.pickup.formattedAddress, input.pickup.location.latitude, input.pickup.location.longitude, input.pickupInstructions?.trim() || null,
       input.dropoff.formattedAddress, input.dropoff.location.latitude, input.dropoff.location.longitude, input.dropoffInstructions?.trim() || null,
       hashPin(input.receiverPin), input.weightKg ?? null, input.dimensionsCm?.length ?? null, input.dimensionsCm?.width ?? null, input.dimensionsCm?.height ?? null, input.isPerishable ?? false, input.declaredValueMinor,
