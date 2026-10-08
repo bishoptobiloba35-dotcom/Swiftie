@@ -8,8 +8,27 @@ import { driverForUser } from "./database/deliveryRepository.js";
 import { canCreatePersonalBuyOrder, canDispatchBusiness, canManageBusiness, canUseAiAction } from "./aiPolicy.js";
 import { getPrivateObject, putPrivateObject } from "./storage.js";
 import { hashPin } from "./security.js";
+import { featureEnabled } from "./featureFlags.js";
 
 const router = Router();
+
+router.use((req, res, next) => {
+  const path = req.path;
+  const feature =
+    path.startsWith("/ai/") ? "AI" :
+    path.startsWith("/business/") ? "CORPORATE_ACCOUNTS" :
+    path.startsWith("/buy-orders") ? "ERRANDS" :
+    path.startsWith("/drop-off/") ? "STANDARD_DELIVERY" :
+    path.startsWith("/admin/ai/") ? "AI" :
+    path.startsWith("/admin/business/") ? "CORPORATE_ACCOUNTS" :
+    path.startsWith("/admin/buy-order") ? "ERRANDS" :
+    path.startsWith("/admin/drop-off/") ? "STANDARD_DELIVERY" :
+    null;
+  if (feature && !featureEnabled(feature as any)) {
+    return res.status(403).json({ error: "Feature is disabled", code: "FEATURE_DISABLED" });
+  }
+  next();
+});
 
 type Plan = "BASIC" | "PREMIUM";
 type Capability = "INFORMATION" | "ACTION";
