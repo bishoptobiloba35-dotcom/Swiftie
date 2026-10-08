@@ -6,7 +6,7 @@ import { runMigrations } from "./migrate.js";
 import {
   confirmReceiverAndReleaseEscrow,
   confirmReceiverDelivery,
-  confirmReceiverOnDeliveryPaymentDue,
+  confirmReceiverPaymentDue,
   settleReceiverPaymentAndReleasePayout,
   createDispute,
   createEligiblePayout,
