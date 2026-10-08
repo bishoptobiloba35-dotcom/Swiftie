@@ -13,7 +13,7 @@ import { featureEnabled } from "./featureFlags.js";
 const router = Router();
 
 router.use((req, res, next) => {
-  const path = req.path;
+  const path = req.originalUrl.replace(/^\/api/, "");
   const feature =
     path.startsWith("/ai/") ? "AI" :
     path.startsWith("/business/") ? "CORPORATE_ACCOUNTS" :
