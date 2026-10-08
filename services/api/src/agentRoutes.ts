@@ -9,7 +9,8 @@ import { assertFeatureEnabled } from "./featureFlags.js";
 
 const router = Router();
 
-router.use((_req, res, next) => {
+router.use((req, res, next) => {
+  if (!req.path.startsWith("/agent/") && !req.path.startsWith("/agents")) return next();
   try { assertFeatureEnabled("AGENT_ROLE"); next(); }
   catch { res.status(403).json({ error: "Agent capability is disabled", code: "FEATURE_DISABLED" }); }
 });
