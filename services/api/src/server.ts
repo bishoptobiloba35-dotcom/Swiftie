@@ -2,12 +2,12 @@ import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
 import path from "node:path";
-import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual, randomInt } from "node:crypto";
 import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
-import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, listDeliveryProofs, saveDeliveryProof, hasRequiredDropoffProofs, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, confirmReceiverOnDeliveryPaymentDue, settleReceiverPaymentAndReleasePayout, reservePaymentInitialization, savePaymentCheckoutSession, findPayoutByProviderReference, claimPaystackWebhookEvent,
+import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, listDeliveryProofs, saveDeliveryProof, hasRequiredDropoffProofs, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, confirmReceiverPaymentDue, settleReceiverPaymentAndReleasePayout, reservePaymentInitialization, savePaymentCheckoutSession, findPayoutByProviderReference, claimPaystackWebhookEvent,
   finalizePaystackWebhookEvent, retryFailedPayout, flagPayoutReconciliationMismatch } from "./database/deliveryRepository.js";
 import { pool, pingDatabase } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
@@ -35,6 +35,7 @@ import { recordHttpMetric, renderPrometheusMetrics } from "./metrics.js";
 import { reportExternalError } from "./errorTracking.js";
 import { processPhase2EscrowReleases, reconcilePhase2Float } from "./phase2EscrowWorker.js";
 import escrowRoutes, { reconcileProcessingWalletPayouts, requeryPendingDvaAccounts, reconcilePendingEscrowProviderPayments } from "./escrowRoutes.js";
+import { featureEnabled } from "./featureFlags.js";
 
 const app = express();
 
@@ -109,7 +110,7 @@ type MemoryDelivery = {
   id: string; trackingCode: string; senderId: string; receiverName: string; receiverPhone: string;
   pickup: { label: string; formattedAddress: string; location: DeliveryLocation };
   dropoff: { label: string; formattedAddress: string; location: DeliveryLocation };
-  status: Status; paymentMode: "SENDER_ESCROW"; driverId?: string; pickupPhotoUrl?: string; proofRequirements?: { pickup: string[]; dropoff: string[] }; receiverPin: string;
+  status: Status; paymentMode: "SENDER_ESCROW" | "RECEIVER_ESCROW"; deliveryType?: "EXPRESS" | "STANDARD"; goodsAmountMinor?: number; driverId?: string; pickupPhotoUrl?: string; proofRequirements?: { pickup: string[]; dropoff: string[] }; receiverPin: string;
   quote?: DeliveryQuote; createdAt: string; updatedAt: string;
 };
 const deliveries = new Map<string, MemoryDelivery>();
@@ -149,12 +150,14 @@ const notificationForDelivery = async (deliveryId: string, userId: string, title
 
 
 const createDeliverySchema = z.object({
-  senderId: z.string().uuid().optional(), paymentMode: z.literal("SENDER_ESCROW").default("SENDER_ESCROW"), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
-  receiverPin: z.string().regex(/^\d{4}$/, "Receiver PIN must be exactly 4 digits"),
+  senderId: z.string().uuid().optional(), paymentMode: z.enum(["SENDER_ESCROW","RECEIVER_ESCROW"]).default("SENDER_ESCROW"), deliveryType: z.enum(["EXPRESS","STANDARD"]).default("EXPRESS"), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
+
   weightKg: z.number().positive().max(1000),
   dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
   isPerishable: z.boolean(),
   declaredValueMinor: z.number().int().positive().max(10000000000),
+  goodsAmountMinor: z.number().int().nonnegative().max(10000000000).default(0),
+  stationId: z.string().uuid().optional(),
   includeProtection: z.boolean().default(true),
   pickup: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
   dropoff: z.object({ label: z.string(), formattedAddress: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }),
@@ -595,6 +598,10 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   const parsed = createDeliverySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const input = { ...parsed.data, senderId: identity(req) };
+  if (parsed.data.paymentMode === "RECEIVER_ESCROW" && !featureEnabled("RECEIVER_ESCROW")) return res.status(403).json({ error: "Receiver escrow is not enabled for this environment" });
+  if (parsed.data.deliveryType === "STANDARD" && !featureEnabled("STANDARD_DELIVERY")) return res.status(403).json({ error: "Standard station delivery is not enabled for this environment" });
+  if (parsed.data.goodsAmountMinor > parsed.data.declaredValueMinor) return res.status(400).json({ error: "Goods amount cannot exceed declared value" });
+  if (parsed.data.deliveryType === "STANDARD" && !parsed.data.stationId) return res.status(400).json({ error: "A verified station is required for Standard delivery" });
   const quote = await calculateQuote(
     { latitude: parsed.data.pickup.latitude, longitude: parsed.data.pickup.longitude },
     { latitude: parsed.data.dropoff.latitude, longitude: parsed.data.dropoff.longitude },
@@ -603,8 +610,15 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   if (quote.currency !== "NGN" || !Number.isSafeInteger(quote.totalMinor) || quote.totalMinor <= 0) {
     return res.status(500).json({ error: "Unable to calculate delivery quote" });
   }
-  parsed.data.quote = quote;
-  const pin = parsed.data.receiverPin;
+  const serverPin = String(randomInt(0, 10000)).padStart(4, "0");
+  const effectiveQuote = parsed.data.paymentMode === "RECEIVER_ESCROW"
+    ? { ...quote, protectionReserveMinor: 0, totalMinor: quote.totalMinor - quote.protectionReserveMinor }
+    : quote;
+  parsed.data.quote = effectiveQuote;
+  const senderDepositAmountMinor = parsed.data.paymentMode === "RECEIVER_ESCROW"
+    ? Math.ceil((effectiveQuote.totalMinor - effectiveQuote.serviceFeeMinor) * 0.5)
+    : 0;
+  const pin = serverPin;
   try {
     if (databaseEnabled()) {
       const selectedLocationIds = [input.pickupDropOffLocationId, input.dropoffDropOffLocationId].filter((id): id is string => Boolean(id));
@@ -625,6 +639,10 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
         dropoffInstructions: input.dropoffInstructions,
         receiverName: input.receiverName,
         receiverPhone: input.receiverPhone,
+        goodsAmountMinor: input.goodsAmountMinor,
+        senderDepositAmountMinor,
+        deliveryType: input.deliveryType,
+        stationId: input.stationId,
         pickup: { label: input.pickup.label, formattedAddress: input.pickup.formattedAddress, location: { latitude: input.pickup.latitude, longitude: input.pickup.longitude } },
         dropoff: { label: input.dropoff.label, formattedAddress: input.dropoff.formattedAddress, location: { latitude: input.dropoff.latitude, longitude: input.dropoff.longitude } },
         receiverPin: pin,
@@ -635,9 +653,6 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
         paymentMode: input.paymentMode,
         quote: input.quote
       });
-      if (input.paymentMode !== "SENDER_ESCROW") {
-        return res.status(410).json({ error: "Cash-on-delivery is retired. Every order must use in-app escrow." });
-      }
       if (input.pickupDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'PICKUP',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.pickupDropOffLocationId]);
       if (input.dropoffDropOffLocationId) await pool!.query("INSERT INTO drop_off_parcels(delivery_id,location_id,endpoint,intake_code) VALUES($1,$2,'DROPOFF',encode(gen_random_bytes(5),'hex')) ON CONFLICT(delivery_id,location_id,endpoint) DO NOTHING", [created.id, input.dropoffDropOffLocationId]);
       return res.status(201).json(safeDelivery(created));
@@ -720,6 +735,49 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
     authorizationUrl: payload.data.authorization_url,
     accessCode: payload.data.access_code
   });
+});
+
+app.post("/api/deliveries/:id/receiver-payment/initialize", requireAuth("CUSTOMER"), async (req, res) => {
+  if (!featureEnabled("RECEIVER_ESCROW")) return res.status(403).json({ error: "Receiver escrow is not enabled" });
+  if (!databaseEnabled()) return res.status(503).json({ error: "Payments require the production database" });
+  const userId = identity(req);
+  const delivery = await findDelivery(routeParam(req.params.id, "id"));
+  if (!delivery || delivery.paymentMode !== "RECEIVER_ESCROW") return res.status(404).json({ error: "Receiver escrow order not found" });
+
+  const user = (await pool!.query("SELECT phone,email FROM users WHERE id=$1",[userId])).rows[0];
+  const normalize = (phone: string) => {
+    const digits = phone.replace(/\\D/g,"");
+    return digits.startsWith("234") ? digits : digits.startsWith("0") ? "234" + digits.slice(1) : digits;
+  };
+  if (!user?.phone || normalize(String(user.phone)) !== normalize(delivery.receiverPhone)) {
+    return res.status(403).json({ error: "Receiver phone verification is required" });
+  }
+
+  await pool!.query("UPDATE deliveries SET receiver_user_id=$2 WHERE id=$1 AND receiver_user_id IS NULL",[delivery.id,userId]);
+  const amountMinor = Number(delivery.goodsAmountMinor) + Number(delivery.quote?.totalMinor ?? 0);
+  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) return res.status(409).json({ error: "Receiver payment amount is not available" });
+  const email = String(req.body?.email ?? user.email ?? "").trim();
+  if (!email) return res.status(400).json({ error: "Email is required for Paystack card checkout" });
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  if ((process.env.PAYMENT_PROVIDER || "paystack") !== "paystack" || !secret) return res.status(503).json({ error: "Paystack payment configuration is not ready" });
+
+  const reference = "SD-" + delivery.trackingCode + "-R-" + Date.now();
+  const reservation = await reservePaymentInitialization(delivery.id, reference);
+  if (!reservation.reserved) {
+    if (reservation.payment?.authorizationUrl) return res.status(200).json({ paymentId: reservation.payment.id, authorizationUrl: reservation.payment.authorizationUrl, accessCode: reservation.payment.accessCode, amountMinor: reservation.payment.amountMinor });
+    return res.status(409).json({ error: "Payment initialization is already in progress. Retry shortly." });
+  }
+  const response = await fetch("https://api.paystack.co/transaction/initialize", {
+    method:"POST",
+    headers:{authorization:"Bearer "+secret,"content-type":"application/json"},
+    body:JSON.stringify({email,amount:String(amountMinor),currency:"NGN",reference,metadata:{deliveryId:delivery.id,trackingCode:delivery.trackingCode,payerRole:"RECEIVER"}})
+  });
+  const payload = await response.json() as any;
+  if (!response.ok || !payload.status || !payload.data?.authorization_url) return res.status(502).json({ error: "Payment provider initialization failed" });
+  const saved = await savePaymentCheckoutSession(delivery.id,payload.data.reference ?? reference,payload.data.authorization_url,payload.data.access_code);
+  if (!saved) return res.status(409).json({ error: "Payment checkout could not be saved. Retry shortly." });
+  await recordDeliveryEvent({deliveryId:delivery.id,eventType:"RECEIVER_PAYMENT_INITIALIZED",actorUserId:userId,metadata:{paymentId:saved.id,amountMinor}});
+  return res.status(201).json({paymentId:saved.id,reference:payload.data.reference ?? reference,authorizationUrl:payload.data.authorization_url,accessCode:payload.data.access_code,amountMinor});
 });
 
 app.post("/api/deliveries/:id/payment", requireAuth("CUSTOMER"), async (req, res) => {

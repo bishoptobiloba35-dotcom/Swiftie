@@ -29,7 +29,12 @@ export type ApiDelivery = {
     totalMinor: number;
   };
   status: string;
-  paymentMode?: "SENDER_ESCROW";
+  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ESCROW";
+  deliveryType?: "EXPRESS" | "STANDARD";
+  goodsAmountMinor?: number;
+  senderDepositAmountMinor?: number;
+  receiverUserId?: string;
+  stationId?: string;
   receiverConfirmedAt?: string;
   exceptionStatus?: "NONE" | "FAILED_ATTEMPT" | "RESCHEDULED" | "RETURN_REQUESTED" | "RETURN_IN_TRANSIT" | "RETURNED";
   nextDeliveryAt?: string | null;
@@ -56,8 +61,10 @@ export type ApiDelivery = {
 
 export type CreateDeliveryInput = {
   senderId?: string;
-  paymentMode?: "SENDER_ESCROW";
-  receiverPin: string;
+  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ESCROW";
+  deliveryType?: "EXPRESS" | "STANDARD";
+  goodsAmountMinor?: number;
+  receiverPin?: string;
   receiverName: string;
   receiverPhone: string;
   weightKg: number;
@@ -528,6 +535,15 @@ export class SwiftDropApi {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error ?? "Payment initialization failed");
+    return data;
+  }
+
+  async initializeReceiverPayment(deliveryId: string, email?: string): Promise<any> {
+    const response = await fetch(this.baseUrl + `/api/deliveries/${encodeURIComponent(deliveryId)}/receiver-payment/initialize`, {
+      method: "POST", headers: this.headers(true), body: JSON.stringify(email ? { email } : {})
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to initialize receiver payment");
     return data;
   }
 

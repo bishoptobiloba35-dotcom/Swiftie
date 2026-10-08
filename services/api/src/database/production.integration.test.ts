@@ -6,7 +6,7 @@ import { runMigrations } from "./migrate.js";
 import {
   confirmReceiverAndReleaseEscrow,
   confirmReceiverDelivery,
-  confirmReceiverOnDeliveryPaymentDue,
+  confirmReceiverPaymentDue,
   settleReceiverPaymentAndReleasePayout,
   createDispute,
   createEligiblePayout,
@@ -231,7 +231,7 @@ if (!db) {
         receiverName: "Legacy Cash Receiver",
         receiverPhone: "+2349020000003",
         declaredValueMinor: 200000,
-        paymentMode: "RECEIVER_ON_DELIVERY",
+        paymentMode: "RECEIVER_ON_DELIVERY" as never,
         pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.0765, longitude: 7.3986 } },
         dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.4 } },
         receiverPin: "3344",
