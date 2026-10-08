@@ -15,7 +15,8 @@ export type SwiftDropFeature =
   | "INTER_STATE"
   | "EV_DISCOUNT"
   | "HIGH_RISK_ZONES"
-  | "SEPARATE_INSURANCE";
+  | "SEPARATE_INSURANCE"
+  | "AGENT_ROLE";
 
 const envName = (feature: SwiftDropFeature): string =>
   "SWIFTDROP_ENABLE_" + feature;
