@@ -25,6 +25,13 @@ export function featureEnabled(feature: SwiftDropFeature): boolean {
   return process.env[envName(feature)] === "true";
 }
 
+import { legalGateEnabled, type LegalGate } from "./legalGates.js";
+
+export function assertFeatureAndLegalGate(feature: SwiftDropFeature, gate: LegalGate): void {
+  if (!featureEnabled(feature)) throw new Error("Feature " + feature + " is disabled");
+  if (!legalGateEnabled(gate)) throw new Error("Legal gate " + gate + " is not enabled");
+}
+
 export function assertFeatureEnabled(feature: SwiftDropFeature): void {
   if (!featureEnabled(feature)) {
     throw new Error("Feature " + feature + " is disabled");
