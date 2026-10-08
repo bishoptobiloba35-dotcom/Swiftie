@@ -72,6 +72,7 @@ const migrations = [
   { id: "074_dva_requery_rate_limit", file: "074_dva_requery_rate_limit.sql" },
   { id: "075_one_active_escrow_payment", file: "075_one_active_escrow_payment.sql" },
   { id: "076_retire_receiver_payment_mode", file: "076_retire_receiver_payment_mode.sql" },
+  { id: "077_mvp_v12_delivery_types", file: "077_mvp_v12_delivery_types.sql" },
 ];
 
 export async function runMigrations(): Promise<void> {
