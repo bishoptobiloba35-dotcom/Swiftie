@@ -9,7 +9,11 @@ import { identity } from "./requestIdentity.js";
 
 const router = Router();
 const MIN_WITHDRAWAL_MINOR = 100000;
-const COURIER_SHARE_BPS = 7500;
+function courierShareBps(): number {
+  const percent = Number(process.env.DRIVER_PAYOUT_PERCENT ?? "75");
+  if (!Number.isFinite(percent) || percent <= 0 || percent > 100) throw new Error("Invalid DRIVER_PAYOUT_PERCENT");
+  return Math.round(percent * 100);
+}
 const ESCROW_DISPUTE_HOURS = 2;
 const MERCHANT_HOLD_HOURS = 72;
 const FLOAT_MIN_RESERVE_MINOR = 500000000;
@@ -68,7 +72,7 @@ router.post("/escrow/create", requireAuth(), async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(409).json({error:"Order has no authoritative payable total"});
     }
-    const courierShareMinor=Math.floor(baseFareMinor*COURIER_SHARE_BPS/10000);
+    const courierShareMinor=Math.floor(baseFareMinor*courierShareBps()/10000);
     const merchantShareMinor=0;
     const swiftdropMarginMinor=totalPaidMinor-courierShareMinor-serviceChargeMinor-protectionReserveMinor-merchantShareMinor;
     if(swiftdropMarginMinor<0){ await client.query("ROLLBACK"); return res.status(409).json({error:"Order pricing cannot produce a valid escrow split"}); }

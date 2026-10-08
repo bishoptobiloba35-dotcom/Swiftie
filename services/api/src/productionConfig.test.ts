@@ -24,7 +24,8 @@ test("production config accepts complete secure configuration", () => {
     process.env.SUPABASE_URL = "https://example.supabase.co";
     process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role";
     process.env.SUPABASE_STORAGE_BUCKET = "swiftdrop-private";
-    process.env.DRIVER_PAYOUT_PERCENT = "90";
+    process.env.ESCROW_MODE = "live";
+    process.env.DRIVER_PAYOUT_PERCENT = "75";
     assert.doesNotThrow(() => validateProductionConfig());
   } finally {
     restoreEnv();
@@ -41,6 +42,7 @@ test("production config rejects missing required secrets", () => {
     delete process.env.SUPABASE_URL;
     delete process.env.SUPABASE_SERVICE_ROLE_KEY;
     delete process.env.SUPABASE_STORAGE_BUCKET;
+    delete process.env.ESCROW_MODE;
     assert.throws(() => validateProductionConfig(), /Missing required production environment variables/);
   } finally {
     restoreEnv();
@@ -57,6 +59,7 @@ test("production config rejects insecure JWT fallback", () => {
     process.env.SUPABASE_URL = "https://example.supabase.co";
     process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role";
     process.env.SUPABASE_STORAGE_BUCKET = "swiftdrop-private";
+    process.env.ESCROW_MODE = "live";
     assert.throws(() => validateProductionConfig(), /JWT_SECRET must not use the development fallback/);
   } finally {
     restoreEnv();
@@ -73,9 +76,28 @@ test("production config requires HTTPS CORS origins", () => {
     process.env.SUPABASE_URL = "https://example.supabase.co";
     process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role";
     process.env.SUPABASE_STORAGE_BUCKET = "swiftdrop-private";
+    process.env.ESCROW_MODE = "live";
     assert.throws(() => validateProductionConfig(), /CORS_ORIGINS must contain one or more HTTPS origins/);
   } finally {
     restoreEnv();
   }
 });
 
+
+
+test("production config rejects mock escrow mode", () => {
+  try {
+    process.env.NODE_ENV = "production";
+    process.env.DATABASE_URL = "postgres://example";
+    process.env.JWT_SECRET = "a-long-production-secret";
+    process.env.PAYSTACK_SECRET_KEY = "sk_live_example";
+    process.env.CORS_ORIGINS = "https://app.example.com";
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role";
+    process.env.SUPABASE_STORAGE_BUCKET = "swiftdrop-private";
+    process.env.ESCROW_MODE = "mock";
+    assert.throws(() => validateProductionConfig(), /ESCROW_MODE must be live/);
+  } finally {
+    restoreEnv();
+  }
+});
