@@ -17,9 +17,9 @@
 - Delivery transitions now use a central state machine and database transitions verify driver ownership atomically.
 - API requests now receive a unique `x-request-id`, with structured request/error logs that avoid request bodies and credentials.
 - Customer and driver Expo configuration now uses environment-driven dynamic configs with production bundle/package identifiers and EAS build profiles.
-- CI run #277 passed all workspace builds and API tests after the production-hardening changes.
+- CI run #1934 passed all six required checks on the PR #243 head.
 - CI is a genuine quality gate: workspace builds and API tests must pass; failures are fixed at source/configuration level rather than suppressed.
-- CI uses the committed npm lockfile with `npm ci`; setup-node lockfile-aware npm caching is enabled for both workspace builds and API tests.
+- CI uses the committed npm lockfile with `npm ci`; setup-node now uses lockfile-aware npm caching in both workspace-build and API-test jobs.
 - API metrics are exposed through an authenticated Prometheus endpoint, and unhandled Express errors now have a fail-safe external webhook reporting adapter that never blocks API responses.
 - The latest CI source repairs corrected the driver earnings-style reference and customer tracking destination coordinates to use the nested `dropoff.location` model.
 
@@ -28,12 +28,12 @@
 1. Add automated database integration coverage for every delivery-state transition, receiver PIN completion, escrow release, disputes, support, payout webhooks, notification outbox, and object-storage authorization.
 2. Connect the committed Prometheus alert rules to production Prometheus/Alertmanager (or an equivalent hosted monitor) and an on-call notification channel; add an operational dashboard after the production scrape is live.
 3. Finish mobile app-store production configuration, privacy disclosures, terms/acceptable-use flows, notification credentials, and release builds; legal text should receive Nigerian counsel/privacy review before launch.
-5. Commit a reproducible npm lockfile and restore locked installs/caching in CI once dependency resolution is stable.
-6. After CI is verified green, enable branch protection with required production CI checks.
+
+4. Verify the production CI workflow on the current main release commit and maintain the six required checks as the branch protection gate.
 
 
 ## Latest production hardening
-- CI workflow is configured for API tests and all workspace builds; the current GitHub connector has not returned a fresh run/status for the latest verification commit, so CI is not marked as verified here.
+- The current main merge commit has no workflow run exposed through the connected GitHub workflow-run endpoint; the latest exposed PR validation is CI #1934, which passed all six required checks.
 - Production API now requires private object storage configuration and validates private object keys on read/write.
 - Notification delivery uses a durable outbox, retry backoff, Expo push tickets and receipt reconciliation.
 - API request IDs and structured request/error logs are enabled for operational tracing.
