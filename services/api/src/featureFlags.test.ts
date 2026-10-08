@@ -31,3 +31,5 @@ test("dormant production capabilities are disabled by default", () => {
 });
 
 // Server-gated dormant capability coverage intentionally remains opt-in.
+
+// Path-scoped gates are verified by integration CI.
