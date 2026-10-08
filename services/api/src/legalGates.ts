@@ -1,5 +1,3 @@
-import { featureEnabled } from "./featureFlags.js";
-
 export type LegalGate =
   | "STATION_AGENT_LIABILITY"
   | "LICENSED_ESCROW_PARTNER"
@@ -17,9 +15,4 @@ export function legalGateEnabled(gate: LegalGate): boolean {
 
 export function assertLegalGateEnabled(gate: LegalGate): void {
   if (!legalGateEnabled(gate)) throw new Error("Legal gate " + gate + " is not enabled");
-}
-
-export function productionCapabilityEnabled(feature: Parameters<typeof featureEnabled>[0], gate?: LegalGate): boolean {
-  if (!featureEnabled(feature)) return false;
-  return gate ? legalGateEnabled(gate) : true;
 }
