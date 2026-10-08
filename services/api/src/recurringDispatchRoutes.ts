@@ -8,7 +8,8 @@ import { assertFeatureEnabled } from "./featureFlags.js";
 
 const router = Router();
 
-router.use((_req, res, next) => {
+router.use((req, res, next) => {
+  if (!req.originalUrl.startsWith("/api/business/recurring-dispatches")) return next();
   try { assertFeatureEnabled("RECURRING_DELIVERIES"); next(); }
   catch { res.status(403).json({ error: "Recurring deliveries are disabled", code: "FEATURE_DISABLED" }); }
 });
