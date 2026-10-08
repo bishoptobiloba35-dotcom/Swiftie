@@ -8,7 +8,8 @@ import { assertFeatureEnabled } from "./featureFlags.js";
 
 const router = Router();
 
-router.use((_req, res, next) => {
+router.use((req, res, next) => {
+  if (!req.originalUrl.startsWith("/api/errands")) return next();
   try { assertFeatureEnabled("ERRANDS"); next(); }
   catch { res.status(403).json({ error: "Errands are disabled", code: "FEATURE_DISABLED" }); }
 });
