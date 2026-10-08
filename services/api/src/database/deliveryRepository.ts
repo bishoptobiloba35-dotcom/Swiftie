@@ -1395,7 +1395,7 @@ export async function assignNextDeliveryToDriver(driverId: string): Promise<Stor
        SELECT id
        FROM deliveries
        WHERE driver_id IS NULL
-         AND (status = 'PAYMENT_AUTHORIZED' OR (status='CREATED' AND payment_mode='RECEIVER_ON_DELIVERY'))
+         AND (status = 'PAYMENT_AUTHORIZED' OR (status='CREATED' AND payment_mode='RECEIVER_ESCROW'))
        ORDER BY created_at ASC
        FOR UPDATE SKIP LOCKED
        LIMIT 1
@@ -1415,7 +1415,7 @@ export async function listOpenJobs(driverId: string): Promise<StoredDelivery[]> 
   const result = await pool.query(
     `SELECT d.* FROM deliveries d
      WHERE d.driver_id IS NULL
-       AND (d.status = 'PAYMENT_AUTHORIZED' OR (d.status='CREATED' AND d.payment_mode='RECEIVER_ON_DELIVERY'))
+       AND (d.status = 'PAYMENT_AUTHORIZED' OR (d.status='CREATED' AND d.payment_mode='RECEIVER_ESCROW'))
        AND EXISTS (
          SELECT 1 FROM drivers dr
          WHERE dr.id=$1 AND dr.status='APPROVED' AND dr.online=true
@@ -1435,7 +1435,7 @@ export async function transitionDelivery(id: string, from: string, to: string, d
      WHERE id=$1
        AND status=$4
        AND (
-         (($4='PAYMENT_AUTHORIZED' OR ($4='CREATED' AND $2='DRIVER_ASSIGNED' AND payment_mode='RECEIVER_ON_DELIVERY'))
+         (($4='PAYMENT_AUTHORIZED' OR ($4='CREATED' AND $2='DRIVER_ASSIGNED' AND payment_mode='RECEIVER_ESCROW'))
            AND driver_id IS NULL AND $3::uuid IS NOT NULL)
          OR ($4<>'PAYMENT_AUTHORIZED' AND NOT ($4='CREATED' AND $2='DRIVER_ASSIGNED') AND $3::uuid IS NOT NULL AND driver_id=$3::uuid)
          OR ($3::uuid IS NULL)
@@ -1571,7 +1571,7 @@ export async function confirmReceiverAndReleaseEscrow(id: string, receiverPhone:
   } finally { client.release(); }
 }
 
-export async function confirmReceiverOnDeliveryPaymentDue(id: string, receiverPhone: string, pin: string): Promise<StoredDelivery | null> {
+export async function confirmReceiverPaymentDue(id: string, receiverPhone: string, pin: string): Promise<StoredDelivery | null> {
   if (!pool) return null;
   const client = await pool.connect();
   try {
@@ -1586,7 +1586,7 @@ export async function confirmReceiverOnDeliveryPaymentDue(id: string, receiverPh
       [id]
     );
     const row = result.rows[0];
-    if (!row || row.collection_mode !== "RECEIVER_ON_DELIVERY" || row.receiver_phone !== receiverPhone ||
+    if (!row || row.collection_mode !== "RECEIVER_ESCROW" || row.receiver_phone !== receiverPhone ||
         row.status !== "ARRIVED" || row.payment_status !== "PENDING" ||
         row.receiver_confirmed_at != null ||
         ["pending","processing","needs-attention"].includes(String(row.refund_status ?? "")) ||
@@ -1608,7 +1608,7 @@ export async function confirmReceiverOnDeliveryPaymentDue(id: string, receiverPh
     await client.query(
       `INSERT INTO delivery_events (delivery_id,event_type,metadata)
        VALUES ($1,'RECEIVER_CONFIRMED_PACKAGE_PAYMENT_DUE',$2::jsonb)`,
-      [id, JSON.stringify({ collectionMode: "RECEIVER_ON_DELIVERY", amountMinor: Number(row.amount_minor), currency: row.payment_currency ?? "NGN" })]
+      [id, JSON.stringify({ collectionMode: "RECEIVER_ESCROW", amountMinor: Number(row.amount_minor), currency: row.payment_currency ?? "NGN" })]
     );
     await client.query("COMMIT");
     return rowToDelivery(updated.rows[0]);
@@ -1641,7 +1641,7 @@ export async function settleReceiverPaymentAndReleasePayout(
       [id]
     );
     const row = result.rows[0];
-    if (!row || row.collection_mode !== "RECEIVER_ON_DELIVERY" ||
+    if (!row || row.collection_mode !== "RECEIVER_ESCROW" ||
         row.status !== "ARRIVED" || row.receiver_confirmed_at == null ||
         !["PENDING","AUTHORIZED"].includes(String(row.payment_status)) ||
         ["pending","processing","needs-attention"].includes(String(row.refund_status ?? "")) ||
@@ -1724,7 +1724,7 @@ export async function confirmReceiverDelivery(id: string, receiverPhone: string,
       WHERE d.id=$1 AND d.receiver_phone=$2
         AND d.receiver_confirmed_at IS NOT NULL
         AND p.status='RELEASED'
-        AND p.collection_mode IN ('SENDER_ESCROW','RECEIVER_ON_DELIVERY')`,
+        AND p.collection_mode IN ('SENDER_ESCROW','RECEIVER_ESCROW')`,
     [id, receiverPhone]
   );
   const row = result.rows[0];
@@ -1742,7 +1742,7 @@ export async function confirmReceiverDelivery(id: string, receiverPhone: string,
             FROM payments p
            WHERE p.delivery_id=deliveries.id
              AND p.status='RELEASED'
-             AND p.collection_mode IN ('SENDER_ESCROW','RECEIVER_ON_DELIVERY')
+             AND p.collection_mode IN ('SENDER_ESCROW','RECEIVER_ESCROW')
         )
       RETURNING *`,
     [id, receiverPhone]
@@ -1763,7 +1763,7 @@ export async function completeDelivery(id: string, driverId: string): Promise<St
     [id, driverId]
   );
   const row = result.rows[0];
-  if (!row || row.collection_mode !== "RECEIVER_ON_DELIVERY" || row.payment_status !== "RELEASED" || row.receiver_confirmed_at == null) {
+  if (!row || row.collection_mode !== "RECEIVER_ESCROW" || row.payment_status !== "RELEASED" || row.receiver_confirmed_at == null) {
     return null;
   }
   const updated = await pool.query(
@@ -1773,7 +1773,7 @@ export async function completeDelivery(id: string, driverId: string): Promise<St
         AND EXISTS (
           SELECT 1 FROM payments p
            WHERE p.delivery_id=deliveries.id
-             AND p.collection_mode='RECEIVER_ON_DELIVERY'
+             AND p.collection_mode='RECEIVER_ESCROW'
              AND p.status='RELEASED'
         )
       RETURNING *`,
