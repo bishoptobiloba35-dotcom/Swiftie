@@ -29,3 +29,5 @@ test("dormant production capabilities are disabled by default", () => {
   assert.equal(featureEnabled("CORPORATE_ACCOUNTS"), false);
   assert.equal(featureEnabled("RECURRING_DELIVERIES"), false);
 });
+
+// Server-gated dormant capability coverage intentionally remains opt-in.
