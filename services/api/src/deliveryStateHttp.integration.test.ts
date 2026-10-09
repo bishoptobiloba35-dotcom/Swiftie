@@ -50,7 +50,9 @@ test("delivery transition routes enforce the production state machine at the HTT
       API_PORT: String(API_PORT),
       JWT_SECRET: TEST_JWT_SECRET,
       SWIFTDROP_ENABLE_RECEIVER_ESCROW: "true",
-      SWIFTDROP_LEGAL_GATE_LICENSED_ESCROW_PARTNER: "false"
+      SWIFTDROP_LEGAL_GATE_LICENSED_ESCROW_PARTNER: "false",
+      SWIFTDROP_ENABLE_STANDARD_DELIVERY: "true",
+      SWIFTDROP_LEGAL_GATE_STATION_AGENT_LIABILITY: "false"
     },
     stdio: "ignore"
   });
@@ -85,6 +87,43 @@ test("delivery transition routes enforce the production state machine at the HTT
     );
     assert.equal(gatedReceiverPayment.status, 403);
     assert.deepEqual(await gatedReceiverPayment.json(), { error: "Receiver escrow is not enabled" });
+
+    // Standard delivery must also fail closed when its feature flag is on but
+    // the station-agent liability gate is not approved. A valid payload proves
+    // the legal gate is checked before station lookup or quote/payment work.
+    const gatedStandardDelivery = await request("/api/deliveries", auth(senderId, "CUSTOMER"), {
+      paymentMode: "SENDER_ESCROW",
+      deliveryType: "STANDARD",
+      receiverName: "Standard Receiver",
+      receiverPhone: "+2348030000000",
+      weightKg: 1,
+      dimensionsCm: { length: 10, width: 10, height: 10 },
+      isPerishable: false,
+      declaredValueMinor: 100000,
+      goodsAmountMinor: 0,
+      includeProtection: true,
+      pickup: { label: "Pickup", formattedAddress: "Pickup", latitude: 9.07, longitude: 7.40 },
+      dropoff: { label: "Dropoff", formattedAddress: "Dropoff", latitude: 9.08, longitude: 7.41 },
+      quote: {
+        currency: "NGN",
+        distanceMeters: 1000,
+        durationSeconds: 600,
+        baseFareMinor: 1000,
+        distanceFareMinor: 1000,
+        weightFareMinor: 0,
+        sizeFareMinor: 0,
+        perishableSurchargeMinor: 0,
+        fuelReferenceMinor: 1000,
+        protectionReserveMinor: 10000,
+        pricingVersion: 1,
+        serviceFeeMinor: 100,
+        totalMinor: 12100
+      }
+    });
+    assert.equal(gatedStandardDelivery.status, 403);
+    assert.deepEqual(await gatedStandardDelivery.json(), {
+      error: "Standard station delivery is not enabled for this environment"
+    });
 
     const driver = (await pool.query(
       "INSERT INTO drivers(user_id,status,online) VALUES($1,'APPROVED',true) RETURNING id",
