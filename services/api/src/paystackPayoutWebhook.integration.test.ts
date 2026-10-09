@@ -1,6 +1,6 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { pool } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
@@ -41,12 +41,12 @@ async function seedProcessingPayout(reference: string, amountMinor: number) {
   const stamp = `${Date.now()}-${reference}`;
   const customer = (await pool.query(
     `INSERT INTO users(role,full_name,phone,email) VALUES('CUSTOMER','Webhook Coverage Customer',$1,$2) RETURNING id`,
-    [`+234909${String(process.pid).slice(-3)}${Math.floor(Math.random() * 1000)}`, `webhook-${stamp}@example.test`]
+    [`+234909${randomUUID().replace(/\D/g, "").slice(0, 7).padStart(7, "0")}`, `webhook-${stamp}@example.test`]
   )).rows[0];
 
   const driverUser = (await pool.query(
     `INSERT INTO users(role,full_name,phone,email) VALUES('DRIVER','Webhook Coverage Driver',$1,$2) RETURNING id`,
-    [`+234908${String(process.pid).slice(-3)}${Math.floor(Math.random() * 1000)}`, `webhook-driver-${stamp}@example.test`]
+    [`+234908${randomUUID().replace(/\D/g, "").slice(0, 7).padStart(7, "0")}`, `webhook-driver-${stamp}@example.test`]
   )).rows[0];
 
   const driver = (await pool.query(
