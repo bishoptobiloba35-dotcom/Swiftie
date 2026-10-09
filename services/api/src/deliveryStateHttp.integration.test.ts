@@ -58,16 +58,6 @@ test("delivery transition routes enforce the production state machine at the HTT
   try {
     await waitForReady();
 
-    // Even when the feature flag is enabled, the closed legal gate must block the
-    // actual HTTP route before it looks up an order or contacts Paystack.
-    const gatedReceiverPayment = await request(
-      `/api/deliveries/${randomUUID()}/receiver-payment/initialize`,
-      auth(randomUUID(), "CUSTOMER"),
-      {}
-    );
-    assert.equal(gatedReceiverPayment.status, 403);
-    assert.deepEqual(await gatedReceiverPayment.json(), { error: "Receiver escrow is not enabled" });
-
     const senderId = randomUUID();
     const driverUserId = randomUUID();
     const otherDriverUserId = randomUUID();
@@ -85,6 +75,16 @@ test("delivery transition routes enforce the production state machine at the HTT
         otherDriverUserId, "+23492" + suffix, otherDriverUserId + "@example.test"
       ]
     );
+
+    // Use an authenticated customer because the route must reject on its legal
+    // gate before order lookup or any payment-provider interaction.
+    const gatedReceiverPayment = await request(
+      `/api/deliveries/${randomUUID()}/receiver-payment/initialize`,
+      auth(senderId, "CUSTOMER"),
+      {}
+    );
+    assert.equal(gatedReceiverPayment.status, 403);
+    assert.deepEqual(await gatedReceiverPayment.json(), { error: "Receiver escrow is not enabled" });
 
     const driver = (await pool.query(
       "INSERT INTO drivers(user_id,status,online) VALUES($1,'APPROVED',true) RETURNING id",
