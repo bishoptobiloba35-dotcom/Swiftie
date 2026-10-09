@@ -35,7 +35,7 @@ test("receiver confirmation route verifies PIN and atomically releases escrow fo
     await waitForReady();
     const sender = randomUUID();
     const driverUser = randomUUID();
-    const suffix = `${String(process.pid).slice(-4)}${Math.floor(Math.random() * 10000).toString().padStart(4, "0")}`;
+    const suffix = (BigInt("0x" + randomUUID().replaceAll("-", "")) % 100000000n).toString().padStart(8, "0");
     await pool.query(
       `INSERT INTO users(id,role,full_name,phone,email,password_hash)
        VALUES($1,'CUSTOMER','Receiver Flow Sender',$2,$3,'not-used'),($4,'DRIVER','Receiver Flow Driver',$5,$6,'not-used')`,
