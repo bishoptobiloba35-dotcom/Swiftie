@@ -5,9 +5,9 @@ groups:
       - alert: SwiftDropApiHigh5xxRate
         expr: |
           (
-            sum(rate(swiftdrop_http_errors_total[5m]))
+            sum(rate(swiftdrop_http_errors_total{path!~"^/(metrics|health|ready)$"}[5m]))
             /
-            clamp_min(sum(rate(swiftdrop_http_requests_total[5m])), 1)
+            clamp_min(sum(rate(swiftdrop_http_requests_total{path!~"^/(metrics|health|ready)$"}[5m])), 0.001)
           ) > 0.05
         for: 10m
         labels:
@@ -15,13 +15,13 @@ groups:
           service: swiftdrop-api
         annotations:
           summary: SwiftDrop API 5xx rate is above 5%
-          description: More than 5% of API requests have returned 5xx responses for at least 10 minutes.
+          description: More than 5% of non-operational API requests have returned 5xx responses for at least 10 minutes.
 
       - alert: SwiftDropApiHighLatency
         expr: |
           histogram_quantile(
             0.95,
-            sum by (le) (rate(swiftdrop_http_request_duration_ms_bucket[5m]))
+            sum by (le) (rate(swiftdrop_http_request_duration_ms_bucket{path!~"^/(metrics|health|ready)$"}[5m]))
           ) > 2500
         for: 10m
         labels:
@@ -29,14 +29,19 @@ groups:
           service: swiftdrop-api
         annotations:
           summary: SwiftDrop API p95 latency is above 2.5 seconds
-          description: API request p95 latency has remained above 2.5 seconds for at least 10 minutes.
+          description: Non-operational API request p95 latency has remained above 2.5 seconds for at least 10 minutes.
 
       - alert: SwiftDropApiNoTraffic
-        expr: sum(rate(swiftdrop_http_requests_total[15m])) == 0
+        expr: |
+          (
+            sum(rate(swiftdrop_http_requests_total{path!~"^/(metrics|health|ready)$"}[15m])) == 0
+          )
+          or
+          absent(sum(rate(swiftdrop_http_requests_total{path!~"^/(metrics|health|ready)$"}[15m])))
         for: 30m
         labels:
           severity: warning
           service: swiftdrop-api
         annotations:
-          summary: SwiftDrop API has received no traffic
-          description: No API requests have been observed for 30 minutes; verify service health and monitoring connectivity.
+          summary: SwiftDrop API has received no application traffic
+          description: No non-operational API requests have been observed for 30 minutes, or the request metric is absent; verify service health and monitoring connectivity.
