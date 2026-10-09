@@ -237,8 +237,31 @@ router.get("/errands/:id", requireAuth("CUSTOMER", "ADMIN", "AGENT"), async (req
       updatedAt: order.updated_at
     },
     stops: stops.rows.map((stop) => ({ id: stop.id, order: Number(stop.stop_order), stopType: stop.stop_type, label: stop.label, address: stop.address, latitude: Number(stop.latitude), longitude: Number(stop.longitude), instructions: stop.instructions, status: stop.status, completedAt: stop.completed_at, completedByUserId: stop.completed_by_user_id })),
-    items: items.rows,
-    events: events.rows,
+    items: items.rows.map((item) => ({
+      id: item.id,
+      description: item.requested_description,
+      quantity: Number(item.quantity),
+      maxAuthorizedMinor: Number(item.max_authorized_minor),
+      requestedPriceMinor: item.requested_price_minor == null ? null : Number(item.requested_price_minor),
+      replacementPolicy: item.replacement_policy,
+      status: item.status,
+      replacements: Array.isArray(item.replacements) ? item.replacements.map((option: any) => ({
+        id: option.id,
+        description: option.description,
+        quantity: Number(option.quantity),
+        priceMinor: option.priceMinor == null ? null : Number(option.priceMinor),
+        currency: option.currency,
+        shopperNote: option.shopperNote,
+        status: option.status,
+        createdAt: option.createdAt
+      })) : []
+    })),
+    events: events.rows.map((event) => ({
+      id: event.id,
+      eventType: event.eventType,
+      metadata: event.metadata,
+      createdAt: event.createdAt
+    })),
     payment: payment.rows[0] ? {
       id: payment.rows[0].id,
       status: payment.rows[0].status,
