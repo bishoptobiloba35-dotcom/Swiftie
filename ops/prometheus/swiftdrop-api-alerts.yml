@@ -7,7 +7,7 @@ groups:
           (
             sum(rate(swiftdrop_http_errors_total{path!~"^/(metrics|health|ready)$"}[5m]))
             /
-            clamp_min(sum(rate(swiftdrop_http_requests_total{path!~"^/(metrics|health|ready)$"}[5m])), 1)
+            clamp_min(sum(rate(swiftdrop_http_requests_total{path!~"^/(metrics|health|ready)$"}[5m])), 0.001)
           ) > 0.05
         for: 10m
         labels:
