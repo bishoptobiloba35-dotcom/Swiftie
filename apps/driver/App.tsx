@@ -626,7 +626,7 @@ export default function App() {
       {payoutHistory.length === 0 ? <Text style={styles.muted}>No payouts yet.</Text> : payoutHistory.slice(0, 10).map(item => (
         <View key={item.id} style={{ marginBottom: 10 }}>
           <Text>₦{(item.amount_minor / 100).toLocaleString()} · {item.status.replaceAll("_", " ")}</Text>
-          <Text style={styles.muted}>{item.status.replaceAll("_", " ")}</Text>
+          <Text style={styles.muted}>Transfer status: {item.status.replaceAll("_", " ")}</Text>
           {item.failure_reason ? <Text style={styles.muted}>{item.failure_reason}</Text> : null}
         </View>
       ))}
