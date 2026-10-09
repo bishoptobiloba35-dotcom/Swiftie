@@ -358,6 +358,16 @@ if (!db) {
     )).rows[0];
     assert.match(String(fixedCommission.column_default), /50000/);
     assert.match(String(fixedCommission.constraint_definition), /50000/);
+
+    const authorizationTable = (await db.query(
+      `SELECT column_name
+         FROM information_schema.columns
+        WHERE table_schema='public'
+          AND table_name='business_payment_authorizations'`
+    )).rows.map((row: any) => row.column_name);
+    assert.ok(authorizationTable.includes("business_id"));
+    assert.ok(authorizationTable.includes("authorization_code"));
+    assert.ok(authorizationTable.includes("status"));
   });
 }
 
