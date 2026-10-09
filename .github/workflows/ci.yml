@@ -61,6 +61,13 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/swiftdrop_test
     steps:
       - uses: actions/checkout@v5
+      - name: Validate Prometheus alert rules
+        run: >-
+          docker run --rm
+          --entrypoint=/bin/promtool
+          -v "${{ github.workspace }}/ops/prometheus:/etc/prometheus:ro"
+          prom/prometheus:v3.5.0
+          check rules /etc/prometheus/swiftdrop-api-alerts.yml
       - uses: actions/setup-node@v5
         with:
           node-version: 22
