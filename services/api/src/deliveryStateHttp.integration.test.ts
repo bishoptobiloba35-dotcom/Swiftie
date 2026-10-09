@@ -48,13 +48,25 @@ test("delivery transition routes enforce the production state machine at the HTT
       ...process.env,
       NODE_ENV: "test",
       API_PORT: String(API_PORT),
-      JWT_SECRET: TEST_JWT_SECRET
+      JWT_SECRET: TEST_JWT_SECRET,
+      SWIFTDROP_ENABLE_RECEIVER_ESCROW: "true",
+      SWIFTDROP_LEGAL_GATE_LICENSED_ESCROW_PARTNER: "false"
     },
     stdio: "ignore"
   });
 
   try {
     await waitForReady();
+
+    // Even when the feature flag is enabled, the closed legal gate must block the
+    // actual HTTP route before it looks up an order or contacts Paystack.
+    const gatedReceiverPayment = await request(
+      `/api/deliveries/${randomUUID()}/receiver-payment/initialize`,
+      auth(randomUUID(), "CUSTOMER"),
+      {}
+    );
+    assert.equal(gatedReceiverPayment.status, 403);
+    assert.deepEqual(await gatedReceiverPayment.json(), { error: "Receiver escrow is not enabled" });
 
     const senderId = randomUUID();
     const driverUserId = randomUUID();
