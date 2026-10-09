@@ -26,7 +26,7 @@ async function waitForReady(): Promise<void> {
 async function createUser(role = "CUSTOMER"): Promise<{ id: string; token: string }> {
   if (!pool) throw new Error("DATABASE_URL is required");
   const id = randomUUID();
-  const phone = `+23480${String(process.pid).slice(-4)}${Math.floor(Math.random() * 10000).toString().padStart(4, "0")}`;
+  const phone = `+23480${(BigInt("0x" + randomUUID().replaceAll("-", "")) % 100000000n).toString().padStart(8, "0")}`;
   await pool.query(
     `INSERT INTO users(id,role,full_name,phone,email,password_hash)
      VALUES($1,$2,$3,$4,$5,$6)`,
