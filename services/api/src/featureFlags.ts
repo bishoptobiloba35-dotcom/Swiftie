@@ -35,8 +35,16 @@ export function featureEnabled(feature: SwiftDropFeature): boolean {
 }
 
 export function assertFeatureAndLegalGate(feature: SwiftDropFeature, gate: LegalGate): void {
-  if (process.env[envName(feature)] !== "true") throw new Error("Feature " + feature + " is disabled");
-  if (!legalGateEnabled(gate)) throw new Error("Legal gate " + gate + " is not enabled");
+  if (process.env[envName(feature)] !== "true") {
+    throw new Error("Feature " + feature + " is disabled");
+  }
+  const requiredGate = legalGateForFeature[feature];
+  if (requiredGate && requiredGate !== gate) {
+    throw new Error("Feature " + feature + " requires legal gate " + requiredGate);
+  }
+  if (!legalGateEnabled(gate)) {
+    throw new Error("Legal gate " + gate + " is not enabled");
+  }
 }
 
 export function assertFeatureEnabled(feature: SwiftDropFeature): void {
