@@ -48,7 +48,9 @@ test("delivery transition routes enforce the production state machine at the HTT
       ...process.env,
       NODE_ENV: "test",
       API_PORT: String(API_PORT),
-      JWT_SECRET: TEST_JWT_SECRET
+      JWT_SECRET: TEST_JWT_SECRET,
+      SWIFTDROP_ENABLE_RECEIVER_ESCROW: "true",
+      SWIFTDROP_LEGAL_GATE_LICENSED_ESCROW_PARTNER: "false"
     },
     stdio: "ignore"
   });
@@ -73,6 +75,16 @@ test("delivery transition routes enforce the production state machine at the HTT
         otherDriverUserId, "+23492" + suffix, otherDriverUserId + "@example.test"
       ]
     );
+
+    // Use an authenticated customer because the route must reject on its legal
+    // gate before order lookup or any payment-provider interaction.
+    const gatedReceiverPayment = await request(
+      `/api/deliveries/${randomUUID()}/receiver-payment/initialize`,
+      auth(senderId, "CUSTOMER"),
+      {}
+    );
+    assert.equal(gatedReceiverPayment.status, 403);
+    assert.deepEqual(await gatedReceiverPayment.json(), { error: "Receiver escrow is not enabled" });
 
     const driver = (await pool.query(
       "INSERT INTO drivers(user_id,status,online) VALUES($1,'APPROVED',true) RETURNING id",
