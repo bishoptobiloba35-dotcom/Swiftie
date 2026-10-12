@@ -23,15 +23,41 @@ ALTER TABLE payments
     'PAY_ON_DELIVERY'
   ));
 
--- 2. Track when digital POD was verified by webhook
+-- 2. Expand allowed delivery statuses for the POD lifecycle
+-- Previous constraint (migration 029) did not include POD states.
+ALTER TABLE deliveries DROP CONSTRAINT IF EXISTS deliveries_status_check;
+ALTER TABLE deliveries
+  ADD CONSTRAINT deliveries_status_check
+  CHECK (status IN (
+    'CREATED',
+    'PAYMENT_PENDING',
+    'PAYMENT_AUTHORIZED',
+    'DRIVER_ASSIGNED',
+    'DRIVER_AT_PICKUP',
+    'PICKED_UP',
+    'IN_TRANSIT',
+    'ARRIVED',
+    'RECEIVER_PAYMENT_PENDING',
+    'PAYMENT_VERIFIED',
+    'HANDED_OVER',
+    'PIN_CONFIRMED',
+    'DELIVERED',
+    'DISPUTE_WINDOW',
+    'RELEASED',
+    'CANCELLED',
+    'DISPUTED',
+    'RETURNED'
+  ));
+
+-- 3. Track when digital POD was verified by webhook
 ALTER TABLE deliveries
   ADD COLUMN IF NOT EXISTS pod_verified_at TIMESTAMPTZ;
 
--- 3. Explicit pending-payment flag for the receiver (server-controlled)
+-- 4. Explicit pending-payment flag for the receiver (server-controlled)
 ALTER TABLE deliveries
   ADD COLUMN IF NOT EXISTS receiver_payment_pending BOOLEAN NOT NULL DEFAULT false;
 
--- 4. Index for operational queries
+-- 5. Index for operational queries
 CREATE INDEX IF NOT EXISTS idx_deliveries_pod_pending
   ON deliveries (status, payment_mode, receiver_payment_pending)
   WHERE payment_mode = 'PAY_ON_DELIVERY' AND receiver_payment_pending = true;
