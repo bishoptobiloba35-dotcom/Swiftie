@@ -2781,6 +2781,21 @@ app.post("/api/deliveries/:id/arrived", requireAuth("DRIVER"), async (req, res) 
     if (!updated) return res.status(409).json({ error: "Delivery is not in transit or driver is not assigned" });
     await recordDeliveryEvent({ deliveryId: updated.id, eventType: "ARRIVED", actorUserId: identity(req), metadata: {} });
     await notificationForDelivery(updated.id, updated.senderId, "Driver has arrived", "Your driver has arrived at the delivery location.", "ARRIVED");
+    // Digital POD: automatically open receiver payment window (server-controlled)
+    if (updated.paymentMode === "PAY_ON_DELIVERY") {
+      const pending = await markReceiverPaymentPending(updated.id, identity(req));
+      if (pending.ok) {
+        await notificationForDelivery(
+          updated.id,
+          updated.receiverUserId ?? updated.senderId,
+          "Payment required",
+          "Your package has arrived. Please complete digital payment in the app to receive it. Do not pay the courier in cash.",
+          "RECEIVER_PAYMENT_PENDING"
+        );
+        const refreshed = await findDelivery(updated.id);
+        return res.json(safeDelivery(refreshed ?? updated));
+      }
+    }
     return res.json(safeDelivery(updated));
   }
   const delivery = deliveries.get(routeParam(req.params.id, "id"));
@@ -2797,6 +2812,14 @@ app.post("/api/deliveries/:id/complete", requireAuth("DRIVER"), async (req, res)
   if (!driverId) return res.status(403).json({ error: "Only KYC-verified drivers can manage deliveries" });
   const current = databaseEnabled() ? await findDelivery(routeParam(req.params.id, "id")) : deliveries.get(routeParam(req.params.id, "id"));
   if (!current || current.driverId !== driverId) return res.status(403).json({ error: "Driver is not assigned to this delivery" });
+  if (current.paymentMode === "PAY_ON_DELIVERY") {
+    if (current.status === "RECEIVER_PAYMENT_PENDING" || current.status === "ARRIVED") {
+      return res.status(409).json({ error: "Receiver must complete digital payment before hand-over. Cash is not accepted." });
+    }
+    if (current.status === "PAYMENT_VERIFIED" || current.status === "HANDED_OVER") {
+      return res.status(409).json({ error: "Receiver PIN confirmation is required to complete this delivery." });
+    }
+  }
   if (current.status !== "ARRIVED") return res.status(409).json({ error: "Driver must mark the parcel arrived before receiver confirmation" });
   return res.status(409).json({ error: "Receiver confirmation is required to complete delivery and release payment" });
 });
