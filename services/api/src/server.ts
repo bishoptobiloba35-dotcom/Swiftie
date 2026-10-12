@@ -36,6 +36,7 @@ import { reportExternalError } from "./errorTracking.js";
 import { processPhase2EscrowReleases, reconcilePhase2Float } from "./phase2EscrowWorker.js";
 import escrowRoutes, { reconcileProcessingWalletPayouts, requeryPendingDvaAccounts, reconcilePendingEscrowProviderPayments } from "./escrowRoutes.js";
 import { featureEnabled } from "./featureFlags.js";
+import { applyPodPaymentVerified, markReceiverPaymentPending, podAllowsHandover } from "./podPayment.js";
 
 const app = express();
 
@@ -110,7 +111,7 @@ type MemoryDelivery = {
   id: string; trackingCode: string; senderId: string; receiverName: string; receiverPhone: string;
   pickup: { label: string; formattedAddress: string; location: DeliveryLocation };
   dropoff: { label: string; formattedAddress: string; location: DeliveryLocation };
-  status: Status; paymentMode: "SENDER_ESCROW" | "RECEIVER_ESCROW"; deliveryType?: "EXPRESS" | "STANDARD"; goodsAmountMinor?: number; driverId?: string; pickupPhotoUrl?: string; proofRequirements?: { pickup: string[]; dropoff: string[] }; receiverPin: string;
+  status: Status; paymentMode: "SENDER_ESCROW" | "RECEIVER_ESCROW" | "PAY_ON_DELIVERY"; deliveryType?: "EXPRESS" | "STANDARD"; goodsAmountMinor?: number; driverId?: string; pickupPhotoUrl?: string; proofRequirements?: { pickup: string[]; dropoff: string[] }; receiverPin: string;
   quote?: DeliveryQuote; createdAt: string; updatedAt: string;
 };
 const deliveries = new Map<string, MemoryDelivery>();
@@ -150,7 +151,7 @@ const notificationForDelivery = async (deliveryId: string, userId: string, title
 
 
 const createDeliverySchema = z.object({
-  senderId: z.string().uuid().optional(), paymentMode: z.enum(["SENDER_ESCROW","RECEIVER_ESCROW"]).default("SENDER_ESCROW"), deliveryType: z.enum(["EXPRESS","STANDARD"]).default("EXPRESS"), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
+  senderId: z.string().uuid().optional(), paymentMode: z.enum(["SENDER_ESCROW","RECEIVER_ESCROW","PAY_ON_DELIVERY"]).default("SENDER_ESCROW"), deliveryType: z.enum(["EXPRESS","STANDARD"]).default("EXPRESS"), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
 
   weightKg: z.number().positive().max(1000),
   dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
@@ -599,6 +600,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const input = { ...parsed.data, senderId: identity(req) };
   if (parsed.data.paymentMode === "RECEIVER_ESCROW" && !featureEnabled("RECEIVER_ESCROW")) return res.status(403).json({ error: "Receiver escrow is not enabled for this environment" });
+  if (parsed.data.paymentMode === "PAY_ON_DELIVERY" && !featureEnabled("POD")) return res.status(403).json({ error: "Digital pay-on-delivery is not enabled for this environment" });
   if (parsed.data.deliveryType === "STANDARD" && !featureEnabled("STANDARD_DELIVERY")) return res.status(403).json({ error: "Standard station delivery is not enabled for this environment" });
   if (parsed.data.goodsAmountMinor > parsed.data.declaredValueMinor) return res.status(400).json({ error: "Goods amount cannot exceed declared value" });
   if (parsed.data.deliveryType === "STANDARD" && !parsed.data.stationId) return res.status(400).json({ error: "A verified station is required for Standard delivery" });
@@ -738,11 +740,24 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
 });
 
 app.post("/api/deliveries/:id/receiver-payment/initialize", requireAuth("CUSTOMER"), async (req, res) => {
-  if (!featureEnabled("RECEIVER_ESCROW")) return res.status(403).json({ error: "Receiver escrow is not enabled" });
+  const podOn = featureEnabled("POD");
+  const receiverEscrowOn = featureEnabled("RECEIVER_ESCROW");
+  if (!podOn && !receiverEscrowOn) return res.status(403).json({ error: "Receiver payment is not enabled" });
   if (!databaseEnabled()) return res.status(503).json({ error: "Payments require the production database" });
   const userId = identity(req);
   const delivery = await findDelivery(routeParam(req.params.id, "id"));
-  if (!delivery || delivery.paymentMode !== "RECEIVER_ESCROW") return res.status(404).json({ error: "Receiver escrow order not found" });
+  if (!delivery || (delivery.paymentMode !== "RECEIVER_ESCROW" && delivery.paymentMode !== "PAY_ON_DELIVERY")) {
+    return res.status(404).json({ error: "Receiver payment order not found" });
+  }
+  if (delivery.paymentMode === "PAY_ON_DELIVERY" && !featureEnabled("POD")) {
+    return res.status(403).json({ error: "Digital pay-on-delivery is not enabled" });
+  }
+  if (delivery.paymentMode === "RECEIVER_ESCROW" && !featureEnabled("RECEIVER_ESCROW")) {
+    return res.status(403).json({ error: "Receiver escrow is not enabled" });
+  }
+  if (delivery.paymentMode === "PAY_ON_DELIVERY" && delivery.status !== "RECEIVER_PAYMENT_PENDING" && delivery.status !== "ARRIVED") {
+    return res.status(409).json({ error: "Order is not awaiting receiver payment" });
+  }
 
   const user = (await pool!.query("SELECT phone,email FROM users WHERE id=$1",[userId])).rows[0];
   const normalize = (phone: string) => {
@@ -754,12 +769,28 @@ app.post("/api/deliveries/:id/receiver-payment/initialize", requireAuth("CUSTOME
   }
 
   await pool!.query("UPDATE deliveries SET receiver_user_id=$2 WHERE id=$1 AND receiver_user_id IS NULL",[delivery.id,userId]);
-  const amountMinor = Number(delivery.goodsAmountMinor) + Number(delivery.quote?.totalMinor ?? 0);
+  // For pure package POD, amount is the server quote. For receiver-escrow goods, include goods amount.
+  const amountMinor = delivery.paymentMode === "PAY_ON_DELIVERY"
+    ? Number(delivery.quote?.totalMinor ?? 0)
+    : Number(delivery.goodsAmountMinor) + Number(delivery.quote?.totalMinor ?? 0);
   if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) return res.status(409).json({ error: "Receiver payment amount is not available" });
   const email = String(req.body?.email ?? user.email ?? "").trim();
   if (!email) return res.status(400).json({ error: "Email is required for Paystack card checkout" });
   const secret = process.env.PAYSTACK_SECRET_KEY;
   if ((process.env.PAYMENT_PROVIDER || "paystack") !== "paystack" || !secret) return res.status(503).json({ error: "Paystack payment configuration is not ready" });
+
+  // Ensure a payment row exists with the correct collection mode (idempotent upsert).
+  const collectionMode = delivery.paymentMode === "PAY_ON_DELIVERY" ? "PAY_ON_DELIVERY" : "RECEIVER_ESCROW";
+  await createPayment({
+    deliveryId: delivery.id,
+    provider: "paystack",
+    amountMinor,
+    currency: "NGN",
+    collectionMode
+  });
+  if (delivery.paymentMode === "PAY_ON_DELIVERY" && delivery.status === "ARRIVED") {
+    await markReceiverPaymentPending(delivery.id, userId);
+  }
 
   const reference = "SD-" + delivery.trackingCode + "-R-" + Date.now();
   const reservation = await reservePaymentInitialization(delivery.id, reference);
@@ -811,6 +842,21 @@ app.post("/api/deliveries/:id/payment", requireAuth("CUSTOMER"), async (req, res
     metadata: { paymentId: payment.id, amountMinor, currency: "NGN" }
   });
   res.status(201).json({ payment });
+});
+
+// Digital POD: move ARRIVED → RECEIVER_PAYMENT_PENDING (server-controlled)
+app.post("/api/deliveries/:id/mark-receiver-payment-pending", requireAuth(), async (req, res) => {
+  if (!featureEnabled("POD")) return res.status(403).json({ error: "Digital pay-on-delivery is not enabled" });
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database unavailable" });
+  const deliveryId = String(req.params.id);
+  const userId = identity(req);
+  const delivery = await findDelivery(deliveryId);
+  if (!delivery) return res.status(404).json({ error: "Order not found" });
+  if (delivery.paymentMode !== "PAY_ON_DELIVERY") return res.status(409).json({ error: "Order is not PAY_ON_DELIVERY" });
+  const result = await markReceiverPaymentPending(deliveryId, userId);
+  if (!result.ok) return res.status(409).json({ error: result.error ?? "Unable to mark pending" });
+  const updated = await findDelivery(deliveryId);
+  return res.status(200).json({ delivery: updated });
 });
 
 app.post("/api/payments/paystack/webhook", async (req, res) => {
@@ -1454,6 +1500,22 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   const payment = await findPayment(deliveryId);
   if (!payment || payment.provider !== "paystack" || (payment.providerReference && payment.providerReference !== reference)) {
     return res.status(200).json({ received: true });
+  }
+
+  // Digital POD: server-only verification path
+  if (databaseEnabled() && payment.collectionMode === "PAY_ON_DELIVERY") {
+    const amountMinor = Number(data.amount);
+    if (event.event === "charge.success") {
+      const result = await applyPodPaymentVerified(deliveryId, reference, amountMinor);
+      if (!result.ok) {
+        console.error(JSON.stringify({ event: "pod_payment_verify_failed", deliveryId, reference, error: result.error }));
+        return res.status(200).json({ received: true, podError: result.error });
+      }
+      await updatePaymentStatus(deliveryId, "HELD", reference).catch(() => null);
+      return res.status(200).json({ received: true, pod: result.alreadyVerified ? "already_verified" : "PAYMENT_VERIFIED" });
+    }
+    await updatePaymentStatus(deliveryId, "FAILED", reference);
+    return res.status(200).json({ received: true, pod: "FAILED" });
   }
 
   if (Number(data.amount) !== payment.amountMinor || String(data.currency) !== payment.currency) {
