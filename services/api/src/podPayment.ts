@@ -4,16 +4,21 @@
  * Only a verified Paystack webhook may move RECEIVER_PAYMENT_PENDING → PAYMENT_VERIFIED.
  */
 
-import { pool } from "./database/db.js";
 import { canTransition, type DeliveryStatus } from "./deliveryState.js";
 
 export type PodPaymentMode = "PAY_ON_DELIVERY";
+
+async function getPool() {
+  const mod = await import("./database/db.js");
+  return mod.pool;
+}
 
 /**
  * Mark order as awaiting receiver digital payment.
  * Only legal from ARRIVED when payment_mode is PAY_ON_DELIVERY.
  */
 export async function markReceiverPaymentPending(deliveryId: string, actorUserId?: string): Promise<{ ok: boolean; error?: string }> {
+  const pool = await getPool();
   if (!pool) return { ok: false, error: "Database unavailable" };
   const client = await pool.connect();
   try {
@@ -70,6 +75,7 @@ export async function applyPodPaymentVerified(
   providerReference: string,
   amountMinor: number
 ): Promise<{ ok: boolean; error?: string; alreadyVerified?: boolean }> {
+  const pool = await getPool();
   if (!pool) return { ok: false, error: "Database unavailable" };
   const client = await pool.connect();
   try {
