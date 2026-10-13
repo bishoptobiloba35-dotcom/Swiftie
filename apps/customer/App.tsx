@@ -18,6 +18,51 @@ import PayoutRequestScreen from "./src/PayoutRequestScreen";
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 const api = new SwiftDropApi(API_URL);
 
+function PinBoxes({ label, value, onChangeText }: { label: string; value: string; onChangeText: (value: string) => void }) {
+  const inputRefs = React.useRef<Array<TextInput | null>>([]);
+  const updateDigit = (index: number, raw: string) => {
+    const digits = raw.replace(/[^0-9]/g, "");
+    if (digits.length > 1) {
+      const pasted = digits.slice(0, 4);
+      onChangeText(pasted);
+      inputRefs.current[Math.min(pasted.length, 3)]?.focus();
+      return;
+    }
+    if (!digits) {
+      if (index < value.length) onChangeText(value.slice(0, index) + value.slice(index + 1));
+      return;
+    }
+    const next = index < value.length
+      ? value.slice(0, index) + digits + value.slice(index + 1)
+      : value + digits;
+    onChangeText(next.slice(0, 4));
+    if (index < 3) inputRefs.current[index + 1]?.focus();
+  };
+  return (
+    <View style={styles.pinRow} accessibilityLabel={label}>
+      {[0, 1, 2, 3].map(index => (
+        <TextInput
+          key={index}
+          ref={ref => { inputRefs.current[index] = ref; }}
+          style={styles.pinBox}
+          value={value[index] ?? ""}
+          onChangeText={raw => updateDigit(index, raw)}
+          onKeyPress={({ nativeEvent }) => {
+            if (nativeEvent.key === "Backspace" && !value[index] && index > 0) inputRefs.current[index - 1]?.focus();
+          }}
+          keyboardType="number-pad"
+          maxLength={4}
+          secureTextEntry
+          selectTextOnFocus
+          accessibilityLabel={label + " digit " + (index + 1) + " of 4"}
+          textContentType="oneTimeCode"
+          importantForAutofill="yes"
+        />
+      ))}
+    </View>
+  );
+}
+
 export default function App() {
   const [signedIn, setSignedIn] = React.useState(false);
   const [homeSection, setHomeSection] = React.useState<"HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS" | "HISTORY" | "WALLET" | "ESCROW" | "PAYOUT">("HOME");
@@ -398,7 +443,7 @@ export default function App() {
       if (verification?.status === "AUTHORIZED" && selectedListing.delivery_mode !== "PICKUP") {
         const lat = Number(marketplaceDropoffLat);
         const lng = Number(marketplaceDropoffLng);
-        if (marketplaceReceiverName.trim() && marketplaceReceiverPhone.trim() && /^\d{6}$/.test(marketplaceReceiverPin) && marketplaceDropoffAddress.trim() && Number.isFinite(lat) && Number.isFinite(lng)) {
+        if (marketplaceReceiverName.trim() && marketplaceReceiverPhone.trim() && /^\d{4}$/.test(marketplaceReceiverPin) && marketplaceDropoffAddress.trim() && Number.isFinite(lat) && Number.isFinite(lng)) {
           await api.fulfillMarketplaceOrder(data.order.id, {
             receiverName: marketplaceReceiverName.trim(),
             receiverPhone: marketplaceReceiverPhone.trim(),
@@ -558,8 +603,8 @@ export default function App() {
   async function createErrand() {
     try {
       const d = errandDraft;
-      if (!d.description.trim() || !d.receiverName.trim() || !d.receiverPhone.trim() || !/^\d{4,6}$/.test(d.receiverPin)) {
-        throw new Error("Complete the errand description and receiver details, including a 4-6 digit PIN.");
+      if (!d.description.trim() || !d.receiverName.trim() || !d.receiverPhone.trim() || !/^\d{4}$/.test(d.receiverPin)) {
+        throw new Error("Complete the errand description and receiver details, including a 4-digit PIN.");
       }
       if (d.errandType !== "GENERAL_ERRAND" && !(Number(d.spendingCeiling) > 0)) {
         throw new Error("Shopping errands require a positive spending ceiling.");
@@ -983,7 +1028,7 @@ export default function App() {
               <Text style={styles.muted}>Your payment is authorized. Add the receiver and drop-off details to create the real SwiftDrop delivery and enable tracking.</Text>
               <TextInput style={styles.input} placeholder="Receiver full name" value={marketplaceReceiverName} onChangeText={setMarketplaceReceiverName} />
               <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={marketplaceReceiverPhone} onChangeText={setMarketplaceReceiverPhone} />
-              <TextInput style={styles.input} placeholder="4-digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
+              <PinBoxes label="4-digit receiver PIN" value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
               <TextInput style={styles.input} placeholder="Drop-off address" value={marketplaceDropoffAddress} onChangeText={setMarketplaceDropoffAddress} />
               <View style={styles.row}>
                 <TextInput style={[styles.input, styles.half]} placeholder="Latitude" keyboardType="decimal-pad" value={marketplaceDropoffLat} onChangeText={setMarketplaceDropoffLat} />
@@ -1057,7 +1102,7 @@ export default function App() {
           <Text style={styles.muted}>These details create the real SwiftDrop delivery after Paystack confirms payment.</Text>
           <TextInput style={styles.input} placeholder="Receiver full name" value={marketplaceReceiverName} onChangeText={setMarketplaceReceiverName} />
           <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={marketplaceReceiverPhone} onChangeText={setMarketplaceReceiverPhone} />
-          <TextInput style={styles.input} placeholder="4-digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
+          <PinBoxes label="4-digit receiver PIN" value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
           <TextInput style={styles.input} placeholder="Drop-off address" value={marketplaceDropoffAddress} onChangeText={setMarketplaceDropoffAddress} />
           <View style={styles.row}><TextInput style={styles.half} placeholder="Drop-off latitude" keyboardType="decimal-pad" value={marketplaceDropoffLat} onChangeText={setMarketplaceDropoffLat} /><TextInput style={styles.half} placeholder="Drop-off longitude" keyboardType="decimal-pad" value={marketplaceDropoffLng} onChangeText={setMarketplaceDropoffLng} /></View>
         </View>}
@@ -1066,7 +1111,7 @@ export default function App() {
           <Text style={styles.muted}>These details are used to create the real SwiftDrop delivery after Paystack confirms payment.</Text>
           <TextInput style={styles.input} placeholder="Receiver full name" value={marketplaceReceiverName} onChangeText={setMarketplaceReceiverName} />
           <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={marketplaceReceiverPhone} onChangeText={setMarketplaceReceiverPhone} />
-          <TextInput style={styles.input} placeholder="4-digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
+          <PinBoxes label="4-digit receiver PIN" value={marketplaceReceiverPin} onChangeText={setMarketplaceReceiverPin} />
           <TextInput style={styles.input} placeholder="Drop-off address" value={marketplaceDropoffAddress} onChangeText={setMarketplaceDropoffAddress} />
           <View style={styles.row}><TextInput style={styles.half} placeholder="Drop-off latitude" keyboardType="decimal-pad" value={marketplaceDropoffLat} onChangeText={setMarketplaceDropoffLat} /><TextInput style={styles.half} placeholder="Drop-off longitude" keyboardType="decimal-pad" value={marketplaceDropoffLng} onChangeText={setMarketplaceDropoffLng} /></View>
         </View>}
@@ -1157,7 +1202,7 @@ export default function App() {
         <Text style={styles.homeHeading}>Receiver & destination</Text>
         <TextInput style={styles.input} placeholder="Receiver full name" value={d.receiverName} onChangeText={v => updateErrand({ receiverName: v })} />
         <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={d.receiverPhone} onChangeText={v => updateErrand({ receiverPhone: v })} />
-        <TextInput style={styles.input} placeholder="4-6 digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={d.receiverPin} onChangeText={v => updateErrand({ receiverPin: v })} />
+        <PinBoxes label="4-digit receiver PIN" value={d.receiverPin} onChangeText={v => updateErrand({ receiverPin: v })} />
         <TextInput style={styles.input} placeholder="Destination address" value={d.destinationAddress} onChangeText={v => updateErrand({ destinationAddress: v })} />
         <View style={styles.row}><TextInput style={styles.half} placeholder="Latitude" keyboardType="decimal-pad" value={d.destinationLat} onChangeText={v => updateErrand({ destinationLat: v })} /><TextInput style={styles.half} placeholder="Longitude" keyboardType="decimal-pad" value={d.destinationLng} onChangeText={v => updateErrand({ destinationLng: v })} /></View>
         <Pressable style={styles.primary} disabled={errandBusy} onPress={() => void createErrand()}><Text style={styles.primaryText}>{errandBusy ? "Creating errand…" : "Place errand request"}</Text></Pressable>
@@ -1213,7 +1258,7 @@ export default function App() {
     <Text style={styles.hint}>Clear instructions help the courier find the right entrance and complete the handoff without relying on the address alone.</Text>
     <TextInput style={styles.input} placeholder="Receiver name" value={receiver} onChangeText={setReceiver} />
     <TextInput style={styles.input} placeholder="Receiver phone" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
-    <TextInput style={styles.input} placeholder="4-digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={receiverPin} onChangeText={setReceiverPin} />
+    <PinBoxes label="4-digit receiver PIN" value={receiverPin} onChangeText={setReceiverPin} />
     <Text style={styles.hint}>Give this PIN to the receiver. The receiver must use it to confirm receipt before courier payout is released.</Text>
     <TextInput style={styles.input} placeholder="Actual goods value (₦)" keyboardType="decimal-pad" value={declaredValue} onChangeText={setDeclaredValue} />
     <Text style={styles.hint}>Required for pricing, vehicle/risk planning and claims. Declare the genuine value of the goods. A damage claim is limited to the verified actual loss and cannot be increased by an inflated declaration.</Text>
@@ -1298,7 +1343,7 @@ export default function App() {
 {delivery.status === "ARRIVED" && <View style={styles.ratingBox}>
         <Text style={styles.photoTitle}>Receiver confirmation</Text>
         <Text style={styles.muted}>"Only confirm after you have physically received the parcel. This releases the held courier payment."</Text>
-        <TextInput style={styles.input} placeholder="4-digit receiver PIN" keyboardType="number-pad" maxLength={4} secureTextEntry value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} />
+        <PinBoxes label="4-digit receiver PIN" value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} />
         <Pressable style={styles.primary} onPress={() => void confirmReceipt()}><Text style={styles.primaryText}>I received the parcel & complete delivery</Text></Pressable>
       </View>}
       {delivery.status === "DELIVERED" && <Text style={styles.done}>✓ Delivered and PIN verified</Text>}
@@ -1323,6 +1368,8 @@ const styles = StyleSheet.create({
   container: { padding: 20, paddingBottom: 42, gap: 14 },
   homeContainer: { padding: 18, paddingBottom: 40, gap: 14 },
   row: { flexDirection: "row", gap: 10 },
+  pinRow: { flexDirection: "row", justifyContent: "space-between", gap: 10, marginVertical: 6 },
+  pinBox: { flex: 1, minWidth: 0, borderWidth: 1, borderColor: "#DED8D2", borderRadius: 12, paddingVertical: 13, textAlign: "center", fontSize: 20, fontWeight: "700", backgroundColor: "#FFFFFF", color: "#27232A" },
   rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   third: { flex: 1 },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
