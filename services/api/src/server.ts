@@ -11,7 +11,7 @@ import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryFo
   finalizePaystackWebhookEvent, retryFailedPayout, flagPayoutReconciliationMismatch } from "./database/deliveryRepository.js";
 import { pool, pingDatabase, assertRlsCompatibleDatabaseRole } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
-import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, listSupportTicketMessages, recordAdminSupportReply, prepareRefund, recoverCourierEscrowPayout, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
+import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, setPayoutProviderTransferCode, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, listSupportTicketMessages, recordAdminSupportReply, prepareRefund, recoverCourierEscrowPayout, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -532,79 +532,133 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
   if (!databaseEnabled()) return res.status(503).json({ error: "Payouts require the production database" });
   const driver = await driverForUser(identity(req));
   if (!driver) return res.status(404).json({ error: "Driver profile not found" });
-  const delivery = await findDeliveryForUser(routeParam(req.params.id, "id"), identity(req), "DRIVER");
+  const deliveryId = routeParam(req.params.id, "id");
+  const delivery = await findDeliveryForUser(deliveryId, identity(req), "DRIVER");
   if (!delivery) return res.status(404).json({ error: "Delivery not found" });
-  const payout = await findPayout(routeParam(req.params.id, "id"));
-  if (!payout || payout.status !== "ELIGIBLE") return res.status(409).json({ error: "Payout is not eligible yet. The receiver must confirm delivery first." });
+  const payout = await findPayout(deliveryId);
+  if (!payout) return res.status(404).json({ error: "Payout not found" });
+
+  // Stable per-payout idempotency: a timeout is inconclusive, so the same payout
+  // remains PROCESSING and is reconciled instead of issuing another transfer.
+  if (payout.status === "PROCESSING" && payout.providerReference) {
+    return res.status(202).json({ payout: {
+      id: payout.id, deliveryId: payout.deliveryId, amountMinor: payout.amountMinor,
+      currency: payout.currency, status: payout.status, providerStatus: payout.providerStatus,
+      failureReason: payout.failureReason, processedAt: payout.processedAt
+    }, providerStatus: "pending", message: "This payout is already being reconciled; no second transfer was sent." });
+  }
+  if (payout.status === "RELEASED") return res.status(200).json({ payout, message: "This payout is already completed." });
+  if (payout.status !== "ELIGIBLE") {
+    return res.status(409).json({ error: "Payout is not eligible or has already failed. Failed transfers require admin review and are not automatically retried." });
+  }
+  if (!Number.isSafeInteger(payout.amountMinor) || payout.amountMinor < 10_000) {
+    return res.status(400).json({ error: "Standard driver payouts must be at least ₦100." });
+  }
+  if (payout.amountMinor > 100_000_000) {
+    await pool!.query("UPDATE payouts SET requires_admin_approval=true WHERE id=$1 AND status='ELIGIBLE'", [payout.id]);
+    return res.status(409).json({ error: "Payouts above ₦1,000,000 require explicit admin approval before transfer." });
+  }
   const account = await getDriverPayoutAccount(driver.id);
-  if (!account) return res.status(409).json({ error: "Add and verify a payout bank account before withdrawing." });
-  const processing = await setPayoutProcessing(routeParam(req.params.id, "id"));
+  if (!account || !account.recipientVerified) return res.status(409).json({ error: "Add and verify a payout bank account before withdrawing." });
+
+  const rateLimit = await pool!.query(
+    `INSERT INTO driver_payout_request_limits(driver_id,last_requested_at) VALUES($1,now())
+     ON CONFLICT(driver_id) DO UPDATE SET last_requested_at=now()
+       WHERE driver_payout_request_limits.last_requested_at < now()-interval '1 minute'
+     RETURNING driver_id`, [driver.id]
+  );
+  if (!rateLimit.rowCount) return res.status(429).json({ error: "Only one payout request per driver is allowed each minute." });
+
+  let recipientCode: string;
+  try {
+    recipientCode = await ensureRecipient(driver.id);
+  } catch (error) {
+    return res.status(409).json({ error: error instanceof Error ? error.message : "Verified payout recipient is unavailable." });
+  }
+
+  const processing = await setPayoutProcessing(deliveryId);
   if (!processing) return res.status(409).json({ error: "Payout is already being processed." });
   const secret = process.env.PAYSTACK_SECRET_KEY;
-  if (!secret) { await markPayoutFailed(routeParam(req.params.id, "id")); return res.status(503).json({ error: "Paystack transfers are not configured" }); }
-  const reference = "sd_payout_" + randomUUID().replaceAll("-", "");
-  const reserved = await setPayoutProviderReference(routeParam(req.params.id, "id"), reference);
+  if (!secret) {
+    await markPayoutFailed(deliveryId);
+    return res.status(503).json({ error: "Paystack transfers are not configured" });
+  }
+  const reference = "payout-" + driver.id + "-" + Date.now();
+  const reserved = await setPayoutProviderReference(deliveryId, reference);
   if (!reserved) {
-    await markPayoutFailed(routeParam(req.params.id, "id"));
+    await markPayoutFailed(deliveryId);
     return res.status(409).json({ error: "Payout could not be reserved for transfer" });
   }
   try {
     const response = await fetch("https://api.paystack.co/transfer", {
       method: "POST",
       headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
-      body: JSON.stringify({ source: "balance", amount: processing.amountMinor, recipient: account.recipientCode, reference, reason: "SwiftDrop courier payout", currency: processing.currency }),
+      body: JSON.stringify({
+        source: "balance", amount: processing.amountMinor, recipient: recipientCode,
+        reference, reason: "SwiftDrop courier payout #" + processing.id, currency: "NGN"
+      }),
       signal: AbortSignal.timeout(15_000)
     });
-    const data = await response.json() as { status?: boolean; message?: string; data?: { reference?: string; status?: string } };
+    const data = await response.json() as {
+      status?: boolean; message?: string; code?: string;
+      data?: { reference?: string; status?: string; transfer_code?: string }
+    };
     if (!response.ok || !data.status || !data.data?.reference) {
-      await markPayoutFailed(routeParam(req.params.id, "id"));
-      return res.status(502).json({ error: data.message ?? "Paystack transfer could not be initiated" });
+      const providerMessage = String(data.message ?? "");
+      const duplicateReference = /duplicate|already exists|reference.*used/i.test(providerMessage + " " + String(data.code ?? ""));
+      if (duplicateReference) {
+        // Paystack's duplicate-reference response is treated as an existing transfer,
+        // never permission to send a second transfer. Verify that exact reference.
+        const verify = await fetch("https://api.paystack.co/transfer/verify/" + encodeURIComponent(reference), {
+          headers: { authorization: "Bearer " + secret }, signal: AbortSignal.timeout(10_000)
+        });
+        const verified = await verify.json() as { status?: boolean; data?: { reference?: string; status?: string; amount?: number; currency?: string; transfer_code?: string } };
+        if (verify.ok && verified.status && verified.data?.reference === reference) {
+          await setPayoutProviderTransferCode(reference, String(verified.data.transfer_code ?? ""));
+          if (verified.data.status === "success" && Number(verified.data.amount) === processing.amountMinor && verified.data.currency === "NGN") {
+            await updatePayoutProviderStatus(reference, "RELEASED", null, Number(verified.data.amount), "NGN");
+          }
+          const current = await findPayout(deliveryId);
+          return res.status(202).json({ payout: current, providerStatus: verified.data.status ?? "pending",
+            message: "Paystack reported a duplicate reference; the existing transfer was verified instead of creating another." });
+        }
+      }
+      await markPayoutFailed(deliveryId);
+      await pool!.query(
+        `INSERT INTO notifications(user_id,title,body,type)
+         SELECT id,'Driver payout needs review',$1,'PAYOUT_FAILED' FROM users WHERE role='ADMIN'`,
+        ["Paystack did not accept driver payout " + processing.id + ". Review the provider response before any manual retry."]
+      ).catch(() => {});
+      return res.status(502).json({ error: "Paystack transfer could not be initiated. SwiftDrop support has been alerted." });
     }
-    if (data.data.reference && data.data.reference !== reference) {
-      await setPayoutProviderReference(routeParam(req.params.id, "id"), data.data.reference);
+    if (data.data.reference !== reference) {
+      await setPayoutProviderReference(deliveryId, data.data.reference);
     }
-    const payoutResult = await findPayout(routeParam(req.params.id, "id"));
+    if (data.data.transfer_code) await setPayoutProviderTransferCode(data.data.reference, data.data.transfer_code);
+    const payoutResult = await findPayout(deliveryId);
     const publicPayout = payoutResult ? {
-      id: payoutResult.id,
-      deliveryId: payoutResult.deliveryId,
-      amountMinor: payoutResult.amountMinor,
-      currency: payoutResult.currency,
-      status: payoutResult.status,
-      providerStatus: payoutResult.providerStatus,
-      failureReason: payoutResult.failureReason,
-      processedAt: payoutResult.processedAt
+      id: payoutResult.id, deliveryId: payoutResult.deliveryId, amountMinor: payoutResult.amountMinor,
+      currency: payoutResult.currency, status: payoutResult.status, providerStatus: payoutResult.providerStatus,
+      failureReason: payoutResult.failureReason, processedAt: payoutResult.processedAt
     } : null;
     return res.status(202).json({
-      payout: publicPayout,
-      providerStatus: data.data.status ?? "pending",
+      payout: publicPayout, providerStatus: data.data.status ?? "pending",
       message: "Transfer initiated. Final payout status will be updated from Paystack's transfer webhook or reconciliation worker."
     });
   } catch (error) {
-    // A timeout/network error is inconclusive: Paystack may have accepted the transfer.
-    // Keep PROCESSING and let the reconciliation worker verify the unique reference.
+    // Timeout/network failure is inconclusive: retain PROCESSING and the same
+    // provider reference so reconciliation can verify without resending funds.
     console.error(JSON.stringify({
-      event: "paystack_payout_initiation_inconclusive",
-      deliveryId: routeParam(req.params.id, "id"),
-      payoutId: processing.id,
-      providerReference: reference,
-      error: error instanceof Error ? error.message : "unknown"
+      event: "paystack_payout_initiation_inconclusive", deliveryId, payoutId: processing.id,
+      providerReference: reference, error: error instanceof Error ? error.message : "unknown"
     }));
-    const payoutResult = await findPayout(routeParam(req.params.id, "id"));
+    const payoutResult = await findPayout(deliveryId);
     const publicPayout = payoutResult ? {
-      id: payoutResult.id,
-      deliveryId: payoutResult.deliveryId,
-      amountMinor: payoutResult.amountMinor,
-      currency: payoutResult.currency,
-      status: payoutResult.status,
-      providerStatus: payoutResult.providerStatus,
-      failureReason: payoutResult.failureReason,
-      processedAt: payoutResult.processedAt
+      id: payoutResult.id, deliveryId: payoutResult.deliveryId, amountMinor: payoutResult.amountMinor,
+      currency: payoutResult.currency, status: payoutResult.status, providerStatus: payoutResult.providerStatus,
+      failureReason: payoutResult.failureReason, processedAt: payoutResult.processedAt
     } : null;
-    return res.status(202).json({
-      payout: publicPayout,
-      providerStatus: "pending",
-      message: "Transfer status is being reconciled with Paystack."
-    });
+    return res.status(202).json({ payout: publicPayout, providerStatus: "pending", message: "Transfer status is being reconciled with Paystack." });
   }
 });
 
