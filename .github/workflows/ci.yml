@@ -98,7 +98,7 @@ jobs:
           set -e
           node scripts/check-npm-audit.mjs npm-audit.json SECURITY_EXCEPTIONS.md
           if [ "$audit_status" -ne 0 ]; then
-            echo "npm audit returned $audit_status; the exception checker rejected any high/critical finding not covered by the reviewed exception list."
+            echo "npm audit returned $audit_status; only reviewed, documented high/critical exceptions remain."
           fi
 
   secret-scan:
@@ -117,3 +117,27 @@ jobs:
           # On PRs github.sha is the synthetic merge commit, so base is its ancestor even when the feature branch started from the last verified main.
           head: ${{ github.sha }}
           extra_args: --results=verified,unverified,unknown --fail-on-scan-errors --exclude-paths=.trufflehog-exclude-paths.txt
+      - name: Verify scanner rejects a synthetic key without committing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe_dir="$(mktemp -d)"
+          trap 'rm -rf "$probe_dir"' EXIT
+          git -C "$probe_dir" init -q
+          git -C "$probe_dir" config user.email "ci@example.invalid"
+          git -C "$probe_dir" config user.name "SwiftDrop CI"
+          key_prefix="sk_live_"
+          key_suffix="51N0tARealStripeKey0123456789ABCDEfghijkl"
+          printf '// Synthetic scanner-only probe; never a real credential.\n// %s%s\n' "$key_prefix" "$key_suffix" > "$probe_dir/probe.ts"
+          git -C "$probe_dir" add probe.ts
+          git -C "$probe_dir" commit -qm "synthetic secret scanner probe"
+          set +e
+          docker run --rm -v "$probe_dir:/tmp/probe" -w /tmp/probe ghcr.io/trufflesecurity/trufflehog:latest git file:///tmp/probe --results=verified,unverified,unknown --no-verification --fail --no-update > "$probe_dir/trufflehog.log" 2>&1
+          scan_status=$?
+          set -e
+          if [ "$scan_status" -ne 183 ]; then
+            cat "$probe_dir/trufflehog.log"
+            echo "Expected TruffleHog to return 183 for a detected synthetic key; received $scan_status." >&2
+            exit 1
+          fi
+          echo "TruffleHog correctly rejected a synthetic key (exit 183)."
