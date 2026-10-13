@@ -407,7 +407,7 @@ export async function createPersistentDelivery(input: {
       JSON.stringify(proofRequirementsForDeclaredValue(input.declaredValueMinor, input.isPerishable ?? false)),
       input.quote?.distanceMeters ?? null, input.quote?.durationSeconds ?? null,
       input.quote?.baseFareMinor ?? null, input.quote?.distanceFareMinor ?? null,
-      input.quote?.weightFareMinor ?? null, input.quote?.sizeFareMinor ?? null, input.quote?.perishableSurchargeMinor ?? null,
+      input.quote?.weightFareMinor ?? 0, input.quote?.sizeFareMinor ?? 0, input.quote?.perishableSurchargeMinor ?? 0,
       input.quote?.fuelReferenceMinor ?? null, input.quote?.protectionReserveMinor ?? null, input.quote?.pricingVersion ?? null,
       input.quote?.serviceFeeMinor ?? null, input.quote?.totalMinor ?? null, input.quote?.currency ?? "NGN", input.quote?.expressSurchargeMinor ?? 0, input.quote?.fuelSurchargeMinor ?? 0]
   );
