@@ -6,6 +6,7 @@ import { pool, databaseEnabled } from "./database/db.js";
 import { verifyPin } from "./security.js";
 import { requireAuth } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
+import { podAllowsHandover } from "./podPayment.js";
 import { courierShareForOrder } from "./pricingConstants.js";
 
 const router = Router();
@@ -59,6 +60,7 @@ router.post("/escrow/create", requireAuth(), async (req, res) => {
     if(!order){ await client.query("ROLLBACK"); return res.status(404).json({error:"Order not found"}); }
     if(order.customer_id!==userId){ await client.query("ROLLBACK"); return res.status(403).json({error:"Order access denied"}); }
     if(order.payment_on_delivery===true){ await client.query("ROLLBACK"); return res.status(409).json({error:"Cash-on-delivery is disabled"}); }
+    if(order.payment_mode==="PAY_ON_DELIVERY"){ await client.query("ROLLBACK"); return res.status(409).json({error:"Digital Pay-on-Delivery must use the receiver payment checkout; sender escrow cannot be created for this order"}); }
     const existing=(await client.query("SELECT * FROM escrow_ledgers WHERE order_id=$1 FOR UPDATE",[order.id])).rows[0];
     if(existing){ await client.query("COMMIT"); return res.status(200).json({escrow:existing}); }
     const totalPaidMinor=Number(order.quote_total_minor ?? 0);
@@ -291,7 +293,7 @@ router.post("/escrow/:orderId/pin", requireAuth(), async (req,res)=>{
   try{
     await client.query("BEGIN");
     const order=(await client.query(
-      "SELECT d.id,d.sender_id AS customer_id,d.driver_id,d.escrow_total_paid_minor,d.escrow_courier_share_minor,d.escrow_payment_state,d.receiver_pin_hash FROM deliveries d WHERE d.id=$1 FOR UPDATE",
+      `SELECT d.id,d.sender_id AS customer_id,d.driver_id,d.escrow_total_paid_minor,d.escrow_courier_share_minor,d.escrow_payment_state,d.receiver_pin_hash,d.payment_mode,d.status,d.pod_verified_at FROM deliveries d WHERE d.id=$1 FOR UPDATE`,
       [String(req.params.orderId)]
     )).rows[0];
     if (order?.driver_id) {
@@ -299,13 +301,24 @@ router.post("/escrow/:orderId/pin", requireAuth(), async (req,res)=>{
       order.courier_user_id = driver?.courier_user_id ?? null;
     }
     if(!order){await client.query("ROLLBACK");return res.status(404).json({error:"Order not found"});}
-    if(userId!==order.customer_id && userId!==order.courier_user_id)return res.status(403).json({error:"PIN confirmation not authorized"});
-    if(order.escrow_payment_state==="paid_escrow"){
-      await client.query("UPDATE escrow_ledgers SET state='arrived',updated_at=now() WHERE order_id=$1 AND state='paid_escrow'",[order.id]);
-      await client.query("UPDATE deliveries SET escrow_payment_state='arrived' WHERE id=$1 AND status='ARRIVED'",[order.id]);
-      order.escrow_payment_state="arrived";
+    if(userId!==order.customer_id && userId!==order.courier_user_id){await client.query("ROLLBACK");return res.status(403).json({error:"PIN confirmation not authorized"});}
+    if (order.payment_mode === "PAY_ON_DELIVERY") {
+      if (!podAllowsHandover(order.payment_mode, order.status, order.pod_verified_at ? String(order.pod_verified_at) : null)) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Digital payment must be verified before PIN confirmation. Do not collect cash." });
+      }
+      if (order.status === "PAYMENT_VERIFIED") {
+        await client.query("UPDATE deliveries SET status='HANDED_OVER', updated_at=now() WHERE id=$1 AND status='PAYMENT_VERIFIED'", [order.id]);
+        order.status = "HANDED_OVER";
+      }
+    } else {
+      if(order.escrow_payment_state==="paid_escrow"){
+        await client.query("UPDATE escrow_ledgers SET state='arrived',updated_at=now() WHERE order_id=$1 AND state='paid_escrow'",[order.id]);
+        await client.query("UPDATE deliveries SET escrow_payment_state='arrived' WHERE id=$1 AND status='ARRIVED'",[order.id]);
+        order.escrow_payment_state="arrived";
+      }
+      if(order.escrow_payment_state!=="arrived"){await client.query("ROLLBACK");return res.status(409).json({error:"Order is not awaiting PIN confirmation"});}
     }
-    if(order.escrow_payment_state!=="arrived"){await client.query("ROLLBACK");return res.status(409).json({error:"Order is not awaiting PIN confirmation"});}
     if(!order.receiver_pin_hash){await client.query("ROLLBACK");return res.status(409).json({error:"Receiver PIN is not configured"});}
     const pinState=(await client.query("SELECT pin_failed_attempts,pin_locked_until FROM deliveries WHERE id=$1 FOR UPDATE",[order.id])).rows[0];
     if(pinState?.pin_locked_until && new Date(pinState.pin_locked_until).getTime()>Date.now()){
@@ -325,11 +338,17 @@ router.post("/escrow/:orderId/pin", requireAuth(), async (req,res)=>{
     }
     await client.query("UPDATE deliveries SET pin_failed_attempts=0,pin_locked_until=NULL WHERE id=$1",[order.id]);
     const disputeUntil=new Date(Date.now()+ESCROW_DISPUTE_HOURS*3600000);
-    await client.query(
-      `UPDATE escrow_ledgers SET state='dispute_window',pin_confirmed_at=now(),dispute_window_until=$2,stakeholder_release_at=now()+interval '72 hours',updated_at=now()
-       WHERE order_id=$1 AND state='arrived'`,
-      [order.id,disputeUntil]
-    );
+    if (order.payment_mode === "PAY_ON_DELIVERY") {
+      await client.query("UPDATE deliveries SET status='DELIVERED',receiver_payment_pending=false,updated_at=now() WHERE id=$1 AND status IN ('HANDED_OVER','PAYMENT_VERIFIED','PIN_CONFIRMED')", [order.id]);
+      await client.query("INSERT INTO delivery_events(delivery_id,event_type,actor_user_id,metadata) VALUES($1,'PIN_CONFIRMED',$2,$3::jsonb),($1,'DELIVERED',$2,$3::jsonb)", [order.id,userId,JSON.stringify({payment_mode:"PAY_ON_DELIVERY",source:"pod_pin"})]);
+      await client.query("UPDATE escrow_ledgers SET state='dispute_window',pin_confirmed_at=now(),dispute_window_until=$2,stakeholder_release_at=now()+interval '72 hours',updated_at=now() WHERE order_id=$1", [order.id,disputeUntil]);
+    } else {
+      await client.query(
+        `UPDATE escrow_ledgers SET state='dispute_window',pin_confirmed_at=now(),dispute_window_until=$2,stakeholder_release_at=now()+interval '72 hours',updated_at=now()
+         WHERE order_id=$1 AND state='arrived'`,
+        [order.id,disputeUntil]
+      );
+    }
     await client.query(
       `UPDATE deliveries SET status='DELIVERED',escrow_payment_state='dispute_window',escrow_pin_confirmed_at=now(),escrow_dispute_window_until=$2 WHERE id=$1`,
       [order.id,disputeUntil]
