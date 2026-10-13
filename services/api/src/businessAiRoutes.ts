@@ -99,7 +99,7 @@ const buyOrderSchema = z.object({
   requestedCompletionAt: z.string().datetime().optional(),
   receiverName: z.string().trim().min(1).max(160).optional(),
   receiverPhone: z.string().trim().min(7).max(40).optional(),
-  receiverPin: z.string().regex(/^\d{4,6}$/).optional(),
+  receiverPin: z.string().regex(/^\d{4}$/).optional(),
   destinationAddress: z.string().trim().min(3).max(500).optional(),
   destinationLat: z.number().finite().min(-90).max(90).optional(),
   destinationLng: z.number().finite().min(-180).max(180).optional(),
