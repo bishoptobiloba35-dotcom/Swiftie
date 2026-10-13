@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS payouts (
   amount_minor INTEGER NOT NULL,
   currency CHAR(3) NOT NULL DEFAULT 'NGN',
   status TEXT NOT NULL DEFAULT 'PENDING'
-    CHECK (status IN ('PENDING','ELIGIBLE','PROCESSING','RELEASED','FAILED','CANCELLED')),
+    CHECK (status IN ('PENDING','ELIGIBLE','PROCESSING','RELEASED','FAILED','CANCELLED','REVERSED')),
   provider TEXT,
   provider_reference TEXT UNIQUE,
   fee_minor INTEGER NOT NULL DEFAULT 0 CHECK (fee_minor >= 0),
@@ -356,3 +356,8 @@ CREATE POLICY driver_documents_select_owner ON driver_documents FOR SELECT
 
 ALTER TABLE payouts ENABLE ROW LEVEL SECURITY;
 
+
+-- Provider/financial operational tables are trusted-server-only.
+ALTER TABLE webhook_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reconciliation_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE driver_payout_request_limits ENABLE ROW LEVEL SECURITY;
