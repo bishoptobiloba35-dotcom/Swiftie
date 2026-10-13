@@ -111,7 +111,7 @@ test("production config rejects mock escrow mode", () => {
     process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role";
     process.env.SUPABASE_STORAGE_BUCKET = "swiftdrop-private";
     process.env.ESCROW_MODE = "mock";
-    assert.throws(() => validateProductionConfig(), /ESCROW_MODE must be live/);
+    assert.throws(() => validateProductionConfig(), (error: unknown) => error instanceof Error && error.message === "Refusing to start: mock escrow in production");
   } finally {
     restoreEnv();
   }
