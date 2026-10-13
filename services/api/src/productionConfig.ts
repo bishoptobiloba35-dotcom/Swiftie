@@ -21,6 +21,10 @@ export function validateProductionConfig(): void {
     throw new Error("ESCROW_MODE must be live in production; mock escrow is never permitted in production");
   }
 
+  if (process.env.PAYSTACK_SECRET_KEY?.startsWith("sk_test_")) {
+    throw new Error("PAYSTACK_SECRET_KEY must be a live Paystack secret key in production");
+  }
+
   if (process.env.JWT_SECRET === "development-only-change-me") {
     throw new Error("JWT_SECRET must not use the development fallback in production");
   }
