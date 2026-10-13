@@ -80,7 +80,11 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$PRODUCTION_API_URL" || { echo "::error::PRODUCTION_API_URL is required"; exit 1; }
-          curl --fail --silent --show-error --max-time 30 "${PRODUCTION_API_URL%/}/health"
+          health="$(curl --fail --silent --show-error --max-time 30 "${PRODUCTION_API_URL%/}/health")"
+          echo "$health" | jq -e '.ok == true and .database == true' >/dev/null
+          ready="$(curl --fail --silent --show-error --max-time 30 "${PRODUCTION_API_URL%/}/ready")"
+          echo "$ready" | jq -e '.ready == true and .database == true' >/dev/null
+          printf 'health=%s\nready=%s\n' "$health" "$ready"
 
       - name: Notify Slack with status and SHA
         if: always()
