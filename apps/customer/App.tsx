@@ -28,15 +28,10 @@ function PinBoxes({ label, value, onChangeText }: { label: string; value: string
       inputRefs.current[Math.min(pasted.length, 3)]?.focus();
       return;
     }
-    if (!digits) {
-      if (index < value.length) onChangeText(value.slice(0, index) + value.slice(index + 1));
-      return;
-    }
-    const next = index < value.length
-      ? value.slice(0, index) + digits + value.slice(index + 1)
-      : value + digits;
-    onChangeText(next.slice(0, 4));
-    if (index < 3) inputRefs.current[index + 1]?.focus();
+    const next = value.padEnd(4, " ").slice(0, 4).split("");
+    next[index] = digits || " ";
+    onChangeText(next.every(digit => digit === " ") ? "" : next.join(""));
+    if (digits && index < 3) inputRefs.current[index + 1]?.focus();
   };
   return (
     <View style={styles.pinRow} accessibilityLabel={label}>
@@ -45,10 +40,10 @@ function PinBoxes({ label, value, onChangeText }: { label: string; value: string
           key={index}
           ref={ref => { inputRefs.current[index] = ref; }}
           style={styles.pinBox}
-          value={value[index] ?? ""}
+          value={value[index] && value[index] !== " " ? value[index] : ""}
           onChangeText={raw => updateDigit(index, raw)}
           onKeyPress={({ nativeEvent }) => {
-            if (nativeEvent.key === "Backspace" && !value[index] && index > 0) inputRefs.current[index - 1]?.focus();
+            if (nativeEvent.key === "Backspace" && (!value[index] || value[index] === " ") && index > 0) inputRefs.current[index - 1]?.focus();
           }}
           keyboardType="number-pad"
           maxLength={4}
