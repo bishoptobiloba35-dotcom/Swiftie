@@ -426,9 +426,9 @@ app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) =
   const driver = await driverForUser(identity(req));
   if (!driver) return res.status(404).json({ error: "Driver profile not found" });
   const parsed = z.object({
-    bankCode: z.string().regex(/^\\d{3,6}$/),
+    bankCode: z.string().regex(/^\d{3,6}$/),
     bankName: z.string().trim().min(2).max(100).optional(),
-    accountNumber: z.string().regex(/^\\d{10}$/),
+    accountNumber: z.string().regex(/^\d{10}$/),
     accountName: z.string().trim().min(2).max(120)
   }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Select a bank and enter the 10-digit account number and account holder name." });
@@ -470,7 +470,7 @@ app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) =
     });
   } catch (error) {
     console.error(JSON.stringify({ event: "driver_payout_account_verification_failed", driverId: driver.id,
-      error: error instanceof Error ? error.message.replace(/\\d{10}/g, "[redacted-account]") : "unknown" }));
+      error: error instanceof Error ? error.message.replace(/\d{10}/g, "[redacted-account]") : "unknown" }));
     return res.status(502).json({ error: "Unable to verify the payout account right now. Please try again." });
   }
 });
