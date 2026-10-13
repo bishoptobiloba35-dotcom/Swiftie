@@ -1836,6 +1836,7 @@ export type DriverPayoutAccount = {
   bankCode: string;
   bankName?: string | null;
   accountName: string;
+  resolvedAccountName?: string | null;
   accountLast4: string;
   recipientCode: string | null;
   recipientVerified: boolean;
@@ -1846,7 +1847,7 @@ export async function getDriverPayoutAccount(driverId: string): Promise<DriverPa
   if (!pool) return null;
   const result = await pool.query(
     `SELECT payout_bank_code AS "bankCode", payout_bank_name AS "bankName",
-      payout_account_name AS "accountName", RIGHT(payout_account_number, 4) AS "accountLast4",
+      payout_account_name AS "accountName", payout_resolved_account_name AS "resolvedAccountName", RIGHT(payout_account_number, 4) AS "accountLast4",
       payout_recipient_code AS "recipientCode", recipient_verified AS "recipientVerified",
       'NGN' AS currency
      FROM drivers
