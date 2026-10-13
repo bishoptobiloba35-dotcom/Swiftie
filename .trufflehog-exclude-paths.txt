@@ -1,0 +1,3 @@
+# Regex patterns for intentionally synthetic fixtures only.
+# Keep the exclusion narrow; production source and config files remain scanned.
+(^|/)tests/fixtures/
