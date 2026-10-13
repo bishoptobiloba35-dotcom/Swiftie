@@ -12,14 +12,21 @@ const db = pool;
 
 test("delivery state machine accepts every declared forward transition and rejects illegal terminal reversals", () => {
   const allowed: Record<DeliveryStatus, DeliveryStatus[]> = {
-    CREATED: ["PAYMENT_AUTHORIZED", "DRIVER_ASSIGNED", "CANCELLED"],
+    CREATED: ["PAYMENT_AUTHORIZED", "PAYMENT_PENDING", "DRIVER_ASSIGNED", "CANCELLED"],
     PAYMENT_AUTHORIZED: ["DRIVER_ASSIGNED", "CANCELLED"],
+    PAYMENT_PENDING: ["PAYMENT_AUTHORIZED", "CANCELLED"],
     DRIVER_ASSIGNED: ["DRIVER_AT_PICKUP", "CANCELLED"],
     DRIVER_AT_PICKUP: ["PICKED_UP", "CANCELLED"],
     PICKED_UP: ["IN_TRANSIT", "DISPUTED"],
     IN_TRANSIT: ["ARRIVED", "DISPUTED", "RETURNED"],
-    ARRIVED: ["DELIVERED", "DISPUTED"],
-    DELIVERED: [],
+    ARRIVED: ["DELIVERED", "RECEIVER_PAYMENT_PENDING", "HANDED_OVER", "DISPUTED"],
+    RECEIVER_PAYMENT_PENDING: ["PAYMENT_VERIFIED", "CANCELLED", "DISPUTED"],
+    PAYMENT_VERIFIED: ["HANDED_OVER", "DISPUTED"],
+    HANDED_OVER: ["PIN_CONFIRMED", "DISPUTED"],
+    PIN_CONFIRMED: ["DELIVERED", "DISPUTE_WINDOW"],
+    DELIVERED: ["DISPUTE_WINDOW", "RELEASED"],
+    DISPUTE_WINDOW: ["RELEASED", "DISPUTED"],
+    RELEASED: [],
     CANCELLED: [],
     DISPUTED: [],
     RETURNED: []
@@ -32,7 +39,9 @@ test("delivery state machine accepts every declared forward transition and rejec
   }
   for (const [from, to] of [
     ["DELIVERED", "ARRIVED"], ["CANCELLED", "DRIVER_ASSIGNED"], ["DISPUTED", "DELIVERED"],
-    ["RETURNED", "IN_TRANSIT"], ["ARRIVED", "PICKED_UP"], ["CREATED", "DELIVERED"]
+    ["RETURNED", "IN_TRANSIT"], ["ARRIVED", "PICKED_UP"], ["CREATED", "DELIVERED"],
+    ["ARRIVED", "PAYMENT_VERIFIED"], ["RECEIVER_PAYMENT_PENDING", "HANDED_OVER"],
+    ["RECEIVER_PAYMENT_PENDING", "DELIVERED"]
   ] as Array<[DeliveryStatus, DeliveryStatus]>) {
     assert.equal(canTransition(from, to), false, `${from} -> ${to}`);
     assert.throws(() => assertTransition(from, to));
@@ -198,8 +207,8 @@ if (db) {
     await assert.rejects(
       db.query(
         `INSERT INTO deliveries
-          (sender_id,tracking_code,receiver_name,receiver_phone,pickup_address,dropoff_address,status,receiver_pin_hash,payment_mode)
-         VALUES($1,$2,'Legacy Receiver','+2349070000012','Pickup','Dropoff','CREATED','test-pin-hash','RECEIVER_ON_DELIVERY')`,
+          (sender_id,tracking_code,receiver_name,receiver_phone,pickup_address,dropoff_address,status,receiver_pin_hash,payment_mode,declared_value_minor)
+         VALUES($1,$2,'Legacy Receiver','+2349070000012','Pickup','Dropoff','CREATED','test-pin-hash','RECEIVER_ON_DELIVERY',100000)`,
         [directModeUser.id, `DIRECT-COD-${Date.now()}`]
       ),
       /deliveries_payment_mode_check|constraint/i
