@@ -12,14 +12,14 @@ async function runMockDeliveryFlow(): Promise<void> {
     event: "payment_authorized",
     cardNumber: "4242424242424242",
     authorization: "Bearer mock.jwt.token",
-    apiKey: ["sk", "live", "_"].join("") + "fakeKeyValue123456789",
+    apiKey: ["sk_", "live", "_"].join("") + "fakeKeyValue123456789",
     accountNumber: "0123456789"
   });
   console.warn("delivery picked up; receiver pin=0001; bank account=0123456789");
   console.error(new Error(
     "mock provider failure for account 0123456789 using " +
-    ["pk", "live", "_"].join("") + "fakePublicKey123456789 and " +
-    ["sk", "test", "_"].join("") + "fakeTestKey123456789; Bearer mock.access.token"
+    ["pk_", "live", "_"].join("") + "fakePublicKey123456789 and " +
+    ["sk_", "test", "_"].join("") + "fakeTestKey123456789; Bearer mock.access.token"
   ));
   console.log(JSON.stringify({ event: "delivery_in_transit", deliveryId: "mock-delivery-1" }));
   console.log(JSON.stringify({ event: "delivery_completed", deliveryId: "mock-delivery-1" }));
@@ -57,9 +57,9 @@ test("mock delivery flow scrubs PINs, payment data, bearer tokens, API keys and 
     "0123456789",
     "Bearer mock.jwt.token",
     "Bearer mock.access.token",
-    ["sk", "live", "_"].join(""),
-    ["pk", "live", "_"].join(""),
-    ["sk", "test", "_"].join("")
+    ["sk_", "live", "_"].join(""),
+    ["pk_", "live", "_"].join(""),
+    ["sk_", "test", "_"].join("")
   ]) {
     assert.equal(logs.includes(forbidden), false, `log output leaked sensitive value: ${forbidden}`);
   }
