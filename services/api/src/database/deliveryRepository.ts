@@ -1012,6 +1012,7 @@ export async function updatePayoutProviderStatus(
          provider_status=$3,
          failure_reason=CASE WHEN $2='FAILED' THEN COALESCE($4, failure_reason, 'Paystack transfer failed') ELSE failure_reason END,
          processed_at=CASE WHEN $2 IN ('RELEASED','FAILED','CANCELLED') THEN COALESCE(processed_at, now()) ELSE processed_at END,
+         completed_at=CASE WHEN $2='RELEASED' THEN COALESCE(completed_at,now()) ELSE completed_at END,
          updated_at=now()
      WHERE provider_reference=$1
        AND (status IN ('PROCESSING','ELIGIBLE') OR ($2='RELEASED' AND status='RELEASED'))
