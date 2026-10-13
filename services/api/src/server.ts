@@ -761,6 +761,7 @@ app.post("/api/deliveries/:id/receiver-payment/initialize", requireAuth("CUSTOME
     const digits = phone.replace(/\\D/g,"");
     return digits.startsWith("234") ? digits : digits.startsWith("0") ? "234" + digits.slice(1) : digits;
   };
+  if (delivery.receiverUserId && delivery.receiverUserId !== userId) return res.status(403).json({ error: "This delivery is already linked to another receiver account" });
   if (!user?.phone || normalize(String(user.phone)) !== normalize(delivery.receiverPhone)) {
     return res.status(403).json({ error: "Receiver phone verification is required" });
   }
@@ -1510,7 +1511,7 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   return res.status(200).json({ received: true, duplicate: duplicateWebhook });
 });
 
-app.post("/api/deliveries/:id/mark-receiver-payment-pending", requireAuth(), async (req, res) => {
+app.post("/api/deliveries/:id/mark-receiver-payment-pending", requireAuth("DRIVER"), async (req, res) => {
   if (!featureEnabled("POD")) return res.status(403).json({ error: "Digital pay-on-delivery is not enabled" });
   if (!databaseEnabled()) return res.status(503).json({ error: "Database unavailable" });
   const deliveryId = String(req.params.id);
@@ -1518,6 +1519,8 @@ app.post("/api/deliveries/:id/mark-receiver-payment-pending", requireAuth(), asy
   const delivery = await findDelivery(deliveryId);
   if (!delivery) return res.status(404).json({ error: "Order not found" });
   if (delivery.paymentMode !== "PAY_ON_DELIVERY") return res.status(409).json({ error: "Order is not PAY_ON_DELIVERY" });
+  const driverId = await authenticatedDriverId(req);
+  if (!driverId || delivery.driverId !== driverId) return res.status(403).json({ error: "Only the assigned driver can request receiver payment" });
   const result = await markReceiverPaymentPending(deliveryId, userId);
   if (!result.ok) return res.status(409).json({ error: result.error ?? "Unable to mark pending" });
   const updated = await findDelivery(deliveryId);
