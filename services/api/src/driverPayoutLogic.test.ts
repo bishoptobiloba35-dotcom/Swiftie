@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { calculatePayoutFeeMinor, payoutAccountNameMatches } from "./driverPayoutLogic.js";
+import { calculatePayoutFeeMinor, isDuplicatePaystackReferenceError, payoutAccountNameMatches, shouldReuseInFlightPayout } from "./driverPayoutLogic.js";
 
 test("standard payout fee is zero", () => {
   assert.equal(calculatePayoutFeeMinor(100_000, "standard"), 0);
@@ -27,7 +27,6 @@ test("account-name matching ignores honorifics and middle names but checks first
   assert.equal(payoutAccountNameMatches("Adaeze", "Adaeze"), false);
 });
 
-import { isDuplicatePaystackReferenceError, shouldReuseInFlightPayout } from "./driverPayoutLogic.js";
 
 test("a timed-out payout with a reserved reference is reused rather than posting a second transfer", () => {
   assert.equal(shouldReuseInFlightPayout("PROCESSING", "payout-driver-123"), true);
