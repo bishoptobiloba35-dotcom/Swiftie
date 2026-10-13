@@ -30,3 +30,13 @@ test("fare calculator rejects invalid distance and fee helpers reject invalid va
   assert.throws(() => expressSurchargeMinor(-1));
   assert.throws(() => courierShareFromFeeMinor(1.5));
 });
+
+test("pricing migration preserves legacy versions before applying v2 default", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const migration = await readFile(new URL("./database/migrations/079_pricing_v2_constants.sql", import.meta.url), "utf8");
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS pricing_version TEXT/);
+  assert.match(migration, /WHEN quote_pricing_version IS NOT NULL THEN 'legacy-config-v'/);
+  assert.match(migration, /ELSE 'legacy'/);
+  assert.match(migration, /ALTER COLUMN pricing_version SET DEFAULT 'v2'/);
+  assert.match(migration, /quote_fuel_surcharge_minor/);
+});
