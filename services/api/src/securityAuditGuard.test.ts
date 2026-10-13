@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,7 +24,7 @@ test("dependency audit guard rejects a simulated high-severity dependency", asyn
             name: "synthetic-high-dependency",
             severity: "high",
             url: "https://github.com/advisories/GHSA-abcd-efgh-ijkl",
-            range: "<1.0.1
+            range: "<1.0.1"
           }]
         }
       }
