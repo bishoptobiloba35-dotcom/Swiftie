@@ -156,3 +156,19 @@ CREATE TABLE IF NOT EXISTS driver_documents (
 );
 
 CREATE INDEX IF NOT EXISTS idx_driver_documents_driver ON driver_documents(driver_id);
+
+
+-- Business/merchant mode fields are also present in the CI bootstrap schema.
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS account_type TEXT DEFAULT 'INDIVIDUAL',
+  ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'INDIVIDUAL',
+  ADD COLUMN IF NOT EXISTS business_role TEXT;
+
+CREATE TABLE IF NOT EXISTS business_role_memberships (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('MERCHANT','DRIVER','AGENT','ERRAND')),
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','APPROVED','SUSPENDED')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(user_id, role)
+);
