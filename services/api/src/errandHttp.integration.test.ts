@@ -97,7 +97,7 @@ test("Hire an Errand HTTP boundary persists spending and replacement authorizati
       ]
     };
 
-    for (const invalidPin of ["123", "12345", "123456"]) {
+    for (const invalidPin of ["123", "12345", "123456", " 1234 ", "1234 "]) {
       const invalidPinResponse = await fetch(endpoint, {
         method: "POST",
         headers: { authorization: customerToken, "content-type": "application/json" },
