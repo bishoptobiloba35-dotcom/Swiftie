@@ -39,6 +39,7 @@ import escrowRoutes, { reconcileProcessingWalletPayouts, requeryPendingDvaAccoun
 import { featureEnabled } from "./featureFlags.js";
 import { generateReceiverPin, hashPin } from "./security.js";
 import { processDriverPayoutTransferEvent } from "./driverPayoutWebhook.js";
+import { reconcileDriverTransfersDaily } from "./driverPayoutReconciliation.js";
 
 const app = express();
 
@@ -3081,6 +3082,7 @@ async function startServer() {
     void processNotificationOutbox().catch(() => {});
     void processNotificationPushReceipts().catch(() => {});
     void reconcileProcessingPaystackPayouts().catch(() => {});
+    void reconcileDriverTransfersDaily().catch(error => console.error(JSON.stringify({ event: "driver_payout_daily_reconciliation_failed", error: error instanceof Error ? error.message : "unknown" })));
     void reconcileProcessingBuyOrderSettlements().catch(() => {});
     void reconcileProcessingDropOffCommissions().catch(() => {});
     void processSupportAiBatch().catch(() => {});
@@ -3127,6 +3129,12 @@ async function startServer() {
     const payoutReconciliationWorker = setInterval(() => {
       void reconcileProcessingPaystackPayouts().catch(() => {});
     }, 60_000);
+    const driverPayoutDailyReconciliationWorker = setInterval(() => {
+      void reconcileDriverTransfersDaily().catch(error => console.error(JSON.stringify({
+        event: "driver_payout_daily_reconciliation_failed",
+        error: error instanceof Error ? error.message : "unknown"
+      })));
+    }, 60_000);
     const marketplacePaymentReconciliationWorker = setInterval(() => {
       void reconcileCancelledMarketplacePayments().catch(() => {});
     }, 30_000);
@@ -3138,6 +3146,7 @@ async function startServer() {
     notificationWorker.unref();
     notificationReceiptWorker.unref();
     payoutReconciliationWorker.unref();
+    driverPayoutDailyReconciliationWorker.unref();
     marketplacePaymentReconciliationWorker.unref();
     dropOffCommissionReconciliationWorker.unref();
     buyOrderSettlementReconciliationWorker.unref();
