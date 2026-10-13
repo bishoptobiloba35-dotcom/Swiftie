@@ -1887,6 +1887,19 @@ export async function saveDriverPayoutAccount(input: {
   return result.rows[0] ?? null;
 }
 
+export async function findActiveDriverPayout(driverId: string, excludingPayoutId: string): Promise<{ id: string; deliveryId: string } | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `SELECT id, delivery_id AS "deliveryId"
+       FROM payouts
+      WHERE driver_id=$1 AND id<>$2 AND status='PROCESSING'
+      ORDER BY requested_at ASC
+      LIMIT 1`,
+    [driverId, excludingPayoutId]
+  );
+  return result.rows[0] ?? null;
+}
+
 export async function setPayoutProcessing(deliveryId: string, feeMinor = 0): Promise<PayoutRecord | null> {
   if (!pool) return null;
   const result = await pool.query(
