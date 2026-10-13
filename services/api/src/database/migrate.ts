@@ -74,6 +74,7 @@ const migrations = [
   { id: "076_retire_receiver_payment_mode", file: "076_retire_receiver_payment_mode.sql" },
   { id: "077_mvp_v12_delivery_types", file: "077_mvp_v12_delivery_types.sql" },
   { id: "079_pricing_v2_constants", file: "079_pricing_v2_constants.sql" },
+  { id: "080_escrow_payment_attempts_contract", file: "080_escrow_payment_attempts_contract.sql" },
 ];
 
 export async function runMigrations(): Promise<void> {
