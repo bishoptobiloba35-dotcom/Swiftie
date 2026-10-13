@@ -101,3 +101,20 @@ test("production config rejects mock escrow mode", () => {
     restoreEnv();
   }
 });
+
+test("production config rejects Paystack test secret keys", () => {
+  try {
+    process.env.NODE_ENV = "production";
+    process.env.DATABASE_URL = "postgres://example";
+    process.env.JWT_SECRET = "a-long-production-secret";
+    process.env.PAYSTACK_SECRET_KEY = "sk_test_not-for-production";
+    process.env.CORS_ORIGINS = "https://app.example.com";
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role";
+    process.env.SUPABASE_STORAGE_BUCKET = "swiftdrop-private";
+    process.env.ESCROW_MODE = "live";
+    assert.throws(() => validateProductionConfig(), /PAYSTACK_SECRET_KEY must be a live Paystack secret key/);
+  } finally {
+    restoreEnv();
+  }
+});

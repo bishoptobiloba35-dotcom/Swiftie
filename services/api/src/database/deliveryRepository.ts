@@ -470,10 +470,17 @@ export type PayoutRecord = {
   deliveryId: string;
   driverId: string;
   amountMinor: number;
+  feeMinor: number;
+  netAmountMinor: number | null;
   currency: string;
-  status: "PENDING" | "ELIGIBLE" | "PROCESSING" | "RELEASED" | "FAILED" | "CANCELLED";
+  status: "PENDING" | "ELIGIBLE" | "PROCESSING" | "RELEASED" | "FAILED" | "CANCELLED" | "REVERSED";
   provider?: string | null;
   providerReference?: string | null;
+  providerTransferCode?: string | null;
+  idempotencyKey?: string | null;
+  requiresAdminApproval?: boolean;
+  adminApprovedAt?: string | null;
+  adminApprovedBy?: string | null;
   providerStatus?: string | null;
   failureReason?: string | null;
   processedAt?: string | null;
@@ -485,10 +492,17 @@ function rowToPayout(row: any): PayoutRecord {
     deliveryId: row.delivery_id,
     driverId: row.driver_id,
     amountMinor: Number(row.amount_minor),
+    feeMinor: Number(row.fee_minor ?? 0),
+    netAmountMinor: row.net_amount_minor == null ? null : Number(row.net_amount_minor),
     currency: row.currency,
     status: row.status,
     provider: row.provider ?? null,
     providerReference: row.provider_reference ?? null,
+    providerTransferCode: row.provider_transfer_code ?? null,
+    idempotencyKey: row.idempotency_key ?? null,
+    requiresAdminApproval: Boolean(row.requires_admin_approval),
+    adminApprovedAt: row.admin_approved_at ? new Date(row.admin_approved_at).toISOString() : null,
+    adminApprovedBy: row.admin_approved_by ?? null,
     providerStatus: row.provider_status ?? null,
     failureReason: row.failure_reason ?? null,
     processedAt: row.processed_at ? new Date(row.processed_at).toISOString() : null
@@ -869,10 +883,11 @@ export async function resolveDispute(deliveryId: string, status: "RESOLVED_REFUN
 export async function createEligiblePayout(deliveryId: string, driverId: string, amountMinor: number): Promise<PayoutRecord | null> {
   if (!pool) return null;
   const result = await pool.query(
-    `INSERT INTO payouts (delivery_id, driver_id, amount_minor, status)
-     VALUES ($1,$2,$3,'ELIGIBLE')
+    `INSERT INTO payouts (delivery_id, driver_id, amount_minor, status, requires_admin_approval)
+     VALUES ($1,$2,$3,'ELIGIBLE',($3 > 100000000))
      ON CONFLICT (delivery_id) DO UPDATE
-      SET updated_at=now()
+      SET requires_admin_approval=(EXCLUDED.amount_minor > 100000000 AND payouts.admin_approved_at IS NULL),
+          updated_at=now()
       WHERE payouts.status IN ('PENDING','ELIGIBLE')
      RETURNING *`,
     [deliveryId, driverId, amountMinor]
@@ -997,10 +1012,11 @@ export async function updatePayoutProviderStatus(
          provider_status=$3,
          failure_reason=CASE WHEN $2='FAILED' THEN COALESCE($4, failure_reason, 'Paystack transfer failed') ELSE failure_reason END,
          processed_at=CASE WHEN $2 IN ('RELEASED','FAILED','CANCELLED') THEN COALESCE(processed_at, now()) ELSE processed_at END,
+         completed_at=CASE WHEN $2='RELEASED' THEN COALESCE(completed_at,now()) ELSE completed_at END,
          updated_at=now()
      WHERE provider_reference=$1
        AND (status IN ('PROCESSING','ELIGIBLE') OR ($2='RELEASED' AND status='RELEASED'))
-       AND ($5::bigint IS NULL OR amount_minor=$5)
+       AND ($5::bigint IS NULL OR COALESCE(net_amount_minor,amount_minor)=$5)
        AND ($6::text IS NULL OR currency=$6)
      RETURNING *`,
     [providerReference, status, providerStatus, failureReason ?? null, providerAmountMinor ?? null, providerCurrency ?? null]
@@ -1023,7 +1039,7 @@ export async function updatePayoutProviderStatus(
         WHERE provider_reference=$1
           AND status IN ('PROCESSING','ELIGIBLE')
           AND (
-            ($3::bigint IS NOT NULL AND amount_minor<>$3)
+            ($3::bigint IS NOT NULL AND COALESCE(net_amount_minor,amount_minor)<>$3)
             OR ($4::text IS NOT NULL AND currency<>$4)
           )
         RETURNING *`,
@@ -1045,6 +1061,15 @@ export async function setPayoutProviderReference(deliveryId: string, providerRef
     [deliveryId, providerReference]
   );
   return result.rows[0] ? rowToPayout(result.rows[0]) : null;
+}
+
+export async function setPayoutProviderTransferCode(providerReference: string, transferCode: string): Promise<void> {
+  if (!pool) return;
+  await pool.query(
+    `UPDATE payouts SET provider_transfer_code=$2, updated_at=now()
+      WHERE provider_reference=$1 AND provider='paystack'`,
+    [providerReference, transferCode]
+  );
 }
 
 export type AdminCaseAuditRecord = {
@@ -1817,8 +1842,10 @@ export type DriverPayoutAccount = {
   bankCode: string;
   bankName?: string | null;
   accountName: string;
+  resolvedAccountName?: string | null;
   accountLast4: string;
-  recipientCode: string;
+  recipientCode: string | null;
+  recipientVerified: boolean;
   currency: string;
 };
 
@@ -1826,10 +1853,11 @@ export async function getDriverPayoutAccount(driverId: string): Promise<DriverPa
   if (!pool) return null;
   const result = await pool.query(
     `SELECT payout_bank_code AS "bankCode", payout_bank_name AS "bankName",
-      payout_account_name AS "accountName", RIGHT(payout_account_number, 4) AS "accountLast4",
-      payout_recipient_code AS "recipientCode", 'NGN' AS currency
+      payout_account_name AS "accountName", payout_resolved_account_name AS "resolvedAccountName", RIGHT(payout_account_number, 4) AS "accountLast4",
+      payout_recipient_code AS "recipientCode", recipient_verified AS "recipientVerified",
+      'NGN' AS currency
      FROM drivers
-     WHERE id=$1 AND payout_recipient_code IS NOT NULL`,
+     WHERE id=$1 AND payout_bank_code IS NOT NULL AND payout_account_number IS NOT NULL`,
     [driverId]
   );
   return result.rows[0] ?? null;
@@ -1841,29 +1869,55 @@ export async function saveDriverPayoutAccount(input: {
   bankName?: string;
   accountNumber: string;
   accountName: string;
-  recipientCode: string;
+  enteredAccountName: string;
+  resolvedAccountName: string;
+  recipientCode: string | null;
+  recipientVerified: boolean;
 }): Promise<DriverPayoutAccount | null> {
   if (!pool) return null;
   const result = await pool.query(
     `UPDATE drivers
      SET payout_bank_code=$2, payout_bank_name=$3, payout_account_number=$4,
-         payout_account_name=$5, payout_recipient_code=$6
+         payout_account_name=$5, payout_account_name_entered=$6,
+         payout_resolved_account_name=$7, payout_recipient_code=$8,
+         recipient_verified=$9,
+         recipient_verified_at=CASE WHEN $9 THEN now() ELSE NULL END
      WHERE id=$1
      RETURNING payout_bank_code AS "bankCode", payout_bank_name AS "bankName",
-       payout_account_name AS "accountName", RIGHT(payout_account_number, 4) AS "accountLast4",
-       payout_recipient_code AS "recipientCode", 'NGN' AS currency`,
-    [input.driverId, input.bankCode, input.bankName ?? null, "*".repeat(6) + input.accountNumber.slice(-4), input.accountName, input.recipientCode]
+       payout_account_name AS "accountName", payout_resolved_account_name AS "resolvedAccountName", RIGHT(payout_account_number, 4) AS "accountLast4",
+       payout_recipient_code AS "recipientCode", recipient_verified AS "recipientVerified",
+       'NGN' AS currency`,
+    [input.driverId, input.bankCode, input.bankName ?? null, input.accountNumber, input.accountName,
+      input.enteredAccountName, input.resolvedAccountName, input.recipientCode, input.recipientVerified]
   );
   return result.rows[0] ?? null;
 }
 
-export async function setPayoutProcessing(deliveryId: string): Promise<PayoutRecord | null> {
+export async function findActiveDriverPayout(driverId: string, excludingPayoutId: string): Promise<{ id: string; deliveryId: string } | null> {
   if (!pool) return null;
   const result = await pool.query(
-    `UPDATE payouts SET status='PROCESSING', provider='paystack', updated_at=now()
-     WHERE delivery_id=$1 AND status='ELIGIBLE'
-     RETURNING *`,
-    [deliveryId]
+    `SELECT id, delivery_id AS "deliveryId"
+       FROM payouts
+      WHERE driver_id=$1 AND id<>$2 AND status='PROCESSING'
+      ORDER BY requested_at ASC
+      LIMIT 1`,
+    [driverId, excludingPayoutId]
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function setPayoutProcessing(deliveryId: string, feeMinor = 0): Promise<PayoutRecord | null> {
+  if (!pool) return null;
+  const result = await pool.query(
+    `UPDATE payouts
+        SET status='PROCESSING', provider='paystack',
+            fee_minor=$2, net_amount_minor=amount_minor-$2,
+            idempotency_key=CASE WHEN idempotency_key LIKE 'legacy-payout-%' THEN 'driver-payout:' || id::text ELSE COALESCE(idempotency_key, 'driver-payout:' || id::text) END,
+            requested_at=COALESCE(requested_at, now()),
+            updated_at=now()
+      WHERE delivery_id=$1 AND status='ELIGIBLE'
+      RETURNING *`,
+    [deliveryId, feeMinor]
   );
   return result.rows[0] ? rowToPayout(result.rows[0]) : null;
 }

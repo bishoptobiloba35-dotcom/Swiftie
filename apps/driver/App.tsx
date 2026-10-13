@@ -125,7 +125,10 @@ export default function App() {
   const [payout, setPayout] = React.useState<{ amount_minor: number; currency: string; status: string; provider_status?: string | null; failure_reason?: string | null } | null>(null);
   const [payoutSummary, setPayoutSummary] = React.useState<{ eligibleMinor: number; processingMinor: number; releasedMinor: number; failedMinor: number }>({ eligibleMinor: 0, processingMinor: 0, releasedMinor: 0, failedMinor: 0 });
   const [payoutHistory, setPayoutHistory] = React.useState<Array<{ id: string; amount_minor: number; currency: string; status: string; failure_reason?: string | null }>>([]);
-  const [payoutAccount, setPayoutAccount] = React.useState<{ bankCode: string; bankName?: string | null; accountName: string; accountLast4: string; recipientCode: string } | null>(null);
+  const [payoutAccount, setPayoutAccount] = React.useState<{ bankCode: string; bankName?: string | null; accountName: string; resolvedAccountName?: string | null; accountLast4: string; recipientVerified: boolean } | null>(null);
+  const [banks, setBanks] = React.useState<Array<{ name: string; code: string }>>([]);
+  const [showBankOptions, setShowBankOptions] = React.useState(false);
+  const [enteredAccountName, setEnteredAccountName] = React.useState("");
   const [bankCode, setBankCode] = React.useState("");
   const [accountNumber, setAccountNumber] = React.useState("");
   const [showSupport, setShowSupport] = React.useState(false);
@@ -170,21 +173,30 @@ export default function App() {
 
   async function loadPayoutAccount() {
     try {
-      const data = await driverApi("/api/driver/payout-account");
-      setPayoutAccount(data.account ?? null);
+      const [accountData, bankData] = await Promise.all([
+        driverApi("/api/driver/payout-account"),
+        driverApi("/api/driver/banks")
+      ]);
+      setPayoutAccount(accountData.account ?? null);
+      setBanks(bankData.banks ?? []);
     } catch {}
   }
 
   async function savePayoutAccount() {
-    if (!/^\d{3,6}$/.test(bankCode.trim()) || !/^\d{10}$/.test(accountNumber.trim())) {
-      Alert.alert("Payout account", "Enter a valid bank code and 10-digit Nigerian account number.");
+    if (!/^\d{3,6}$/.test(bankCode.trim()) || !/^\d{10}$/.test(accountNumber.trim()) || enteredAccountName.trim().length < 2) {
+      Alert.alert("Payout account", "Select a bank and enter your 10-digit account number and account holder name.");
       return;
     }
     try {
-      const data = await driverApi("/api/driver/payout-account", { bankCode: bankCode.trim(), accountNumber: accountNumber.trim() });
-      setPayoutAccount(data.account);
+      const selectedBank = banks.find(bank => bank.code === bankCode);
+      const data = await driverApi("/api/driver/payout-account", {
+        bankCode: bankCode.trim(), bankName: selectedBank?.name, accountNumber: accountNumber.trim(),
+        accountName: enteredAccountName.trim()
+      });
+      setPayoutAccount(data.account ?? null);
       setAccountNumber("");
-      Alert.alert("Payout account verified", data.account?.accountName ? "Paystack verified the account as " + data.account.accountName + "." : "Your payout account is ready.");
+      setEnteredAccountName("");
+      Alert.alert(data.verificationPending ? "Account needs review" : "Payout account verified", data.message ?? "Payout account status updated.");
     } catch (error) {
       Alert.alert("Payout account", error instanceof Error ? error.message : "Unable to save payout account.");
     }
@@ -594,18 +606,28 @@ export default function App() {
 
     <View style={styles.card}>
       <Text style={styles.title}>Payout bank account</Text>
-      {payoutAccount ? <>
+      {payoutAccount?.recipientVerified ? <>
         <Text>{payoutAccount.accountName}</Text>
-        <Text style={styles.muted}>Account ending ••••{payoutAccount.accountLast4} · Bank code {payoutAccount.bankCode}</Text>
-        <Text style={styles.done}>✓ Verified for Paystack payouts</Text>
+        <Text style={styles.muted}>{payoutAccount.bankName ?? "Bank"} · Account ending ••••{payoutAccount.accountLast4}</Text>
+        <Text style={styles.done}>✓ Name verified for Paystack payouts</Text>
       </> : <>
-        <Text style={styles.muted}>Add the bank account where your courier earnings should be sent. SwiftDrop verifies the account before saving it.</Text>
-        <TextInput style={styles.input} placeholder="Bank code (e.g. 058)" value={bankCode} onChangeText={setBankCode} keyboardType="number-pad" />
-        <TextInput style={styles.input} placeholder="10-digit account number" value={accountNumber} onChangeText={setAccountNumber} keyboardType="number-pad" maxLength={10} />
+        <Text style={styles.muted}>Add the bank account where your courier earnings should be sent. We compare the resolved account name with your legal name before enabling payouts.</Text>
+        {payoutAccount && !payoutAccount.recipientVerified ? <Text style={styles.muted}>We couldn’t verify the account name. Our team will review this within 24 hours. Paystack resolved name: {payoutAccount.resolvedAccountName ?? "Unavailable"}.</Text> : null}
+        <Pressable style={styles.input} onPress={() => setShowBankOptions(value => !value)}>
+          <Text>{banks.find(bank => bank.code === bankCode)?.name ?? "Select bank"}</Text>
+        </Pressable>
+        {showBankOptions ? <View style={{ maxHeight: 220, borderWidth: 1, borderColor: "#d7d7d7", borderRadius: 8, marginBottom: 10 }}>
+          <ScrollView nestedScrollEnabled>
+            {banks.map(bank => <Pressable key={bank.code} style={{ padding: 12 }} onPress={() => { setBankCode(bank.code); setShowBankOptions(false); }}>
+              <Text>{bank.name}</Text>
+            </Pressable>)}
+          </ScrollView>
+        </View> : null}
+        <TextInput style={styles.input} placeholder="Account holder name (as on bank account)" value={enteredAccountName} onChangeText={setEnteredAccountName} autoCapitalize="words" />
+        <TextInput style={styles.input} placeholder="10-digit account number" value={accountNumber} onChangeText={value => setAccountNumber(value.replace(/\D/g, "").slice(0, 10))} keyboardType="number-pad" maxLength={10} />
         <Pressable style={styles.primary} onPress={() => void savePayoutAccount()}><Text style={styles.primaryText}>Verify payout account</Text></Pressable>
       </>}
     </View>
-
     <View style={styles.card}>
       <Text style={styles.title}>Courier earnings</Text>
       <Text style={styles.muted}>Available · ₦{(payoutSummary.eligibleMinor / 100).toLocaleString()} · Processing · ₦{(payoutSummary.processingMinor / 100).toLocaleString()}</Text>
