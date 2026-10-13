@@ -438,7 +438,7 @@ app.post("/api/admin/payouts/:id/approve", requireAuth("ADMIN"), async (req, res
         SET requires_admin_approval=false, admin_approved_by=$2, admin_approved_at=now(), updated_at=now()
       WHERE id=$1 AND status='ELIGIBLE' AND amount_minor > 100000000
         AND admin_approved_at IS NULL
-      RETURNING id,delivery_id,amount_minor,currency`,
+      RETURNING id,delivery_id,amount_minor,currency,admin_approved_at`,
     [payoutId, adminUserId]
   )).rows[0];
   if (!approved) return res.status(409).json({ error: "Payout is not eligible for approval, is already approved, or does not exceed ₦1,000,000." });
@@ -448,7 +448,7 @@ app.post("/api/admin/payouts/:id/approve", requireAuth("ADMIN"), async (req, res
     actorUserId: adminUserId,
     metadata: { payoutId: approved.id, amountMinor: Number(approved.amount_minor), currency: approved.currency }
   });
-  return res.status(200).json({ approved: true, payoutId: approved.id, approvedAt: new Date().toISOString() });
+  return res.status(200).json({ approved: true, payoutId: approved.id, approvedAt: new Date(approved.admin_approved_at).toISOString() });
 });
 
 app.get("/api/driver/payouts", requireAuth("DRIVER"), async (req, res) => {
@@ -613,6 +613,16 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
           return res.status(202).json({ payout: current, providerStatus: verified.data.status ?? "pending",
             message: "Paystack reported a duplicate reference; the existing transfer was verified instead of creating another." });
         }
+      }
+      if (!response.ok && response.status >= 500) {
+        // Provider 5xx responses can be ambiguous. Keep the reference reserved and
+        // let reconciliation verify it instead of incorrectly marking it failed.
+        return res.status(202).json({
+          payout: { id: processing.id, deliveryId, amountMinor: processing.amountMinor,
+            currency: processing.currency, status: "PROCESSING" },
+          providerStatus: "pending",
+          message: "Paystack returned an inconclusive server error. This reference will be reconciled; no retry was sent."
+        });
       }
       await markPayoutFailed(deliveryId);
       await pool!.query(
