@@ -42,7 +42,9 @@ import { processDriverPayoutTransferEvent } from "./driverPayoutWebhook.js";
 import { ensureRecipient } from "./driverPayoutRecipients.js";
 import { calculatePayoutFeeMinor, isDuplicatePaystackReferenceError, payoutAccountNameMatches, shouldReuseInFlightPayout } from "./driverPayoutLogic.js";
 import { reconcileDriverTransfersDaily } from "./driverPayoutReconciliation.js";
+import { installLogScrubbing } from "./logScrubbing.js";
 
+installLogScrubbing();
 const app = express();
 
 function routeParam(value: string | string[] | undefined, name: string): string {

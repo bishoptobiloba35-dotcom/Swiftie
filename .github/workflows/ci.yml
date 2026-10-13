@@ -76,3 +76,67 @@ jobs:
       - name: Bootstrap base PostgreSQL schema
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/src/database/schema.sql
       - run: npm test --workspace=@swiftdrop/api
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm install --global npm@11
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run npm audit and enforce documented exceptions
+        continue-on-error: false
+        shell: bash
+        run: |
+          set +e
+          npm audit --audit-level=high --json > npm-audit.json
+          audit_status=$?
+          set -e
+          node scripts/check-npm-audit.mjs npm-audit.json SECURITY_EXCEPTIONS.md
+          if [ "$audit_status" -ne 0 ]; then
+            echo "npm audit returned $audit_status; only reviewed, documented high/critical exceptions remain."
+          fi
+
+  secret-scan:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Scan the pull request or pushed commit diff for secrets
+        uses: trufflesecurity/trufflehog@v3.97.9
+        with:
+          base: ${{ github.event.pull_request.base.sha || github.event.before }}
+          # On PRs github.sha is the synthetic merge commit, so base is its ancestor even when the feature branch started from the last verified main.
+          head: ${{ github.sha }}
+          extra_args: --results=verified,unverified,unknown --fail-on-scan-errors --exclude-paths=.trufflehog-exclude-paths.txt
+      - name: Verify scanner rejects a synthetic key without committing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe_dir="$(mktemp -d)"
+          trap 'rm -rf "$probe_dir"' EXIT
+          git -C "$probe_dir" init -q
+          git -C "$probe_dir" config user.email "ci@example.invalid"
+          git -C "$probe_dir" config user.name "SwiftDrop CI"
+          # Generate a throwaway private key only inside the runner. It is never committed to this repository.
+          openssl genrsa -out "$probe_dir/probe-private.pem" 2048 >/dev/null 2>&1
+          git -C "$probe_dir" add probe-private.pem
+          git -C "$probe_dir" commit -qm "synthetic secret scanner probe"
+          set +e
+          docker run --rm -v "$probe_dir:/tmp/probe" -w /tmp/probe ghcr.io/trufflesecurity/trufflehog:latest git file:///tmp/probe --results=verified,unverified,unknown --no-verification --fail --no-update > "$probe_dir/trufflehog.log" 2>&1
+          scan_status=$?
+          set -e
+          if [ "$scan_status" -ne 183 ]; then
+            cat "$probe_dir/trufflehog.log"
+            echo "Expected TruffleHog to return 183 for a detected synthetic key; received $scan_status." >&2
+            exit 1
+          fi
+          echo "TruffleHog correctly rejected an ephemeral private key (exit 183)."
