@@ -70,7 +70,7 @@ test("marketplace checkout creates once, reserves stock atomically, and replays 
       dropoffLatitude: 6.5312,
       dropoffLongitude: 3.3864
     };
-    for (const invalidPin of ["123", "12345", "123456"]) {
+    for (const invalidPin of ["123", "12345", "123456", " 1234 ", "1234 "]) {
       const invalidPinResponse = await fetch(fulfillmentEndpoint, {
         method: "POST",
         headers: fulfillmentHeaders,
