@@ -1010,7 +1010,7 @@ export async function updatePayoutProviderStatus(
          updated_at=now()
      WHERE provider_reference=$1
        AND (status IN ('PROCESSING','ELIGIBLE') OR ($2='RELEASED' AND status='RELEASED'))
-       AND ($5::bigint IS NULL OR amount_minor=$5)
+       AND ($5::bigint IS NULL OR COALESCE(net_amount_minor,amount_minor)=$5)
        AND ($6::text IS NULL OR currency=$6)
      RETURNING *`,
     [providerReference, status, providerStatus, failureReason ?? null, providerAmountMinor ?? null, providerCurrency ?? null]
@@ -1033,7 +1033,7 @@ export async function updatePayoutProviderStatus(
         WHERE provider_reference=$1
           AND status IN ('PROCESSING','ELIGIBLE')
           AND (
-            ($3::bigint IS NOT NULL AND amount_minor<>$3)
+            ($3::bigint IS NOT NULL AND COALESCE(net_amount_minor,amount_minor)<>$3)
             OR ($4::text IS NOT NULL AND currency<>$4)
           )
         RETURNING *`,
