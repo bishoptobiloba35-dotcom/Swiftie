@@ -61,6 +61,30 @@ test("marketplace checkout creates once, reserves stock atomically, and replays 
 
     const token = "Bearer " + signAccessToken({ userId: buyerId, role: "CUSTOMER" });
     const endpoint = `http://127.0.0.1:${API_PORT}/api/marketplace/listings/${listing.id}/checkout`;
+    const fulfillmentEndpoint = `http://127.0.0.1:${API_PORT}/api/marketplace/orders/${randomUUID()}/fulfill`;
+    const fulfillmentHeaders = { authorization: token, "content-type": "application/json" };
+    const fulfillmentDetails = {
+      receiverName: "PIN Test Receiver",
+      receiverPhone: "+2348012345678",
+      dropoffAddress: "20 Test Delivery Road, Lagos",
+      dropoffLatitude: 6.5312,
+      dropoffLongitude: 3.3864
+    };
+    for (const invalidPin of ["123", "12345", "123456", " 1234 ", "1234 "]) {
+      const invalidPinResponse = await fetch(fulfillmentEndpoint, {
+        method: "POST",
+        headers: fulfillmentHeaders,
+        body: JSON.stringify({ ...fulfillmentDetails, receiverPin: invalidPin })
+      });
+      assert.equal(invalidPinResponse.status, 400, `Marketplace must reject PIN ${invalidPin}`);
+    }
+    const validPinSchemaResponse = await fetch(fulfillmentEndpoint, {
+      method: "POST",
+      headers: fulfillmentHeaders,
+      body: JSON.stringify({ ...fulfillmentDetails, receiverPin: "0042" })
+    });
+    assert.equal(validPinSchemaResponse.status, 404, "Four-digit PIN should pass validation before missing-order lookup");
+
     const idempotencyKey = "marketplace-http-idempotency-001";
 
     const requestedDeliveryAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();

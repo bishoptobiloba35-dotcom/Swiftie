@@ -433,7 +433,7 @@ router.post("/marketplace/orders/:id/fulfill", requireAuth(), async (req, res) =
   const parsed = z.object({
     receiverName: z.string().trim().min(2).max(120),
     receiverPhone: z.string().trim().min(7).max(30),
-    receiverPin: z.string().regex(/^\d{6}$/),
+    receiverPin: z.string().regex(/^\d{4}$/),
     dropoffAddress: z.string().trim().min(5).max(300),
     dropoffLatitude: z.number().min(-90).max(90),
     dropoffLongitude: z.number().min(-180).max(180)

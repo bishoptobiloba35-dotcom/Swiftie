@@ -58,7 +58,7 @@ async function seedProcessingPayout(reference: string, amountMinor: number) {
     senderId: customer.id,
     receiverName: "Webhook Receiver",
     receiverPhone: "+2349070000099",
-    receiverPin: "454545",
+    receiverPin: "4545",
     declaredValueMinor: amountMinor,
     pickup: { label: "Pickup", formattedAddress: "Pickup", location: { latitude: 9.07, longitude: 7.40 } },
     dropoff: { label: "Dropoff", formattedAddress: "Dropoff", location: { latitude: 9.08, longitude: 7.41 } },

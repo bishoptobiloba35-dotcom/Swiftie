@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
 import path from "node:path";
-import { createHash, createHmac, randomUUID, timingSafeEqual, randomInt } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
@@ -37,6 +37,7 @@ import { reportExternalError } from "./errorTracking.js";
 import { processPhase2EscrowReleases, reconcilePhase2Float } from "./phase2EscrowWorker.js";
 import escrowRoutes, { reconcileProcessingWalletPayouts, requeryPendingDvaAccounts, reconcilePendingEscrowProviderPayments } from "./escrowRoutes.js";
 import { featureEnabled } from "./featureFlags.js";
+import { generateReceiverPin, hashPin } from "./security.js";
 
 const app = express();
 
@@ -113,7 +114,7 @@ type MemoryDelivery = {
   id: string; trackingCode: string; senderId: string; receiverName: string; receiverPhone: string;
   pickup: { label: string; formattedAddress: string; location: DeliveryLocation };
   dropoff: { label: string; formattedAddress: string; location: DeliveryLocation };
-  status: Status; paymentMode: "SENDER_ESCROW" | "RECEIVER_ESCROW"; deliveryType?: "EXPRESS" | "STANDARD"; goodsAmountMinor?: number; driverId?: string; pickupPhotoUrl?: string; proofRequirements?: { pickup: string[]; dropoff: string[] }; receiverPin: string;
+  status: Status; paymentMode: "SENDER_ESCROW" | "RECEIVER_ESCROW"; deliveryType?: "EXPRESS" | "STANDARD"; goodsAmountMinor?: number; driverId?: string; pickupPhotoUrl?: string; proofRequirements?: { pickup: string[]; dropoff: string[] }; receiverPinHash: string;
   quote?: DeliveryQuote; createdAt: string; updatedAt: string;
 };
 const deliveries = new Map<string, MemoryDelivery>();
@@ -304,7 +305,7 @@ app.post("/api/deliveries/:id/rating", requireAuth(), async (req, res) => {
 app.post("/api/deliveries/:id/rating/receiver", async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Receiver ratings require the production database" });
   const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
-  const receiverPin = String(req.body?.receiverPin ?? "").trim();
+  const receiverPin = String(req.body?.receiverPin ?? "");
   const parsed = z.object({ stars: z.number().int().min(1).max(5), comment: z.string().max(500).optional() }).safeParse(req.body);
   if (!receiverPhone || !/^\d{4}$/.test(receiverPin) || !parsed.success) return res.status(400).json({ error: "Receiver phone, 4-digit PIN, rating and optional comment are required" });
   const delivery = await findByTrackingCode(String(routeParam(req.params.id, "id")).trim().toUpperCase()).catch(() => null) ?? await findDelivery(routeParam(req.params.id, "id"));
@@ -618,7 +619,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   if (quote.currency !== "NGN" || !Number.isSafeInteger(quote.totalMinor) || quote.totalMinor < MINIMUM_ORDER_MINOR) {
     return res.status(500).json({ error: "Unable to calculate delivery quote" });
   }
-  const serverPin = String(randomInt(0, 10000)).padStart(4, "0");
+  const serverPin = generateReceiverPin();
   const effectiveQuote = parsed.data.paymentMode === "RECEIVER_ESCROW"
     ? { ...quote, protectionReserveMinor: 0, totalMinor: quote.totalMinor - quote.protectionReserveMinor }
     : quote;
@@ -680,7 +681,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
       dropoff: { label: input.dropoff.label, formattedAddress: input.dropoff.formattedAddress, location: { latitude: input.dropoff.latitude, longitude: input.dropoff.longitude } },
       quote,
       status: "CREATED",
-      receiverPin: pin,
+      receiverPinHash: hashPin(pin),
       createdAt: now,
       updatedAt: now
     };
@@ -1544,7 +1545,7 @@ app.post("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER"), async
 app.post("/api/track/:trackingCode/dispute", async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Receiver disputes require the production database" });
   const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
-  const receiverPin = String(req.body?.receiverPin ?? "").trim();
+  const receiverPin = String(req.body?.receiverPin ?? "");
   const reason = String(req.body?.reason ?? "").trim();
   const description = String(req.body?.description ?? "").trim();
   if (!receiverPhone || !/^\d{4}$/.test(receiverPin) || !reason) {

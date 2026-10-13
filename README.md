@@ -48,7 +48,7 @@ Every delivery uses **SENDER_ESCROW**. The sender pays the exact server-authorit
 
 - Delivery pricing is calculated server-side from road distance, parcel weight, parcel dimensions/volumetric weight, and a disclosed perishable-item surcharge.
 - Customer payments enter a held escrow-style ledger after verified payment. The courier cannot complete the delivery alone.
-- The receiver confirms receipt with the tracking code, receiver phone and six-digit PIN. Only then is the held payment marked released and the courier payout becomes eligible.
+- The receiver confirms receipt with the tracking code, receiver phone and 4-digit PIN. Only then is the held payment marked released and the courier payout becomes eligible.
 - Only drivers with approved KYC can see, accept or receive delivery jobs. Approved drivers are automatically set online when they sign in.
 - Both the sender and receiver can review the courier after delivery; drivers can also review senders.
 

@@ -7,7 +7,7 @@
 - Public file serving is not exposed; pickup evidence and KYC documents are returned through authorization-checked API endpoints.
 - Production startup now fails fast when database, JWT, Paystack, CORS, or private object-storage configuration is missing or insecure.
 - GPS updates remain bearer-authenticated and driver-assignment checked, with server-generated timestamps, coordinate validation, accuracy validation, and a minimum update interval.
-- Receiver six-digit PIN verification is rate-limited to reduce brute-force attempts.
+- Receiver four-digit PIN verification is rate-limited to reduce brute-force attempts.
 - Background location tracking remains enabled from the driver app while an active delivery is in transit.
 - Paystack webhook verification uses the exact raw request body and constant-time signature comparison.
 - Payment initialization now uses the same `PAYSTACK_SECRET_KEY` configuration used by Paystack webhooks and transfers.

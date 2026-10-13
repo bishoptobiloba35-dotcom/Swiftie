@@ -64,6 +64,9 @@ test("receiver confirmation route verifies PIN and atomically releases escrow fo
         WHERE id=$1`,
       [delivery.id, driver.id]
     );
+    const pinStorage = (await pool.query("SELECT receiver_pin_hash FROM deliveries WHERE id=$1", [delivery.id])).rows[0].receiver_pin_hash as string;
+    assert.notEqual(pinStorage, "6543");
+    assert.match(pinStorage, /^[a-f0-9]{32}:[a-f0-9]{64}$/);
     await createPayment({ deliveryId: delivery.id, provider: "paystack", amountMinor: 100000, currency: "NGN", collectionMode: "SENDER_ESCROW" });
     assert.ok(await updatePaymentStatus(delivery.id, "HELD", "ESCROW-HTTP-1"));
     await pool.query(
