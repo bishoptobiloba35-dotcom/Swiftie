@@ -34,15 +34,19 @@ async function createDelivery(senderId: string) {
 
 async function ensureTestRoles(): Promise<void> {
   if (!pool) throw new Error("DATABASE_URL is required");
-  await pool.query(`DO $$
+  await pool.query(`DO $
   BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='swiftdrop_rls_customer_test') THEN
-      CREATE ROLE swiftdrop_rls_customer_test NOLOGIN NOSUPERUSER NOBYPASSRLS;
+      EXECUTE 'CREATE ROLE swiftdrop_rls_customer_test NOLOGIN NOSUPERUSER NOBYPASSRLS';
+    ELSE
+      EXECUTE 'ALTER ROLE swiftdrop_rls_customer_test NOLOGIN NOSUPERUSER NOBYPASSRLS';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='swiftdrop_rls_support_test') THEN
-      CREATE ROLE swiftdrop_rls_support_test NOLOGIN NOSUPERUSER NOBYPASSRLS;
+      EXECUTE 'CREATE ROLE swiftdrop_rls_support_test NOLOGIN NOSUPERUSER NOBYPASSRLS';
+    ELSE
+      EXECUTE 'ALTER ROLE swiftdrop_rls_support_test NOLOGIN NOSUPERUSER NOBYPASSRLS';
     END IF;
-  END $$`);
+  END $`);
   await pool.query(`GRANT SELECT ON users,drivers,deliveries,delivery_events,location_events,
     payments,escrow_payment_attempts,disputes,notifications,device_tokens,driver_documents
     TO swiftdrop_rls_customer_test`);
