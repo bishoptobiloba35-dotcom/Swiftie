@@ -16,7 +16,15 @@ export function redactSensitiveLogText(value: string): string {
 }
 
 function redactLogValue(value: unknown, fieldName?: string): unknown {
-  if (fieldName && SENSITIVE_FIELD.test(fieldName)) return "[REDACTED]";
+  if (fieldName && SENSITIVE_FIELD.test(fieldName)) {
+    const normalized = fieldName.toLowerCase().replace(/[_-]/g, "");
+    if (normalized.includes("pin")) return "[REDACTED_PIN]";
+    if (normalized.includes("cardnumber")) return "[REDACTED_CARD_NUMBER]";
+    if (normalized.includes("accountnumber")) return "[REDACTED_BANK_ACCOUNT]";
+    if (normalized.includes("authorization") || normalized.includes("accesstoken") || normalized === "token") return "[REDACTED_TOKEN]";
+    if (normalized.includes("apikey") || normalized.includes("secretkey")) return "[REDACTED_API_KEY]";
+    return "[REDACTED]";
+  }
   if (value instanceof Error) {
     const safeError = new Error(redactSensitiveLogText(value.message));
     safeError.name = redactSensitiveLogText(value.name);
