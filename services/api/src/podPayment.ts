@@ -5,6 +5,7 @@
  */
 
 import { canTransition, type DeliveryStatus } from "./deliveryState.js";
+import { courierShareForOrder } from "./pricingConstants.js";
 
 export type PodPaymentMode = "PAY_ON_DELIVERY";
 
@@ -82,6 +83,10 @@ export async function applyPodPaymentVerified(
     await client.query("BEGIN");
     const row = (await client.query(
       `SELECT d.id, d.status, d.payment_mode, d.quote_total_minor, d.pod_verified_at,
+              d.pricing_version, d.quote_base_fare_minor, d.quote_distance_fare_minor,
+              d.quote_weight_fare_minor, d.quote_size_fare_minor, d.quote_perishable_surcharge_minor,
+              d.quote_express_surcharge_minor, d.quote_fuel_surcharge_minor,
+              d.quote_service_fee_minor, d.quote_protection_reserve_minor,
               p.amount_minor AS payment_amount_minor, p.status AS payment_status
          FROM deliveries d
          LEFT JOIN payments p ON p.delivery_id = d.id
