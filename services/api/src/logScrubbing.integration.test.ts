@@ -31,7 +31,7 @@ test("mock delivery flow scrubs PINs, payment data, bearer tokens, API keys and 
   const captured: string[] = [];
 
   for (const method of methods) {
-    originals.set(method, console[method] as Console[typeof method]);
+    originals.set(method, (console[method] as (...args: unknown[]) => void).bind(console));
     (console as unknown as Record<string, (...args: unknown[]) => void>)[method] =
       (...args: unknown[]) => captured.push(args.map(value =>
         value instanceof Error ? value.stack ?? value.message :
@@ -46,7 +46,7 @@ test("mock delivery flow scrubs PINs, payment data, bearer tokens, API keys and 
     restoreScrubber();
     for (const method of methods) {
       (console as unknown as Record<string, (...args: unknown[]) => void>)[method] =
-        originals.get(method) as (...args: unknown[]) => void;
+        originals.get(method)!;
     }
   }
 
