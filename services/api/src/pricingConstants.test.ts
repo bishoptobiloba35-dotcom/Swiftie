@@ -6,7 +6,7 @@ import {
   FUEL_SURCHARGE_MINOR, FUEL_SURCHARGE_PLATFORM_BPS, INSTANT_PAYOUT_FEE_BPS,
   INSTANT_PAYOUT_FEE_MIN_MINOR, INSTANT_PAYOUT_FEE_MAX_MINOR, STORAGE_FEE_SMALL_MINOR,
   STORAGE_FEE_MEDIUM_MINOR, STORAGE_FEE_LARGE_MINOR, STORAGE_GRACE_HOURS, STORAGE_MAX_HOURS,
-  calculateFare, assertMinimumOrder, expressSurchargeMinor, courierShareFromFeeMinor
+  calculateFare, assertMinimumOrder, expressSurchargeMinor, courierShareFromFeeMinor, courierShareForOrder
 } from "./pricingConstants.js";
 
 test("v2 rate card constants match the approved values in kobo", () => {
@@ -39,4 +39,10 @@ test("pricing migration preserves legacy versions before applying v2 default", a
   assert.match(migration, /ELSE 'legacy'/);
   assert.match(migration, /ALTER COLUMN pricing_version SET DEFAULT 'v2'/);
   assert.match(migration, /quote_fuel_surcharge_minor/);
+});
+
+test("v2 courier share is 72 percent of the full delivery fee; legacy orders retain 75 percent of base fare", () => {
+  assert.equal(courierShareForOrder({ pricingVersion: "v2", deliveryFeeMinor: 200000, baseFareMinor: 60000 }), 144000);
+  assert.equal(courierShareForOrder({ pricingVersion: "legacy-config-v1", deliveryFeeMinor: 200000, baseFareMinor: 60000 }), 45000);
+  assert.equal(courierShareForOrder({ pricingVersion: "legacy", deliveryFeeMinor: 200000, baseFareMinor: 60000, configuredPercent: 70 }), 42000);
 });
