@@ -15,7 +15,9 @@ ALTER TABLE payouts
   ADD COLUMN IF NOT EXISTS admin_approved_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS admin_approved_by UUID REFERENCES users(id),
   ADD COLUMN IF NOT EXISTS requested_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS admin_approved_by UUID REFERENCES users(id),
+  ADD COLUMN IF NOT EXISTS admin_approved_at TIMESTAMPTZ;
 
 UPDATE payouts
    SET net_amount_minor = COALESCE(net_amount_minor, amount_minor),
