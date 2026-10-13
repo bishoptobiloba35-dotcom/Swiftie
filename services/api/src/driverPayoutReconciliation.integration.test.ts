@@ -28,7 +28,7 @@ test("daily transfer reconciliation updates known transfers and records mismatch
   });
   const payout = await createEligiblePayout(delivery.id, driver.id, 50000);
   assert.ok(payout);
-  const reference = "RECONCILE-" + suffix;
+  const reference = "payout-reconcile-" + suffix;
   await pool.query("UPDATE payouts SET status='PROCESSING',provider='paystack',provider_reference=$2,net_amount_minor=50000 WHERE id=$1", [payout.id, reference]);
 
   const originalFetch = globalThis.fetch;
@@ -42,7 +42,7 @@ test("daily transfer reconciliation updates known transfers and records mismatch
         status: true,
         data: [
           { reference, status: "success", amount: 50000, currency: "NGN" },
-          { reference: "PROVIDER-ONLY-" + suffix, status: "success", amount: 10000, currency: "NGN" }
+          { reference: "payout-provider-only-" + suffix, status: "success", amount: 10000, currency: "NGN" }
         ],
         meta: { pageCount: 1 }
       }), { status: 200, headers: { "content-type": "application/json" } });
