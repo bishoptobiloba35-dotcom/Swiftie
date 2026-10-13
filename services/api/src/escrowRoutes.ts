@@ -6,14 +6,11 @@ import { pool, databaseEnabled } from "./database/db.js";
 import { verifyPin } from "./security.js";
 import { requireAuth } from "./authMiddleware.js";
 import { identity } from "./requestIdentity.js";
+import { courierShareForOrder } from "./pricingConstants.js";
 
 const router = Router();
 const MIN_WITHDRAWAL_MINOR = 100000;
-function courierShareBps(): number {
-  const percent = Number(process.env.DRIVER_PAYOUT_PERCENT ?? "75");
-  if (!Number.isFinite(percent) || percent <= 0 || percent > 100) throw new Error("Invalid DRIVER_PAYOUT_PERCENT");
-  return Math.round(percent * 100);
-}
+
 const ESCROW_DISPUTE_HOURS = 2;
 const MERCHANT_HOLD_HOURS = 72;
 const FLOAT_MIN_RESERVE_MINOR = 500000000;
@@ -56,7 +53,7 @@ router.post("/escrow/create", requireAuth(), async (req, res) => {
   try{
     await client.query("BEGIN");
     const order=(await client.query(
-      "SELECT id,sender_id AS customer_id,merchant_user_id,payment_on_delivery,quote_total_minor,quote_base_fare_minor,quote_service_fee_minor,quote_protection_reserve_minor FROM deliveries WHERE id=$1 FOR UPDATE",
+      "SELECT id,sender_id AS customer_id,merchant_user_id,payment_on_delivery,pricing_version,quote_total_minor,quote_base_fare_minor,quote_distance_fare_minor,quote_weight_fare_minor,quote_size_fare_minor,quote_perishable_surcharge_minor,quote_express_surcharge_minor,quote_fuel_surcharge_minor,quote_service_fee_minor,quote_protection_reserve_minor FROM deliveries WHERE id=$1 FOR UPDATE",
       [parsed.data.orderId]
     )).rows[0];
     if(!order){ await client.query("ROLLBACK"); return res.status(404).json({error:"Order not found"}); }
@@ -72,7 +69,22 @@ router.post("/escrow/create", requireAuth(), async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(409).json({error:"Order has no authoritative payable total"});
     }
-    const courierShareMinor=Math.floor(baseFareMinor*courierShareBps()/10000);
+    const deliveryFeeMinor = baseFareMinor
+      + Number(order.quote_distance_fare_minor ?? 0)
+      + Number(order.quote_weight_fare_minor ?? 0)
+      + Number(order.quote_size_fare_minor ?? 0)
+      + Number(order.quote_perishable_surcharge_minor ?? 0)
+      + Number(order.quote_express_surcharge_minor ?? 0)
+      + Number(order.quote_fuel_surcharge_minor ?? 0);
+    const configuredPayoutPercent = process.env.DRIVER_PAYOUT_PERCENT === undefined
+      ? undefined
+      : Number(process.env.DRIVER_PAYOUT_PERCENT);
+    const courierShareMinor = courierShareForOrder({
+      pricingVersion: order.pricing_version ?? null,
+      deliveryFeeMinor,
+      baseFareMinor,
+      configuredPercent: configuredPayoutPercent
+    });
     const merchantShareMinor=0;
     const swiftdropMarginMinor=totalPaidMinor-courierShareMinor-serviceChargeMinor-protectionReserveMinor-merchantShareMinor;
     if(swiftdropMarginMinor<0){ await client.query("ROLLBACK"); return res.status(409).json({error:"Order pricing cannot produce a valid escrow split"}); }
