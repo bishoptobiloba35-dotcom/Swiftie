@@ -26,3 +26,18 @@ test("account-name matching ignores honorifics and middle names but checks first
   assert.equal(payoutAccountNameMatches("Adaeze Okafor", "Adaeze Eze"), false);
   assert.equal(payoutAccountNameMatches("Adaeze", "Adaeze"), false);
 });
+
+import { isDuplicatePaystackReferenceError, shouldReuseInFlightPayout } from "./driverPayoutLogic.js";
+
+test("a timed-out payout with a reserved reference is reused rather than posting a second transfer", () => {
+  assert.equal(shouldReuseInFlightPayout("PROCESSING", "payout-driver-123"), true);
+  assert.equal(shouldReuseInFlightPayout("PROCESSING", null), false);
+  assert.equal(shouldReuseInFlightPayout("FAILED", "payout-driver-123"), false);
+  assert.equal(shouldReuseInFlightPayout("ELIGIBLE", "payout-driver-123"), false);
+});
+
+test("duplicate-reference responses trigger verification of the existing reference", () => {
+  assert.equal(isDuplicatePaystackReferenceError("Duplicate reference"), true);
+  assert.equal(isDuplicatePaystackReferenceError("reference already exists"), true);
+  assert.equal(isDuplicatePaystackReferenceError("insufficient balance"), false);
+});
