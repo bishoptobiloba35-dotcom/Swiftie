@@ -622,6 +622,9 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   const effectiveQuote = parsed.data.paymentMode === "RECEIVER_ESCROW"
     ? { ...quote, protectionReserveMinor: 0, totalMinor: quote.totalMinor - quote.protectionReserveMinor }
     : quote;
+  if (!Number.isSafeInteger(effectiveQuote.totalMinor) || effectiveQuote.totalMinor < MINIMUM_ORDER_MINOR) {
+    return res.status(400).json({ error: "Order total is below the ₦800 minimum" });
+  }
   parsed.data.quote = effectiveQuote;
   const senderDepositAmountMinor = parsed.data.paymentMode === "RECEIVER_ESCROW"
     ? Math.ceil((effectiveQuote.totalMinor - effectiveQuote.serviceFeeMinor) * 0.5)
