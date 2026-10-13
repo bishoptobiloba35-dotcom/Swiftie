@@ -514,8 +514,8 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
   }
   const feeMinor = calculatePayoutFeeMinor(payout.amountMinor, payoutMode);
   if (feeMinor >= payout.amountMinor) return res.status(400).json({ error: "Payout amount must exceed the instant transfer fee." });
-  if (payout.amountMinor > 100_000_000) {
-    await pool!.query("UPDATE payouts SET requires_admin_approval=true WHERE id=$1 AND status='ELIGIBLE'", [payout.id]);
+  if (payout.amountMinor > 100_000_000 && (!payout.adminApprovedAt || payout.requiresAdminApproval)) {
+    await pool!.query("UPDATE payouts SET requires_admin_approval=true WHERE id=$1 AND status='ELIGIBLE' AND admin_approved_at IS NULL", [payout.id]);
     return res.status(409).json({ error: "Payouts above ₦1,000,000 require explicit admin approval before transfer." });
   }
   const account = await getDriverPayoutAccount(driver.id);
@@ -2187,6 +2187,37 @@ app.get("/api/admin/payouts", requireAuth("ADMIN"), async (_req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
   const result = await pool!.query("SELECT id, delivery_id, driver_id, amount_minor, currency, status, provider, provider_status, failure_reason, processed_at, created_at, updated_at FROM payouts ORDER BY updated_at DESC LIMIT 100");
   res.json({ payouts: result.rows.map((row) => ({ id:row.id,deliveryId:row.delivery_id,driverId:row.driver_id,amountMinor:Number(row.amount_minor),currency:row.currency,status:row.status,provider:row.provider,providerStatus:row.provider_status,failureReason:row.failure_reason,processedAt:row.processed_at,createdAt:row.created_at,updatedAt:row.updated_at })) });
+});
+
+app.post("/api/admin/payouts/:deliveryId/approve", requireAuth("ADMIN"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
+  const deliveryId = routeParam(req.params.deliveryId, "deliveryId");
+  const payout = await findPayout(deliveryId);
+  if (!payout) return res.status(404).json({ error: "Payout not found" });
+  if (payout.status !== "ELIGIBLE" || payout.amountMinor <= 100_000_000) {
+    return res.status(409).json({ error: "Only eligible payouts above ₦1,000,000 require this approval." });
+  }
+  const approved = await pool!.query(
+    `UPDATE payouts
+        SET requires_admin_approval=false, admin_approved_at=now(), admin_approved_by=$2, updated_at=now()
+      WHERE delivery_id=$1 AND status='ELIGIBLE' AND amount_minor>100000000 AND admin_approved_at IS NULL
+      RETURNING id,amount_minor,currency,status,admin_approved_at,admin_approved_by`,
+    [deliveryId, identity(req)]
+  );
+  if (!approved.rowCount) return res.status(409).json({ error: "Payout was already approved or changed state; refresh before retrying." });
+  await recordDeliveryEvent({
+    deliveryId,
+    eventType: "PAYOUT_ADMIN_APPROVED",
+    actorUserId: identity(req),
+    metadata: { payoutId: approved.rows[0].id, amountMinor: Number(approved.rows[0].amount_minor), currency: approved.rows[0].currency }
+  });
+  await recordAdminCaseAudit({
+    deliveryId,
+    adminUserId: identity(req),
+    action: "PAYOUT_ADMIN_APPROVED",
+    metadata: { payoutId: approved.rows[0].id, amountMinor: Number(approved.rows[0].amount_minor), currency: approved.rows[0].currency }
+  });
+  return res.json({ payout: { id: approved.rows[0].id, amountMinor: Number(approved.rows[0].amount_minor), currency: approved.rows[0].currency, status: approved.rows[0].status, adminApprovedAt: approved.rows[0].admin_approved_at } });
 });
 
 app.post("/api/admin/payouts/:deliveryId/retry", requireAuth("ADMIN"), async (req, res) => {
