@@ -11,7 +11,7 @@ import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryFo
   finalizePaystackWebhookEvent, retryFailedPayout, flagPayoutReconciliationMismatch } from "./database/deliveryRepository.js";
 import { pool, pingDatabase, assertRlsCompatibleDatabaseRole } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
-import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, setPayoutProviderTransferCode, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, listSupportTicketMessages, recordAdminSupportReply, prepareRefund, recoverCourierEscrowPayout, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
+import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, setPayoutProviderTransferCode, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, findActiveDriverPayout, markDisputeUnderReview, listSupportTicketMessages, recordAdminSupportReply, prepareRefund, recoverCourierEscrowPayout, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
 import authRoutes from "./authRoutes.js";
 import { identity } from "./requestIdentity.js";
@@ -493,6 +493,16 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
   if (payout.status === "RELEASED") return res.status(200).json({ payout, message: "This payout is already completed." });
   if (payout.status !== "ELIGIBLE") {
     return res.status(409).json({ error: "Payout is not eligible or has already failed. Failed transfers require admin review and are not automatically retried." });
+  }
+
+  // Enforce one in-flight payout across all of a driver's deliveries. The per-driver
+  // atomic one-minute request limit below also serializes concurrent new requests.
+  const activeDriverPayout = await findActiveDriverPayout(driver.id, payout.id);
+  if (activeDriverPayout) {
+    return res.status(409).json({
+      error: "Another driver payout is already processing. Wait for reconciliation before requesting another payout.",
+      activePayoutId: activeDriverPayout.id
+    });
   }
   const modeValue = req.body?.mode ?? "standard";
   if (modeValue !== "standard" && modeValue !== "instant") return res.status(400).json({ error: "Payout mode must be standard or instant." });
