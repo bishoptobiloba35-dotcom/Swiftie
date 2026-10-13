@@ -39,6 +39,7 @@ import escrowRoutes, { reconcileProcessingWalletPayouts, requeryPendingDvaAccoun
 import { featureEnabled } from "./featureFlags.js";
 import { generateReceiverPin, hashPin } from "./security.js";
 import { processDriverPayoutTransferEvent } from "./driverPayoutWebhook.js";
+import { calculatePayoutFeeMinor, payoutAccountNameMatches } from "./driverPayoutLogic.js";
 import { reconcileDriverTransfersDaily } from "./driverPayoutReconciliation.js";
 
 const app = express();
@@ -50,20 +51,6 @@ function routeParam(value: string | string[] | undefined, name: string): string 
 
 const PAYSTACK_BANK_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 let paystackBankCache: { expiresAt: number; banks: Array<{ name: string; code: string; slug?: string }> } | null = null;
-
-function comparableLegalName(value: string): string[] {
-  const ignored = new Set(["mr", "mrs", "ms", "miss", "dr", "prof", "chief", "alhaji", "alhaja", "hon", "sir", "madam"]);
-  return value.toLocaleLowerCase("en-NG").replace(/[^a-z\\s'-]/g, " ").split(/[\\s'-]+/)
-    .filter(Boolean).filter(part => !ignored.has(part));
-}
-
-function payoutAccountNameMatches(legalName: string, resolvedName: string): boolean {
-  const legal = comparableLegalName(legalName);
-  const resolved = comparableLegalName(resolvedName);
-  if (legal.length < 2 || resolved.length < 2) return false;
-  // Compare first and last names only, allowing omitted middle names and honorifics.
-  return legal[0] === resolved[0] && legal[legal.length - 1] === resolved[resolved.length - 1];
-}
 
 async function ensureRecipient(driverId: string): Promise<string> {
   if (!pool) throw new Error("Payouts require the production database");
@@ -553,9 +540,16 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
   if (payout.status !== "ELIGIBLE") {
     return res.status(409).json({ error: "Payout is not eligible or has already failed. Failed transfers require admin review and are not automatically retried." });
   }
-  if (!Number.isSafeInteger(payout.amountMinor) || payout.amountMinor < 10_000) {
-    return res.status(400).json({ error: "Standard driver payouts must be at least ₦100." });
+  const modeValue = req.body?.mode ?? "standard";
+  if (modeValue !== "standard" && modeValue !== "instant") return res.status(400).json({ error: "Payout mode must be standard or instant." });
+  const payoutMode = modeValue as "standard" | "instant";
+  if (!Number.isSafeInteger(payout.amountMinor) ||
+      (payoutMode === "standard" && payout.amountMinor < 10_000) ||
+      (payoutMode === "instant" && payout.amountMinor < 5_000)) {
+    return res.status(400).json({ error: payoutMode === "standard" ? "Standard driver payouts must be at least ₦100." : "Instant payout amount is below the minimum." });
   }
+  const feeMinor = calculatePayoutFeeMinor(payout.amountMinor, payoutMode);
+  if (feeMinor >= payout.amountMinor) return res.status(400).json({ error: "Payout amount must exceed the instant transfer fee." });
   if (payout.amountMinor > 100_000_000) {
     await pool!.query("UPDATE payouts SET requires_admin_approval=true WHERE id=$1 AND status='ELIGIBLE'", [payout.id]);
     return res.status(409).json({ error: "Payouts above ₦1,000,000 require explicit admin approval before transfer." });
@@ -578,7 +572,7 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
     return res.status(409).json({ error: error instanceof Error ? error.message : "Verified payout recipient is unavailable." });
   }
 
-  const processing = await setPayoutProcessing(deliveryId);
+  const processing = await setPayoutProcessing(deliveryId, feeMinor);
   if (!processing) return res.status(409).json({ error: "Payout is already being processed." });
   const secret = process.env.PAYSTACK_SECRET_KEY;
   if (!secret) {
@@ -596,7 +590,7 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
       method: "POST",
       headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
       body: JSON.stringify({
-        source: "balance", amount: processing.amountMinor, recipient: recipientCode,
+        source: "balance", amount: processing.netAmountMinor ?? (processing.amountMinor - feeMinor), recipient: recipientCode,
         reference, reason: "SwiftDrop courier payout #" + processing.id, currency: "NGN"
       }),
       signal: AbortSignal.timeout(15_000)
