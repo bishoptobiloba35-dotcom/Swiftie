@@ -37,12 +37,31 @@ jobs:
       - run: npm install --global npm@11
       - run: npm ci --ignore-scripts --no-audit --no-fund
 
+      - name: Validate staging deployment configuration
+        env:
+          STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_STAGING_SERVICE_ID: ${{ vars.RAILWAY_STAGING_SERVICE_ID }}
+          STAGING_API_URL: ${{ vars.STAGING_API_URL }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in STAGING_DATABASE_URL RAILWAY_TOKEN RAILWAY_PROJECT_ID RAILWAY_STAGING_SERVICE_ID STAGING_API_URL; do
+            if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            printf '::error::Missing required staging configuration: %s\n' "${missing[*]}"
+            echo 'Configure secrets in the staging GitHub Environment and non-sensitive identifiers/URLs as Environment variables.'
+            exit 1
+          fi
+          echo 'Required staging configuration is present.'
+
       - name: Apply staging database migrations
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
         run: |
           set -euo pipefail
-          test -n "$DATABASE_URL" || { echo "::error::STAGING_DATABASE_URL is required"; exit 1; }
           npm run migrate --workspace=@swiftdrop/api
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT id, applied_at FROM schema_migrations ORDER BY id"
 
@@ -79,6 +98,9 @@ jobs:
           DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          test -n "$SLACK_WEBHOOK_URL" || { echo "::error::SLACK_WEBHOOK_URL is required for deployment notifications"; exit 1; }
+          if [[ -z "$SLACK_WEBHOOK_URL" ]]; then
+            echo '::warning::SLACK_WEBHOOK_URL is not configured; skipping optional staging notification.'
+            exit 0
+          fi
           payload="$(jq -n --arg status "$JOB_STATUS" --arg sha "$DEPLOY_SHA" --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" '{text: ("SwiftDrop staging deploy " + $status + " · SHA " + $sha + " · " + $url)}')"
           curl --fail --silent --show-error --max-time 15 -H 'Content-Type: application/json' -d "$payload" "$SLACK_WEBHOOK_URL"
