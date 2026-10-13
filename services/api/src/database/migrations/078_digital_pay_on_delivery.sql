@@ -12,18 +12,16 @@ ALTER TABLE deliveries
   CHECK (payment_mode IN (
     'SENDER_ESCROW',
     'RECEIVER_ESCROW',
-    'PAY_ON_DELIVERY',
-    'RECEIVER_ON_DELIVERY' -- legacy-only label; API never permits new cash orders
-  ));
+    'PAY_ON_DELIVERY'
+  )) NOT VALID;
 
 ALTER TABLE payments
   ADD CONSTRAINT payments_collection_mode_check
   CHECK (collection_mode IN (
     'SENDER_ESCROW',
     'RECEIVER_ESCROW',
-    'PAY_ON_DELIVERY',
-    'RECEIVER_ON_DELIVERY' -- legacy-only label; API never permits new cash orders
-  ));
+    'PAY_ON_DELIVERY'
+  )) NOT VALID;
 
 -- 2. Expand allowed delivery statuses for the POD lifecycle
 -- Previous constraint (migration 029) did not include POD states.
@@ -49,7 +47,7 @@ ALTER TABLE deliveries
     'CANCELLED',
     'DISPUTED',
     'RETURNED'
-  ));
+  )) NOT VALID;
 
 -- 3. Track when digital POD was verified by webhook
 ALTER TABLE deliveries
@@ -65,7 +63,7 @@ CREATE INDEX IF NOT EXISTS idx_deliveries_pod_pending
   WHERE payment_mode = 'PAY_ON_DELIVERY' AND receiver_payment_pending = true;
 
 COMMENT ON COLUMN deliveries.payment_mode IS
-  'SENDER_ESCROW | RECEIVER_ESCROW | PAY_ON_DELIVERY (digital only). RECEIVER_ON_DELIVERY is retained only for legacy historical rows; new cash orders are forbidden.';
+  'SENDER_ESCROW | RECEIVER_ESCROW | PAY_ON_DELIVERY (digital only). Legacy RECEIVER_ON_DELIVERY rows are grandfathered by NOT VALID constraints; new cash orders are forbidden.';
 COMMENT ON COLUMN deliveries.pod_verified_at IS
   'Set only by verified Paystack webhook when PAY_ON_DELIVERY payment succeeds.';
 COMMENT ON COLUMN deliveries.receiver_payment_pending IS
