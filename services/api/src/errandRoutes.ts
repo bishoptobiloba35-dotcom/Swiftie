@@ -37,7 +37,7 @@ const errandSchema = z.object({
   requestedCompletionAt: z.string().datetime().optional(),
   receiverName: z.string().trim().min(1).max(160),
   receiverPhone: z.string().trim().min(7).max(40),
-  receiverPin: z.string().regex(/^\d{4,6}$/),
+  receiverPin: z.string().regex(/^\d{4}$/),
   destinationAddress: z.string().trim().min(3).max(500),
   destinationLat: z.number().finite().min(-90).max(90),
   destinationLng: z.number().finite().min(-180).max(180),
