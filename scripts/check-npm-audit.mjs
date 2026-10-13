@@ -25,7 +25,7 @@ if (report.error || !report.vulnerabilities || typeof report.vulnerabilities !==
 
 const exceptionPackages = new Set();
 const exceptionAdvisories = new Set();
-const exceptionPattern = /\*\*Package:\*\*\s+`([^\`]+)`\s+—\s+\*\*Advisories?:\*\*\s+([^\n]+)/g;
+const exceptionPattern = /\*\*Package:\*\*\s+`([^\`]+)`\s+—\s+\*\*(?:Advisory|Advisories):\*\*\s+([^\n]+)/g;
 for (const match of exceptions.matchAll(exceptionPattern)) {
   exceptionPackages.add(match[1]);
   for (const advisory of match[2].matchAll(/GHSA-[a-z0-9-]+/gi)) {
