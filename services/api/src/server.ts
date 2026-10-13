@@ -371,7 +371,7 @@ app.get("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) =>
   return res.json({ account: account ? {
     bankCode: account.bankCode, bankName: account.bankName, accountName: account.accountName,
     accountLast4: account.accountLast4, currency: account.currency,
-    recipientVerified: account.recipientVerified
+    resolvedAccountName: account.resolvedAccountName, recipientVerified: account.recipientVerified
   } : null });
 });
 
@@ -415,7 +415,7 @@ app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) =
     return res.status(verified ? 200 : 202).json({
       account: account ? {
         bankCode: account.bankCode, bankName: account.bankName, accountName: account.accountName,
-        accountLast4: account.accountLast4, currency: account.currency, recipientVerified: account.recipientVerified
+        accountLast4: account.accountLast4, currency: account.currency, resolvedAccountName: account.resolvedAccountName, recipientVerified: account.recipientVerified
       } : null,
       verificationPending: !verified,
       message: verified
@@ -557,7 +557,7 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
     };
     if (!response.ok || !data.status || !data.data?.reference) {
       const providerMessage = String(data.message ?? "");
-      const duplicateReference = /duplicate|already exists|reference.*used/i.test(providerMessage + " " + String(data.code ?? ""));
+      const duplicateReference = /duplicate|already exists|reference.*(used|unique|exist)|unique.*reference/i.test(providerMessage + " " + String(data.code ?? ""));
       if (duplicateReference) {
         // Paystack's duplicate-reference response is treated as an existing transfer,
         // never permission to send a second transfer. Verify that exact reference.
