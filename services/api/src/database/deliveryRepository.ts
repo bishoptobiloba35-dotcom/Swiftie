@@ -240,6 +240,7 @@ export type StoredDelivery = {
   deliveryType: "EXPRESS" | "STANDARD";
   goodsAmountMinor: number;
   receiverUserId?: string;
+  podVerifiedAt?: string | null;
   senderDepositAmountMinor: number;
   stationId?: string;
   exceptionStatus?: string;
@@ -290,6 +291,7 @@ function rowToDelivery(row: any): StoredDelivery {
     deliveryType: row.delivery_type === "STANDARD" ? "STANDARD" : "EXPRESS",
     goodsAmountMinor: Number(row.goods_amount_minor ?? 0),
     receiverUserId: row.receiver_user_id ?? undefined,
+    podVerifiedAt: row.pod_verified_at ? new Date(row.pod_verified_at).toISOString() : null,
     senderDepositAmountMinor: Number(row.sender_deposit_amount_minor ?? 0),
     stationId: row.station_id ?? undefined,
     exceptionStatus: row.exception_status ?? "NONE",
