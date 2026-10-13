@@ -19,3 +19,16 @@ export function payoutAccountNameMatches(legalName: string, resolvedName: string
   // First and last names must match; middle names and honorifics are ignored.
   return legal[0] === resolved[0] && legal[legal.length - 1] === resolved[resolved.length - 1];
 }
+
+/**
+ * A payout with a reserved provider reference is inconclusive until reconciled.
+ * Retrying its transfer POST could pay twice, so the caller must return the
+ * existing payout and verify this exact reference instead.
+ */
+export function shouldReuseInFlightPayout(status: string, providerReference?: string | null): boolean {
+  return status === "PROCESSING" && Boolean(providerReference?.trim());
+}
+
+export function isDuplicatePaystackReferenceError(message: string, code?: string): boolean {
+  return /duplicate|already exists|reference.*used/i.test(message + " " + (code ?? ""));
+}
