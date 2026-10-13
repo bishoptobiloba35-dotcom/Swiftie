@@ -48,8 +48,8 @@ export async function getActivePricingConfig(): Promise<PricingConfig> {
   const source = String(process.env.SWIFTDROP_FUEL_PRICE_SOURCE ?? "operator-configured");
   const values = [
     fuel, source,
-    Number(process.env.SWIFTDROP_SERVICE_CHARGE_BPS ?? 500),
-    Number(process.env.SWIFTDROP_PROTECTION_RESERVE_BPS ?? 1000),
+    Number(process.env.SWIFTDROP_SERVICE_CHARGE_BPS ?? 1000),
+    Number(process.env.SWIFTDROP_PROTECTION_RESERVE_BPS ?? 500),
     Number(process.env.SWIFTDROP_PERISHABLE_SURCHARGE_BPS ?? 1500),
     Number(process.env.SWIFTDROP_ROLE_CHARGE_BPS ?? 1000)
   ];
@@ -79,7 +79,7 @@ export async function createPricingConfig(input: {
      RETURNING version, fuel_price_minor_per_litre, fuel_source, service_charge_bps, protection_reserve_bps, perishable_surcharge_bps, role_charge_bps, effective_at`,
     [
       input.fuelPriceMinorPerLitre, input.fuelSource.trim(),
-      input.serviceChargeBps ?? 500, input.protectionReserveBps ?? 1000,
+      input.serviceChargeBps ?? 1000, input.protectionReserveBps ?? 500,
       input.perishableSurchargeBps ?? 1500, input.roleChargeBps ?? 1000
     ]
   );
