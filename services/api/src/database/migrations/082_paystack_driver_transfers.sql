@@ -12,14 +12,18 @@ ALTER TABLE payouts
   ADD COLUMN IF NOT EXISTS idempotency_key TEXT,
   ADD COLUMN IF NOT EXISTS provider_transfer_code TEXT,
   ADD COLUMN IF NOT EXISTS requires_admin_approval BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS admin_approved_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS admin_approved_by UUID REFERENCES users(id),
   ADD COLUMN IF NOT EXISTS requested_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 
 UPDATE payouts
-   SET net_amount_minor = amount_minor,
+   SET net_amount_minor = COALESCE(net_amount_minor, amount_minor),
        idempotency_key = COALESCE(idempotency_key, 'legacy-payout-' || id::text),
-       requested_at = COALESCE(requested_at, created_at)
- WHERE net_amount_minor IS NULL OR idempotency_key IS NULL OR requested_at IS NULL;
+       requested_at = COALESCE(requested_at, created_at),
+       requires_admin_approval = (amount_minor > 100000000 AND admin_approved_at IS NULL)
+ WHERE net_amount_minor IS NULL OR idempotency_key IS NULL OR requested_at IS NULL
+    OR (amount_minor > 100000000 AND requires_admin_approval = false AND admin_approved_at IS NULL);
 
 ALTER TABLE payouts
   ALTER COLUMN requested_at SET DEFAULT now(),
