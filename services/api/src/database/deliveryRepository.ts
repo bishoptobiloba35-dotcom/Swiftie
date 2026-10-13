@@ -236,7 +236,7 @@ export type StoredDelivery = {
   pickupInstructions?: string;
   dropoffInstructions?: string;
   status: string;
-  paymentMode: "SENDER_ESCROW" | "RECEIVER_ESCROW";
+  paymentMode: "SENDER_ESCROW" | "RECEIVER_ESCROW" | "PAY_ON_DELIVERY";
   deliveryType: "EXPRESS" | "STANDARD";
   goodsAmountMinor: number;
   receiverUserId?: string;
@@ -286,7 +286,7 @@ function rowToDelivery(row: any): StoredDelivery {
     pickupInstructions: row.pickup_instructions ?? undefined,
     dropoffInstructions: row.dropoff_instructions ?? undefined,
     status: row.status,
-    paymentMode: row.payment_mode === "RECEIVER_ESCROW" ? "RECEIVER_ESCROW" : "SENDER_ESCROW",
+    paymentMode: row.payment_mode === "PAY_ON_DELIVERY" ? "PAY_ON_DELIVERY" : row.payment_mode === "RECEIVER_ESCROW" ? "RECEIVER_ESCROW" : "SENDER_ESCROW",
     deliveryType: row.delivery_type === "STANDARD" ? "STANDARD" : "EXPRESS",
     goodsAmountMinor: Number(row.goods_amount_minor ?? 0),
     receiverUserId: row.receiver_user_id ?? undefined,
@@ -382,10 +382,10 @@ export async function createPersistentDelivery(input: {
   senderDepositAmountMinor?: number;
   deliveryType?: "EXPRESS" | "STANDARD";
   stationId?: string;
-  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ESCROW";
+  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ESCROW" | "PAY_ON_DELIVERY";
   quote?: StoredDelivery["quote"];
 }): Promise<StoredDelivery> {
-  if (input.paymentMode && !["SENDER_ESCROW","RECEIVER_ESCROW"].includes(input.paymentMode)) {
+  if (input.paymentMode && !["SENDER_ESCROW","RECEIVER_ESCROW","PAY_ON_DELIVERY"].includes(input.paymentMode)) {
     throw new Error("Unsupported payment mode.");
   }
   if (!pool) throw new Error("DATABASE_URL is not configured");
