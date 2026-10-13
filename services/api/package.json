@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx src/server.ts",
     "build": "tsc && node scripts/copy-migrations.mjs",
-    "start": "node dist/server.js",
+    "start": "NODE_ENV=production node dist/server.js",
     "test": "tsx --test --test-concurrency=1 src/*.test.ts src/database/*.test.ts",
     "migrate": "tsx src/database/migrateCli.ts"
   },
