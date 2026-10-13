@@ -2261,21 +2261,32 @@ app.post("/api/admin/payouts/:deliveryId/approve", requireAuth("ADMIN"), async (
 
 app.post("/api/admin/payouts/:deliveryId/retry", requireAuth("ADMIN"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Database is not configured" });
-  const payout = await retryFailedPayout(routeParam(req.params.deliveryId, "deliveryId"));
-  if (!payout) return res.status(409).json({ error: "Only failed or reversed payouts can be retried" });
+  const deliveryId = routeParam(req.params.deliveryId, "deliveryId");
+  const previous = await findPayout(deliveryId);
+  if (!previous || !["FAILED", "CANCELLED"].includes(previous.status)) {
+    return res.status(409).json({ error: "Only failed or cancelled payouts can be retried after provider verification." });
+  }
+  const previousProviderReference = previous.providerReference ?? null;
+  const payout = await retryFailedPayout(deliveryId);
+  if (!payout) return res.status(409).json({ error: "Payout changed state; refresh and review before retrying." });
+  const retryMetadata = {
+    amountMinor: payout.amountMinor, currency: payout.currency,
+    previousProviderReference, idempotencyKey: payout.idempotencyKey ?? null
+  };
   await recordDeliveryEvent({
     deliveryId: payout.deliveryId,
     eventType: "PAYOUT_RETRY_REQUESTED",
     actorUserId: identity(req),
-    metadata: { amountMinor: payout.amountMinor, currency: payout.currency }
+    metadata: retryMetadata
   });
   await recordAdminCaseAudit({
     deliveryId: payout.deliveryId,
     adminUserId: identity(req),
     action: "PAYOUT_RETRY_REQUESTED",
-    metadata: { amountMinor: payout.amountMinor, currency: payout.currency }
+    note: "Manual retry after provider status review",
+    metadata: retryMetadata
   });
-  res.json({ payout });
+  res.json({ payout, previousProviderReference });
 });
 
 app.post("/api/admin/deliveries/:id/dispute/resolve", requireAuth("ADMIN"), async (req, res) => {
