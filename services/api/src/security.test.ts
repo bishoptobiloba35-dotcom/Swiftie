@@ -30,7 +30,7 @@ test("hashPin refuses non-four-digit values before deriving a hash", () => {
 
 test("verifyPin rejects non-four-digit values before deriving a hash", () => {
   const stored = hashPin("1234");
-  for (const pin of ["123", "12345", "123456", "12a4", "", " 1234"]) {
+  for (const pin of ["123", "12345", "123456", "12a4", "", " 1234", "1234 "]) {
     assert.equal(verifyPin(pin, stored), false, `should reject ${JSON.stringify(pin)}`);
   }
   assert.equal(verifyPin("1234", stored), true);
