@@ -76,3 +76,33 @@ jobs:
       - name: Bootstrap base PostgreSQL schema
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/src/database/schema.sql
       - run: npm test --workspace=@swiftdrop/api
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm install --global npm@11
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Fail on high or critical dependency vulnerabilities
+        run: npm audit --audit-level=high
+
+  secret-scan:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Scan the pull request or pushed commit diff for secrets
+        uses: trufflesecurity/trufflehog@v3.97.9
+        with:
+          base: ${{ github.event.pull_request.base.sha || github.event.before }}
+          head: ${{ github.event.pull_request.head.sha || github.sha }}
+          extra_args: --results=verified,unverified,unknown --fail --fail-on-scan-errors --exclude-paths=.trufflehog-exclude-paths.txt
