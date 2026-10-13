@@ -262,6 +262,8 @@ export type StoredDelivery = {
     weightFareMinor: number;
     sizeFareMinor: number;
     perishableSurchargeMinor: number;
+    expressSurchargeMinor?: number;
+    fuelSurchargeMinor?: number;
     fuelReferenceMinor?: number;
     protectionReserveMinor?: number;
     pricingVersion?: number;
@@ -310,6 +312,8 @@ function rowToDelivery(row: any): StoredDelivery {
       weightFareMinor: Number(row.quote_weight_fare_minor ?? 0),
       sizeFareMinor: Number(row.quote_size_fare_minor ?? 0),
       perishableSurchargeMinor: Number(row.quote_perishable_surcharge_minor ?? 0),
+      expressSurchargeMinor: Number(row.quote_express_surcharge_minor ?? 0),
+      fuelSurchargeMinor: Number(row.quote_fuel_surcharge_minor ?? 0),
       fuelReferenceMinor: Number(row.quote_fuel_reference_minor ?? row.quote_base_fare_minor ?? 0),
       protectionReserveMinor: Number(row.quote_protection_reserve_minor ?? 0),
       pricingVersion: Number(row.quote_pricing_version ?? 0),
@@ -393,8 +397,8 @@ export async function createPersistentDelivery(input: {
        payment_mode, delivery_type, goods_amount_minor, receiver_user_id, sender_deposit_amount_minor, station_id, pickup_address, pickup_lat, pickup_lng, pickup_instructions, dropoff_address, dropoff_lat, dropoff_lng, dropoff_instructions, status, receiver_pin_hash,
        weight_kg, length_cm, width_cm, height_cm, is_perishable, declared_value_minor,
        proof_requirements, quote_distance_meters, quote_duration_seconds, quote_base_fare_minor,
-       quote_distance_fare_minor, quote_weight_fare_minor, quote_size_fare_minor, quote_perishable_surcharge_minor, quote_fuel_reference_minor, quote_protection_reserve_minor, quote_pricing_version, quote_service_fee_minor, quote_total_minor, quote_currency)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'CREATED',$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40)
+       quote_distance_fare_minor, quote_weight_fare_minor, quote_size_fare_minor, quote_perishable_surcharge_minor, quote_fuel_reference_minor, quote_protection_reserve_minor, quote_pricing_version, quote_service_fee_minor, quote_total_minor, quote_currency, quote_express_surcharge_minor, quote_fuel_surcharge_minor)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'CREATED',$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42)
      RETURNING *`,
     [id, code, input.senderId, input.receiverName, input.receiverPhone, input.paymentMode ?? "SENDER_ESCROW", input.deliveryType ?? "EXPRESS", input.goodsAmountMinor ?? 0, input.receiverUserId ?? null, input.senderDepositAmountMinor ?? 0, input.stationId ?? null,
       input.pickup.formattedAddress, input.pickup.location.latitude, input.pickup.location.longitude, input.pickupInstructions?.trim() || null,
@@ -402,10 +406,10 @@ export async function createPersistentDelivery(input: {
       hashPin(input.receiverPin), input.weightKg ?? null, input.dimensionsCm?.length ?? null, input.dimensionsCm?.width ?? null, input.dimensionsCm?.height ?? null, input.isPerishable ?? false, input.declaredValueMinor,
       JSON.stringify(proofRequirementsForDeclaredValue(input.declaredValueMinor, input.isPerishable ?? false)),
       input.quote?.distanceMeters ?? null, input.quote?.durationSeconds ?? null,
-      input.quote?.baseFareMinor ?? null, input.quote?.distanceFareMinor ?? null,
-      input.quote?.weightFareMinor ?? null, input.quote?.sizeFareMinor ?? null, input.quote?.perishableSurchargeMinor ?? null,
-      input.quote?.fuelReferenceMinor ?? null, input.quote?.protectionReserveMinor ?? null, input.quote?.pricingVersion ?? null,
-      input.quote?.serviceFeeMinor ?? null, input.quote?.totalMinor ?? null, input.quote?.currency ?? "NGN"]
+      input.quote?.baseFareMinor ?? 0, input.quote?.distanceFareMinor ?? 0,
+      input.quote?.weightFareMinor ?? 0, input.quote?.sizeFareMinor ?? 0, input.quote?.perishableSurchargeMinor ?? 0,
+      input.quote?.fuelReferenceMinor ?? 0, input.quote?.protectionReserveMinor ?? 0, input.quote?.pricingVersion ?? null,
+      input.quote?.serviceFeeMinor ?? 0, input.quote?.totalMinor ?? null, input.quote?.currency ?? "NGN", input.quote?.expressSurchargeMinor ?? 0, input.quote?.fuelSurchargeMinor ?? 0]
   );
   return rowToDelivery(result.rows[0]);
 }
