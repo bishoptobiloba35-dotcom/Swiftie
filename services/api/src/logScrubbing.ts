@@ -10,7 +10,7 @@ export function redactSensitiveLogText(value: string): string {
   return value
     .replace(/\b(?:\d[ -]?){15}\d\b/g, "[REDACTED_CARD_NUMBER]")
     .replace(/\b\d{10}\b/g, "[REDACTED_BANK_ACCOUNT]")
-    .replace(/\b(?:sk_live_|pk_live_|sk_test_)[A-Za-z0-9_-]*\b/g, "[REDACTED_API_KEY]")
+    .replace(/\b(?:sk|pk)[_-]?(?:live|test)[_-][A-Za-z0-9_-]*\b/gi, "[REDACTED_API_KEY]")
     .replace(/\bBearer\s+[^\s,;"']+/gi, "Bearer [REDACTED_TOKEN]")
     .replace(/(?<!\d)\d{4}(?!\d)/g, "[REDACTED_PIN]");
 }
