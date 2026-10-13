@@ -305,7 +305,7 @@ app.post("/api/deliveries/:id/rating", requireAuth(), async (req, res) => {
 app.post("/api/deliveries/:id/rating/receiver", async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Receiver ratings require the production database" });
   const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
-  const receiverPin = String(req.body?.receiverPin ?? "").trim();
+  const receiverPin = String(req.body?.receiverPin ?? "");
   const parsed = z.object({ stars: z.number().int().min(1).max(5), comment: z.string().max(500).optional() }).safeParse(req.body);
   if (!receiverPhone || !/^\d{4}$/.test(receiverPin) || !parsed.success) return res.status(400).json({ error: "Receiver phone, 4-digit PIN, rating and optional comment are required" });
   const delivery = await findByTrackingCode(String(routeParam(req.params.id, "id")).trim().toUpperCase()).catch(() => null) ?? await findDelivery(routeParam(req.params.id, "id"));
@@ -1545,7 +1545,7 @@ app.post("/api/deliveries/:id/dispute", requireAuth("CUSTOMER", "DRIVER"), async
 app.post("/api/track/:trackingCode/dispute", async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Receiver disputes require the production database" });
   const receiverPhone = String(req.body?.receiverPhone ?? "").trim();
-  const receiverPin = String(req.body?.receiverPin ?? "").trim();
+  const receiverPin = String(req.body?.receiverPin ?? "");
   const reason = String(req.body?.reason ?? "").trim();
   const description = String(req.body?.description ?? "").trim();
   if (!receiverPhone || !/^\d{4}$/.test(receiverPin) || !reason) {
