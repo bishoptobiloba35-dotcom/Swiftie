@@ -18,7 +18,8 @@ export type SwiftDropFeature =
   | "EV_DISCOUNT"
   | "HIGH_RISK_ZONES"
   | "SEPARATE_INSURANCE"
-  | "AGENT_ROLE";
+  | "AGENT_ROLE"
+  | "POD";
 
 const envName = (feature: SwiftDropFeature): string =>
   "SWIFTDROP_ENABLE_" + feature;
@@ -29,6 +30,11 @@ const legalGateForFeature: Partial<Record<SwiftDropFeature, LegalGate>> = {
 };
 
 export function featureEnabled(feature: SwiftDropFeature): boolean {
+  // Digital POD is on by default (product rule). Set SWIFTDROP_ENABLE_POD=false to disable.
+  if (feature === "POD") {
+    if (process.env[envName(feature)] === "false") return false;
+    return true;
+  }
   if (process.env[envName(feature)] !== "true") return false;
   const gate = legalGateForFeature[feature];
   return gate ? legalGateEnabled(gate) : true;

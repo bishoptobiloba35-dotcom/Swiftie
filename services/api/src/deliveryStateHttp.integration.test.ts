@@ -50,6 +50,7 @@ test("delivery transition routes enforce the production state machine at the HTT
       API_PORT: String(API_PORT),
       JWT_SECRET: TEST_JWT_SECRET,
       SWIFTDROP_ENABLE_RECEIVER_ESCROW: "true",
+      SWIFTDROP_ENABLE_POD: "false",
       SWIFTDROP_LEGAL_GATE_LICENSED_ESCROW_PARTNER: "false",
       SWIFTDROP_ENABLE_STANDARD_DELIVERY: "true",
       SWIFTDROP_LEGAL_GATE_STATION_AGENT_LIABILITY: "false"

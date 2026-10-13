@@ -22,6 +22,8 @@ export type ApiDelivery = {
     weightFareMinor: number;
     sizeFareMinor: number;
     perishableSurchargeMinor: number;
+    expressSurchargeMinor?: number;
+    fuelSurchargeMinor?: number;
     fuelReferenceMinor: number;
     protectionReserveMinor: number;
     pricingVersion: number;
@@ -29,7 +31,7 @@ export type ApiDelivery = {
     totalMinor: number;
   };
   status: string;
-  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ESCROW";
+  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ESCROW" | "PAY_ON_DELIVERY";
   deliveryType?: "EXPRESS" | "STANDARD";
   goodsAmountMinor?: number;
   senderDepositAmountMinor?: number;
@@ -61,7 +63,7 @@ export type ApiDelivery = {
 
 export type CreateDeliveryInput = {
   senderId?: string;
-  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ESCROW";
+  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ESCROW" | "PAY_ON_DELIVERY";
   deliveryType?: "EXPRESS" | "STANDARD";
   goodsAmountMinor?: number;
   receiverPin?: string;
@@ -521,7 +523,7 @@ export class SwiftDropApi {
   }): Promise<{
     currency: string; distanceMeters: number; durationSeconds: number;
     baseFareMinor: number; distanceFareMinor: number; weightFareMinor: number; sizeFareMinor: number;
-    perishableSurchargeMinor: number; fuelReferenceMinor: number; protectionReserveMinor: number; pricingVersion: number; serviceFeeMinor: number; totalMinor: number;
+    perishableSurchargeMinor: number; expressSurchargeMinor: number; fuelSurchargeMinor: number; fuelReferenceMinor: number; protectionReserveMinor: number; pricingVersion: number; serviceFeeMinor: number; totalMinor: number;
   }> {
     const response = await fetch(this.baseUrl + "/api/quotes", {
       method: "POST",
