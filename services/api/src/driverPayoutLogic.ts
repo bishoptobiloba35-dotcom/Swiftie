@@ -30,5 +30,5 @@ export function shouldReuseInFlightPayout(status: string, providerReference?: st
 }
 
 export function isDuplicatePaystackReferenceError(message: string, code?: string): boolean {
-  return /duplicate|already exists|reference.*used/i.test(message + " " + (code ?? ""));
+  return /duplicate|already exists|reference.*(used|unique|exist)|unique.*reference/i.test(message + " " + (code ?? ""));
 }
