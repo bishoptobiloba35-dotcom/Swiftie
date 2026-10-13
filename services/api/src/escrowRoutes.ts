@@ -57,12 +57,13 @@ router.post("/escrow/create", requireAuth(), async (req, res) => {
   try{
     await client.query("BEGIN");
     const order=(await client.query(
-      "SELECT id,sender_id AS customer_id,merchant_user_id,payment_on_delivery,quote_total_minor,quote_base_fare_minor,quote_service_fee_minor,quote_protection_reserve_minor FROM deliveries WHERE id=$1 FOR UPDATE",
+      "SELECT id,sender_id AS customer_id,merchant_user_id,payment_mode,payment_on_delivery,quote_total_minor,quote_base_fare_minor,quote_service_fee_minor,quote_protection_reserve_minor FROM deliveries WHERE id=$1 FOR UPDATE",
       [parsed.data.orderId]
     )).rows[0];
     if(!order){ await client.query("ROLLBACK"); return res.status(404).json({error:"Order not found"}); }
     if(order.customer_id!==userId){ await client.query("ROLLBACK"); return res.status(403).json({error:"Order access denied"}); }
     if(order.payment_on_delivery===true){ await client.query("ROLLBACK"); return res.status(409).json({error:"Cash-on-delivery is disabled"}); }
+    if(order.payment_mode==="PAY_ON_DELIVERY"){ await client.query("ROLLBACK"); return res.status(409).json({error:"Digital Pay-on-Delivery must use the receiver payment checkout; sender escrow cannot be created for this order"}); }
     const existing=(await client.query("SELECT * FROM escrow_ledgers WHERE order_id=$1 FOR UPDATE",[order.id])).rows[0];
     if(existing){ await client.query("COMMIT"); return res.status(200).json({escrow:existing}); }
     const totalPaidMinor=Number(order.quote_total_minor ?? 0);
