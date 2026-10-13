@@ -38,6 +38,7 @@ import { processPhase2EscrowReleases, reconcilePhase2Float } from "./phase2Escro
 import escrowRoutes, { reconcileProcessingWalletPayouts, requeryPendingDvaAccounts, reconcilePendingEscrowProviderPayments } from "./escrowRoutes.js";
 import { featureEnabled } from "./featureFlags.js";
 import { generateReceiverPin, hashPin } from "./security.js";
+import { processDriverPayoutTransferEvent } from "./driverPayoutWebhook.js";
 
 const app = express();
 
@@ -1275,9 +1276,18 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
           await pool!.query("UPDATE drop_off_commission_ledger SET status=$2,provider_status=$3,paid_at=CASE WHEN $2='PAID' THEN now() ELSE paid_at END,updated_at=now() WHERE id=$1",[commission.id,next,String(event.event)]);
         }
       }
-      const status = event.event === "transfer.success" ? "RELEASED" : event.event === "transfer.failed" ? "FAILED" : "CANCELLED";
-      const payout = await updatePayoutProviderStatus(reference,status,failureReason,Number(event?.data?.amount),String(event?.data?.currency ?? ""));
-      if(payout) await recordDeliveryEvent({deliveryId:payout.deliveryId,eventType:"PAYOUT_"+status,metadata:{provider:"paystack",reference}});
+      const driverPayoutHandled = await processDriverPayoutTransferEvent({
+        reference,
+        eventType: event.event,
+        amountMinor: providerAmount,
+        currency: providerCurrency,
+        failureReason
+      });
+      if (!driverPayoutHandled) {
+        const status = event.event === "transfer.success" ? "RELEASED" : event.event === "transfer.failed" ? "FAILED" : "CANCELLED";
+        const payout = await updatePayoutProviderStatus(reference,status,failureReason,providerAmount,providerCurrency);
+        if(payout) await recordDeliveryEvent({deliveryId:payout.deliveryId,eventType:"PAYOUT_"+status,metadata:{provider:"paystack",reference}});
+      }
       const walletClient=await pool!.connect();
       try{
         await walletClient.query("BEGIN");
