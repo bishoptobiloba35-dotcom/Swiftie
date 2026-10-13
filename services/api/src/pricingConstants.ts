@@ -53,3 +53,21 @@ export function courierShareFromFeeMinor(deliveryFeeMinor: number): number {
   if (!Number.isSafeInteger(deliveryFeeMinor) || deliveryFeeMinor < 0) throw new Error("deliveryFeeMinor must be a non-negative integer");
   return Math.floor(deliveryFeeMinor * COURIER_SHARE_BPS / 10_000);
 }
+
+/**
+ * Preserve the legacy payout basis for historical deliveries. V2 pays the
+ * configured share of the full delivery fee; legacy orders keep their prior
+ * base-fare-only split. An explicit operator override applies to both versions.
+ */
+export function courierShareForOrder(input: {
+  pricingVersion: string | null | undefined;
+  deliveryFeeMinor: number;
+  baseFareMinor: number;
+  configuredPercent?: number;
+}): number {
+  const percent = input.configuredPercent ?? (input.pricingVersion === PRICING_VERSION ? COURIER_SHARE_BPS / 100 : 75);
+  if (!Number.isFinite(percent) || percent <= 0 || percent > 100) throw new Error("Invalid courier payout percent");
+  const feeBasis = input.pricingVersion === PRICING_VERSION ? input.deliveryFeeMinor : input.baseFareMinor;
+  if (!Number.isSafeInteger(feeBasis) || feeBasis < 0) throw new Error("Invalid delivery fee for courier share");
+  return Math.floor(feeBasis * Math.round(percent * 100) / 10_000);
+}
