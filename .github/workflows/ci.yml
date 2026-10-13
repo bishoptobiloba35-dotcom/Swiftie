@@ -127,7 +127,9 @@ jobs:
           git -C "$probe_dir" config user.email "ci@example.invalid"
           git -C "$probe_dir" config user.name "SwiftDrop CI"
           key_prefix="sk_live_"
-          key_suffix="51N0tARealStripeKey0123456789ABCDEfghijkl"
+          key_suffix_part_a="51N0tARealStripeKey"
+          key_suffix_part_b="0123456789ABCDEfghijkl"
+          key_suffix="${key_suffix_part_a}${key_suffix_part_b}"
           printf '// Synthetic scanner-only probe; never a real credential.\n// %s%s\n' "$key_prefix" "$key_suffix" > "$probe_dir/probe.ts"
           git -C "$probe_dir" add probe.ts
           git -C "$probe_dir" commit -qm "synthetic secret scanner probe"
