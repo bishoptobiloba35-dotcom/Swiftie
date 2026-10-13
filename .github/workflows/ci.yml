@@ -88,8 +88,18 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm install --global npm@11
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Fail on high or critical dependency vulnerabilities
-        run: npm audit --audit-level=high
+      - name: Run npm audit and enforce documented exceptions
+        continue-on-error: false
+        shell: bash
+        run: |
+          set +e
+          npm audit --audit-level=high --json > npm-audit.json
+          audit_status=$?
+          set -e
+          node scripts/check-npm-audit.mjs npm-audit.json SECURITY_EXCEPTIONS.md
+          if [ "$audit_status" -ne 0 ]; then
+            echo "npm audit returned $audit_status; the exception checker rejected any high/critical finding not covered by the reviewed exception list."
+          fi
 
   secret-scan:
     if: github.event_name == 'pull_request' || github.event_name == 'push'
