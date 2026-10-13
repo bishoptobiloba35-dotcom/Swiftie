@@ -12,7 +12,8 @@ ALTER TABLE deliveries
   CHECK (payment_mode IN (
     'SENDER_ESCROW',
     'RECEIVER_ESCROW',
-    'PAY_ON_DELIVERY'
+    'PAY_ON_DELIVERY',
+    'RECEIVER_ON_DELIVERY' -- legacy-only label; API never permits new cash orders
   ));
 
 ALTER TABLE payments
@@ -63,7 +64,7 @@ CREATE INDEX IF NOT EXISTS idx_deliveries_pod_pending
   WHERE payment_mode = 'PAY_ON_DELIVERY' AND receiver_payment_pending = true;
 
 COMMENT ON COLUMN deliveries.payment_mode IS
-  'SENDER_ESCROW | RECEIVER_ESCROW | PAY_ON_DELIVERY (digital only). Cash is never permitted.';
+  'SENDER_ESCROW | RECEIVER_ESCROW | PAY_ON_DELIVERY (digital only). RECEIVER_ON_DELIVERY is retained only for legacy historical rows; new cash orders are forbidden.';
 COMMENT ON COLUMN deliveries.pod_verified_at IS
   'Set only by verified Paystack webhook when PAY_ON_DELIVERY payment succeeds.';
 COMMENT ON COLUMN deliveries.receiver_payment_pending IS
