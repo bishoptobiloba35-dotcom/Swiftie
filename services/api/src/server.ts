@@ -9,7 +9,7 @@ import { getLatestLocation, recordLocation } from "./trackingStore.js";
 import { validateLocationEvent } from "./tracking.js";
 import { databaseEnabled, createPersistentDelivery, findDelivery, findDeliveryForUser, findByTrackingCode, listOpenJobs, transitionDelivery, savePickupPhoto, verifyReceiverPin, completeDelivery, recordPersistentLocation, latestPersistentLocation, driverForUser, recordDeliveryEvent, listDeliveryEvents, listDeliveryProofs, saveDeliveryProof, hasRequiredDropoffProofs, findPayment, createPayment, updatePaymentStatus, markPaymentRefund, confirmReceiverAndReleaseEscrow, confirmReceiverPaymentDue, settleReceiverPaymentAndReleasePayout, reservePaymentInitialization, savePaymentCheckoutSession, findPayoutByProviderReference, claimPaystackWebhookEvent,
   finalizePaystackWebhookEvent, retryFailedPayout, flagPayoutReconciliationMismatch } from "./database/deliveryRepository.js";
-import { pool, pingDatabase } from "./database/db.js";
+import { pool, pingDatabase, assertRlsCompatibleDatabaseRole } from "./database/db.js";
 import { runMigrations } from "./database/migrate.js";
 import { assignNextDeliveryToDriver, setDriverOnline, createEligiblePayout, findPayout, cancelEligiblePayoutForRefund, createDispute, createReceiverDispute, findDispute, resolveDispute, createSupportTicket, listSupportTickets, resolveSupportTicket, getDriverPayoutAccount, saveDriverPayoutAccount, setPayoutProcessing, setPayoutProviderReference, markPayoutFailed, markPayoutReleased, updatePayoutProviderStatus, recordAdminCaseAudit, listAdminCaseAudit, markDisputeUnderReview, listSupportTicketMessages, recordAdminSupportReply, prepareRefund, recoverCourierEscrowPayout, releaseDisputeAndCreatePayout } from "./database/deliveryRepository.js";
 import { requireAuth } from "./authMiddleware.js";
@@ -2879,6 +2879,7 @@ async function startServer() {
   validateProductionConfig();
   if (databaseEnabled()) {
     await runMigrations();
+    await assertRlsCompatibleDatabaseRole();
     void processNotificationOutbox().catch(() => {});
     void processNotificationPushReceipts().catch(() => {});
     void reconcileProcessingPaystackPayouts().catch(() => {});
