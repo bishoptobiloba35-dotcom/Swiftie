@@ -565,7 +565,7 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
         const verified = await verify.json() as { status?: boolean; data?: { reference?: string; status?: string; amount?: number; currency?: string; transfer_code?: string } };
         if (verify.ok && verified.status && verified.data?.reference === reference) {
           await setPayoutProviderTransferCode(reference, String(verified.data.transfer_code ?? ""));
-          if (verified.data.status === "success" && Number(verified.data.amount) === processing.amountMinor && verified.data.currency === "NGN") {
+          if (verified.data.status === "success" && Number(verified.data.amount) === (processing.netAmountMinor ?? processing.amountMinor - feeMinor) && verified.data.currency === "NGN") {
             await updatePayoutProviderStatus(reference, "RELEASED", null, Number(verified.data.amount), "NGN");
           }
           const current = await findPayout(deliveryId);
@@ -2944,7 +2944,7 @@ async function reconcileProcessingPaystackPayouts(): Promise<void> {
   if (!secret) return;
 
   const result = await pool!.query(
-    `SELECT id, delivery_id, provider_reference, amount_minor, currency
+    `SELECT id, delivery_id, provider_reference, COALESCE(net_amount_minor, amount_minor) AS amount_minor, currency
        FROM payouts
       WHERE status='PROCESSING'
         AND provider='paystack'
