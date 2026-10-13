@@ -42,7 +42,7 @@ export default function Phase1Home({ delivery, notifications, setHomeSection, op
       setMerchantStatus(value.merchantStatus ?? "NOT_REQUESTED");
       void AsyncStorage.setItem("swiftdrop.mode", value.mode.toLowerCase());
     }).catch(() => undefined);
-  }, [loadAccountMode]);
+  }, []);
 
   const saveAppearance = async (value: Appearance) => {
     setAppearance(value);
@@ -55,6 +55,7 @@ export default function Phase1Home({ delivery, notifications, setHomeSection, op
       await switchAccountMode(value.toUpperCase() as ServerMode);
       setMode(value);
       await AsyncStorage.setItem("swiftdrop.mode", value);
+      setHomeSection(value === "merchant" ? "SHOP" : "HOME");
     } catch (error) {
       setModeError(error instanceof Error ? error.message : "Unable to switch account mode");
     } finally {
