@@ -45,15 +45,19 @@ export async function reconcileDriverTransfersDaily(options: { force?: boolean }
     page += 1;
   } while (page <= pageCount && page <= 50);
 
-  const localRows = (await pool.query(
-    "SELECT id,provider_reference,status,amount_minor,net_amount_minor,currency FROM payouts WHERE status IN ('PENDING','PROCESSING') ORDER BY requested_at"
+  // This endpoint lists all Paystack transfers, including merchant and agent flows.
+  // Only the driver-transfer reference namespace belongs to this reconciliation.
+  const driverTransfers = transfers.filter(t => t.reference && String(t.reference).startsWith("payout-"));
+  const allLocalRows = (await pool.query(
+    "SELECT id,provider_reference,status,amount_minor,net_amount_minor,currency FROM payouts WHERE provider_reference IS NOT NULL AND requested_at >= now()-interval '25 hours'"
   )).rows;
-  const transferByReference = new Map(transfers.filter(t => t.reference).map(t => [String(t.reference), t]));
+  const localRows = allLocalRows.filter(row => row.status === "PENDING" || row.status === "PROCESSING");
+  const transferByReference = new Map(driverTransfers.filter(t => t.reference).map(t => [String(t.reference), t]));
   const mismatches: Array<Record<string, unknown>> = [];
 
-  for (const transfer of transfers) {
+  for (const transfer of driverTransfers) {
     if (!transfer.reference) continue;
-    const local = localRows.find(row => row.provider_reference === transfer.reference);
+    const local = allLocalRows.find(row => row.provider_reference === transfer.reference);
     if (!local) {
       mismatches.push({ reference: transfer.reference, reason: "provider_transfer_without_local_payout", providerStatus: transfer.status });
       continue;
@@ -81,7 +85,7 @@ export async function reconcileDriverTransfersDaily(options: { force?: boolean }
 
   await pool.query(
     "INSERT INTO reconciliation_runs(provider,paystack_count,local_count,mismatches_found,mismatches_details) VALUES('paystack',$1,$2,$3,$4::jsonb)",
-    [transfers.length, localRows.length, mismatches.length, JSON.stringify(mismatches)]
+    [driverTransfers.length, localRows.length, mismatches.length, JSON.stringify(mismatches)]
   );
   if (mismatches.length) {
     await pool.query(
@@ -89,5 +93,5 @@ export async function reconcileDriverTransfersDaily(options: { force?: boolean }
       [mismatches.length + " payout reconciliation mismatch(es) were found. Review the reconciliation run before taking manual action."]
     );
   }
-  return { skipped: false, paystackCount: transfers.length, localCount: localRows.length, mismatches: mismatches.length };
+  return { skipped: false, paystackCount: driverTransfers.length, localCount: localRows.length, mismatches: mismatches.length };
 }
