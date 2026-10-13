@@ -49,7 +49,7 @@ export async function reconcileDriverTransfersDaily(options: { force?: boolean }
   // Only the driver-transfer reference namespace belongs to this reconciliation.
   const driverTransfers = transfers.filter(t => t.reference && String(t.reference).startsWith("payout-"));
   const allLocalRows = (await pool.query(
-    "SELECT id,provider_reference,status,amount_minor,net_amount_minor,currency FROM payouts WHERE provider_reference IS NOT NULL AND requested_at >= now()-interval '25 hours'"
+    "SELECT id,provider_reference,status,amount_minor,net_amount_minor,currency FROM payouts WHERE status IN ('PENDING','PROCESSING') OR (provider_reference IS NOT NULL AND requested_at >= now()-interval '25 hours')"
   )).rows;
   const localRows = allLocalRows.filter(row => row.status === "PENDING" || row.status === "PROCESSING");
   const transferByReference = new Map(driverTransfers.filter(t => t.reference).map(t => [String(t.reference), t]));
