@@ -75,6 +75,7 @@ const migrations = [
   { id: "077_mvp_v12_delivery_types", file: "077_mvp_v12_delivery_types.sql" },
   { id: "079_pricing_v2_constants", file: "079_pricing_v2_constants.sql" },
   { id: "080_escrow_payment_attempts_contract", file: "080_escrow_payment_attempts_contract.sql" },
+  { id: "081_rls_authorization_boundaries", file: "081_rls_authorization_boundaries.sql" },
 ];
 
 export async function runMigrations(): Promise<void> {
