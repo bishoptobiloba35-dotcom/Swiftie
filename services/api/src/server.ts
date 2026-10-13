@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
 import path from "node:path";
-import { createHash, createHmac, randomUUID, timingSafeEqual, randomInt } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { attachRealtime, publishDeliveryLocation, publishDeliveryUpdate, issueTrackingToken } from "./realtime.js";
 import { getLatestLocation, recordLocation } from "./trackingStore.js";
@@ -37,6 +37,7 @@ import { reportExternalError } from "./errorTracking.js";
 import { processPhase2EscrowReleases, reconcilePhase2Float } from "./phase2EscrowWorker.js";
 import escrowRoutes, { reconcileProcessingWalletPayouts, requeryPendingDvaAccounts, reconcilePendingEscrowProviderPayments } from "./escrowRoutes.js";
 import { featureEnabled } from "./featureFlags.js";
+import { generateReceiverPin } from "./security.js";
 
 const app = express();
 
@@ -618,7 +619,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
   if (quote.currency !== "NGN" || !Number.isSafeInteger(quote.totalMinor) || quote.totalMinor < MINIMUM_ORDER_MINOR) {
     return res.status(500).json({ error: "Unable to calculate delivery quote" });
   }
-  const serverPin = String(randomInt(0, 10000)).padStart(4, "0");
+  const serverPin = generateReceiverPin();
   const effectiveQuote = parsed.data.paymentMode === "RECEIVER_ESCROW"
     ? { ...quote, protectionReserveMinor: 0, totalMinor: quote.totalMinor - quote.protectionReserveMinor }
     : quote;
