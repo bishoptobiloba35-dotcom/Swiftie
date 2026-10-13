@@ -742,7 +742,7 @@ app.post("/api/deliveries/:id/payment/initialize", requireAuth("CUSTOMER"), asyn
 app.post("/api/deliveries/:id/receiver-payment/initialize", requireAuth("CUSTOMER"), async (req, res) => {
   const podOn = featureEnabled("POD");
   const receiverEscrowOn = featureEnabled("RECEIVER_ESCROW");
-  if (!podOn && !receiverEscrowOn) return res.status(403).json({ error: "Receiver payment is not enabled" });
+  if (!podOn && !receiverEscrowOn) return res.status(403).json({ error: "Receiver escrow is not enabled" });
   if (!databaseEnabled()) return res.status(503).json({ error: "Payments require the production database" });
   const userId = identity(req);
   const delivery = await findDelivery(routeParam(req.params.id, "id"));
