@@ -145,8 +145,6 @@ CREATE TABLE IF NOT EXISTS payouts (
   admin_approved_by UUID REFERENCES users(id),
   requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   completed_at TIMESTAMPTZ,
-  admin_approved_by UUID REFERENCES users(id),
-  admin_approved_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
