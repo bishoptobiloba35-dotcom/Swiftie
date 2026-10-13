@@ -26,18 +26,22 @@ Required production API configuration:
 
 Additional variables used by existing API features may include `API_PORT`, `PAYMENT_WEBHOOK_SECRET`, `TERMII_API_KEY`, `TERMII_BASE_URL`, `TERMII_SENDER_ID`, and `DRIVER_PAYOUT_PERCENT`. Confirm each provider adapter's exact variable names before launch. The generic `SMS_PROVIDER_API_KEY` must not be assumed to configure Termii until the adapter is explicitly wired to it.
 
-GitHub Actions secrets/configuration required by the deployment workflows:
+GitHub Actions configuration required by the deployment workflows (configure these in the matching GitHub Environment):
+
+**Secrets**
 - `RAILWAY_TOKEN`
+- `STAGING_DATABASE_URL`
+- `PRODUCTION_DATABASE_URL`
+- `SLACK_WEBHOOK_URL` (optional; deployment continues without Slack, but the workflow emits a warning)
+
+**Environment variables** (non-sensitive identifiers and public base URLs)
 - `RAILWAY_PROJECT_ID`
 - `RAILWAY_STAGING_SERVICE_ID`
 - `RAILWAY_PRODUCTION_SERVICE_ID`
-- `STAGING_DATABASE_URL`
-- `PRODUCTION_DATABASE_URL`
 - `STAGING_API_URL`
 - `PRODUCTION_API_URL`
-- `SLACK_WEBHOOK_URL`
 
-Keep staging and production database URLs, API URLs, and Railway service IDs separate. Use GitHub Environments with required reviewers for production secrets and manual approvals.
+The staging workflow performs a preflight check and reports all missing required staging values before it attempts migrations. Keep staging and production database URLs, API URLs, and Railway service IDs separate. Use GitHub Environments with required reviewers for production secrets and manual approvals. Never put database URLs or tokens in Actions variables.
 
 ## Migration policy
 
@@ -53,7 +57,7 @@ Keep staging and production database URLs, API URLs, and Railway service IDs sep
 1. A push to `main` must pass every job in `SwiftDrop CI`.
 2. The staging workflow checks out that exact CI commit, installs locked dependencies, applies registered migrations to the staging database, and verifies `schema_migrations`.
 3. It deploys the API to the Railway staging service.
-4. It requests `/health` with a 30-second curl timeout and publishes status plus commit SHA to Slack.
+4. It requests `/health` and `/ready` with a 30-second curl timeout and checks that both report healthy database connectivity. It publishes status plus commit SHA to Slack when `SLACK_WEBHOOK_URL` is configured; otherwise the optional notification is skipped with a warning.
 5. Confirm the reported health payload and inspect the migration version table in Supabase before promoting.
 
 ## Production release
