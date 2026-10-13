@@ -174,7 +174,7 @@ test("Paystack payout webhook route reconciles success, failure and reversal wit
       `SELECT status,provider_status FROM payouts WHERE id=$1`,
       [reversed.payoutId]
     )).rows[0];
-    assert.equal(reversedState.status, "CANCELLED");
+    assert.equal(reversedState.status, "REVERSED");
     assert.equal(reversedState.provider_status, "reversed");
 
     const duplicateReversedResponse = await postPaystackWebhook({
@@ -186,7 +186,7 @@ test("Paystack payout webhook route reconciles success, failure and reversal wit
       `SELECT status,provider_status,amount_minor,currency FROM payouts WHERE id=$1`,
       [reversed.payoutId]
     )).rows[0];
-    assert.equal(duplicateReversedState.status, "CANCELLED");
+    assert.equal(duplicateReversedState.status, "REVERSED");
     assert.equal(duplicateReversedState.provider_status, "reversed");
     assert.equal(Number(duplicateReversedState.amount_minor), 70000);
     assert.equal(duplicateReversedState.currency, "NGN");
