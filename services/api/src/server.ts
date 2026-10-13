@@ -540,6 +540,13 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
     await pool!.query("UPDATE payouts SET requires_admin_approval=true WHERE id=$1 AND status='ELIGIBLE' AND admin_approved_at IS NULL", [payout.id]);
     return res.status(409).json({ error: "Payouts above ₦1,000,000 require explicit admin approval before transfer." });
   }
+  const activePayout = await pool!.query(
+    "SELECT id FROM payouts WHERE driver_id=$1 AND status='PROCESSING' AND id<>$2 LIMIT 1",
+    [driver.id, payout.id]
+  );
+  if (activePayout.rowCount) return res.status(409).json({ error: "Another payout is already processing for this driver." });
+  // The eligible delivery-linked payout row is the server-authoritative available
+  // earnings balance in this codebase; the client cannot supply or override amount.
   const account = await getDriverPayoutAccount(driver.id);
   if (!account || !account.recipientVerified) return res.status(409).json({ error: "Add and verify a payout bank account before withdrawing." });
 
