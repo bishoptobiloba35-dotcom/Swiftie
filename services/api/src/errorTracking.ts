@@ -1,3 +1,5 @@
+import { redactSensitiveLogText } from "./logScrubbing.js";
+
 export type ExternalErrorEvent = {
   event: "swiftdrop.api.error";
   requestId?: string;
@@ -35,7 +37,7 @@ export function buildExternalErrorEvent(input: {
     path: input.path,
     status: input.status,
     errorType: error.name || "Error",
-    message: error.message.slice(0, 1000),
+    message: redactSensitiveLogText(error.message).slice(0, 1000),
     timestamp: input.timestamp ?? new Date().toISOString()
   };
 }
