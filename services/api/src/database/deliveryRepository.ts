@@ -406,10 +406,10 @@ export async function createPersistentDelivery(input: {
       hashPin(input.receiverPin), input.weightKg ?? null, input.dimensionsCm?.length ?? null, input.dimensionsCm?.width ?? null, input.dimensionsCm?.height ?? null, input.isPerishable ?? false, input.declaredValueMinor,
       JSON.stringify(proofRequirementsForDeclaredValue(input.declaredValueMinor, input.isPerishable ?? false)),
       input.quote?.distanceMeters ?? null, input.quote?.durationSeconds ?? null,
-      input.quote?.baseFareMinor ?? null, input.quote?.distanceFareMinor ?? null,
+      input.quote?.baseFareMinor ?? 0, input.quote?.distanceFareMinor ?? 0,
       input.quote?.weightFareMinor ?? 0, input.quote?.sizeFareMinor ?? 0, input.quote?.perishableSurchargeMinor ?? 0,
-      input.quote?.fuelReferenceMinor ?? null, input.quote?.protectionReserveMinor ?? null, input.quote?.pricingVersion ?? null,
-      input.quote?.serviceFeeMinor ?? null, input.quote?.totalMinor ?? null, input.quote?.currency ?? "NGN", input.quote?.expressSurchargeMinor ?? 0, input.quote?.fuelSurchargeMinor ?? 0]
+      input.quote?.fuelReferenceMinor ?? 0, input.quote?.protectionReserveMinor ?? 0, input.quote?.pricingVersion ?? null,
+      input.quote?.serviceFeeMinor ?? 0, input.quote?.totalMinor ?? null, input.quote?.currency ?? "NGN", input.quote?.expressSurchargeMinor ?? 0, input.quote?.fuelSurchargeMinor ?? 0]
   );
   return rowToDelivery(result.rows[0]);
 }
