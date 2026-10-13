@@ -147,7 +147,7 @@ test("Paystack payout webhook route reconciles success, failure and reversal wit
     )).rows[0];
     assert.equal(failedState.status, "FAILED");
     assert.equal(failedState.provider_status, "failed");
-    assert.equal(failedState.failure_reason, "Bank rejected transfer");
+    assert.equal(failedState.failure_reason, "Paystack transfer failed; support will review.");
 
     const duplicateFailedResponse = await postPaystackWebhook({
       event: "transfer.failed",
@@ -160,7 +160,7 @@ test("Paystack payout webhook route reconciles success, failure and reversal wit
     )).rows[0];
     assert.equal(duplicateFailedState.status, "FAILED");
     assert.equal(duplicateFailedState.provider_status, "failed");
-    assert.equal(duplicateFailedState.failure_reason, "Bank rejected transfer");
+    assert.equal(duplicateFailedState.failure_reason, "Paystack transfer failed; support will review.");
     assert.equal(Number(duplicateFailedState.amount_minor), 60000);
     assert.equal(duplicateFailedState.currency, "NGN");
 
