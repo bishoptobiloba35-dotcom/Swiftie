@@ -1,6 +1,6 @@
 import { randomBytes, randomInt, scryptSync, timingSafeEqual } from "node:crypto";
 
-const FOUR_DIGIT_PIN = /^\\d{4}$/;
+const FOUR_DIGIT_PIN = /^\d{4}$/;
 
 export function generateReceiverPin(): string {
   return String(randomInt(0, 10000)).padStart(4, "0");
