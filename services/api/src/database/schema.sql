@@ -141,6 +141,8 @@ CREATE TABLE IF NOT EXISTS payouts (
   idempotency_key TEXT,
   provider_transfer_code TEXT,
   requires_admin_approval BOOLEAN NOT NULL DEFAULT false,
+  admin_approved_at TIMESTAMPTZ,
+  admin_approved_by UUID REFERENCES users(id),
   requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   completed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
