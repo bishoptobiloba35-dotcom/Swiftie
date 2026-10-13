@@ -84,6 +84,38 @@ CREATE TABLE IF NOT EXISTS payments (
 
 CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
 
+-- Bootstrap-schema parity for the production escrow payment-attempt contract.
+CREATE TABLE IF NOT EXISTS escrow_payment_attempts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id UUID NOT NULL REFERENCES deliveries(id) ON DELETE CASCADE,
+  payer_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  payer_role TEXT NOT NULL DEFAULT 'SENDER' CHECK (payer_role IN ('SENDER','RECEIVER')),
+  provider TEXT NOT NULL DEFAULT 'paystack',
+  method TEXT NOT NULL CHECK (method IN ('PAYSTACK_CARD','BANK_TRANSFER','USSD','SMS_LINK')),
+  provider_reference TEXT,
+  amount_minor BIGINT NOT NULL CHECK (amount_minor > 0),
+  currency CHAR(3) NOT NULL DEFAULT 'NGN',
+  collection_channel TEXT NOT NULL DEFAULT 'CARD' CHECK (collection_channel IN ('CARD','BANK_TRANSFER','USSD')),
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','SUCCESS','FAILED','EXPIRED')),
+  idempotency_key TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS escrow_payment_attempts_provider_reference_unique
+  ON escrow_payment_attempts(provider, provider_reference)
+  WHERE provider_reference IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS escrow_payment_attempts_one_pending_per_order
+  ON escrow_payment_attempts(order_id) WHERE status='PENDING';
+CREATE INDEX IF NOT EXISTS idx_escrow_payment_attempts_order
+  ON escrow_payment_attempts(order_id);
+CREATE INDEX IF NOT EXISTS idx_escrow_attempts_payer
+  ON escrow_payment_attempts(order_id,payer_role,status);
+CREATE INDEX IF NOT EXISTS idx_escrow_bank_transfer_pending
+  ON escrow_payment_attempts(order_id,updated_at)
+  WHERE method='BANK_TRANSFER' AND status='PENDING';
+
+
 
 CREATE TABLE IF NOT EXISTS payouts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

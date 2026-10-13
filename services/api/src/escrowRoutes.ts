@@ -180,9 +180,16 @@ router.post("/escrow/:orderId/pay", requireAuth(), async (req,res)=>{
         smsMessageId=String(smsPayload.message_id ?? smsPayload.message_id_str ?? "");
       }
     }
+    const collectionChannel = parsed.data.method === "BANK_TRANSFER"
+      ? "BANK_TRANSFER"
+      : parsed.data.method === "USSD" ? "USSD" : "CARD";
     const payment=(await client.query(
-      "INSERT INTO escrow_payment_attempts(order_id,method,provider_reference,amount_minor,idempotency_key) VALUES($1,$2,$3,$4,$5) RETURNING *",
-      [orderId,parsed.data.method,providerReference,amountMinor,parsed.data.idempotencyKey]
+      `INSERT INTO escrow_payment_attempts(
+         order_id,payer_id,payer_role,provider,method,provider_reference,
+         amount_minor,currency,collection_channel,idempotency_key
+       ) VALUES($1,$2,'SENDER','paystack',$3,$4,$5,'NGN',$6,$7)
+       RETURNING *`,
+      [orderId,userId,parsed.data.method,providerReference,amountMinor,collectionChannel,parsed.data.idempotencyKey]
     )).rows[0];
     await client.query("COMMIT");
     return res.status(201).json({payment,authorizationUrl,accessCode,ussdCode,smsMessageId,amountMinor,confirmation:"Payment will be confirmed from the verified provider webhook."});
