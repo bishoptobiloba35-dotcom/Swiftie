@@ -1,4 +1,5 @@
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import {
   BASE_FARE_MINOR,
@@ -73,4 +74,16 @@ test("legacy basis-point representations remain consistent", () => {
   assert.equal(SERVICE_CHARGE_BPS / 10_000, 0.10);
   assert.equal(PROTECTION_RESERVE_BPS / 10_000, 0.05);
   assert.equal(COURIER_SHARE_BPS / 10_000, 0.72);
+});
+
+test("pricing migration backfills existing orders before defaulting new orders to v2", async () => {
+  const migration = await readFile(
+    new URL("./database/migrations/079_pricing_v2_constants.sql", import.meta.url),
+    "utf8"
+  );
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS pricing_version TEXT/);
+  assert.match(migration, /WHEN quote_pricing_version IS NOT NULL/);
+  assert.match(migration, /THEN 'legacy-config-v' \|\| quote_pricing_version::TEXT/);
+  assert.match(migration, /ELSE 'legacy'/);
+  assert.match(migration, /ALTER COLUMN pricing_version SET DEFAULT 'v2'/);
 });
