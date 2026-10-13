@@ -10,7 +10,7 @@ import { identity } from "./requestIdentity.js";
 const router = Router();
 const MIN_WITHDRAWAL_MINOR = 100000;
 function courierShareBps(): number {
-  const percent = Number(process.env.DRIVER_PAYOUT_PERCENT ?? "75");
+  const percent = Number(process.env.DRIVER_PAYOUT_PERCENT ?? "72");
   if (!Number.isFinite(percent) || percent <= 0 || percent > 100) throw new Error("Invalid DRIVER_PAYOUT_PERCENT");
   return Math.round(percent * 100);
 }
