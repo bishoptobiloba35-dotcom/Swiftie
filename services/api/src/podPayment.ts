@@ -116,14 +116,37 @@ export async function applyPodPaymentVerified(
       await client.query("ROLLBACK");
       return { ok: false, error: `Invalid transition ${from} → PAYMENT_VERIFIED` };
     }
+    const baseFareMinor = Number(row.quote_base_fare_minor ?? 0);
+    const deliveryFeeMinor = baseFareMinor
+      + Number(row.quote_distance_fare_minor ?? 0)
+      + Number(row.quote_weight_fare_minor ?? 0)
+      + Number(row.quote_size_fare_minor ?? 0)
+      + Number(row.quote_perishable_surcharge_minor ?? 0)
+      + Number(row.quote_express_surcharge_minor ?? 0)
+      + Number(row.quote_fuel_surcharge_minor ?? 0);
+    const configuredPayoutPercent = process.env.DRIVER_PAYOUT_PERCENT === undefined
+      ? undefined
+      : Number(process.env.DRIVER_PAYOUT_PERCENT);
+    const courierShareMinor = courierShareForOrder({
+      pricingVersion: row.pricing_version ?? null,
+      deliveryFeeMinor,
+      baseFareMinor,
+      configuredPercent: configuredPayoutPercent
+    });
+    const serviceChargeMinor = Number(row.quote_service_fee_minor ?? 0);
+    const protectionReserveMinor = Number(row.quote_protection_reserve_minor ?? 0);
+    const swiftdropMarginMinor = expected - courierShareMinor - serviceChargeMinor - protectionReserveMinor;
+    if (![courierShareMinor, serviceChargeMinor, protectionReserveMinor, swiftdropMarginMinor].every(Number.isSafeInteger) || swiftdropMarginMinor < 0) {
+      await client.query("ROLLBACK");
+      return { ok: false, error: "Invalid escrow split for verified POD payment" };
+    }
     await client.query(
-      `UPDATE deliveries
-          SET status='PAYMENT_VERIFIED',
-              receiver_payment_pending=false,
-              pod_verified_at=COALESCE(pod_verified_at, now()),
-              updated_at=now()
-        WHERE id=$1`,
-      [deliveryId]
+      "UPDATE deliveries SET status='PAYMENT_VERIFIED', receiver_payment_pending=false, pod_verified_at=COALESCE(pod_verified_at, now()), escrow_payment_state='paid_escrow', escrow_total_paid_minor=$2, escrow_courier_share_minor=$3, escrow_service_charge_minor=$4, escrow_protection_reserve_minor=$5, escrow_swiftdrop_margin_minor=$6, escrow_merchant_share_minor=0, updated_at=now() WHERE id=$1",
+      [deliveryId, expected, courierShareMinor, serviceChargeMinor, protectionReserveMinor, swiftdropMarginMinor]
+    );
+    await client.query(
+      "INSERT INTO escrow_ledgers(order_id,total_paid_minor,courier_share_minor,service_charge_minor,protection_reserve_minor,swiftdrop_margin_minor,merchant_share_minor,state) VALUES($1,$2,$3,$4,$5,$6,0,'paid_escrow') ON CONFLICT(order_id) DO UPDATE SET total_paid_minor=EXCLUDED.total_paid_minor,courier_share_minor=EXCLUDED.courier_share_minor,service_charge_minor=EXCLUDED.service_charge_minor,protection_reserve_minor=EXCLUDED.protection_reserve_minor,swiftdrop_margin_minor=EXCLUDED.swiftdrop_margin_minor,state='paid_escrow',updated_at=now() WHERE escrow_ledgers.state IN ('pending_payment','failed')",
+      [deliveryId, expected, courierShareMinor, serviceChargeMinor, protectionReserveMinor, swiftdropMarginMinor]
     );
     await client.query(
       `UPDATE payments
