@@ -22,6 +22,8 @@ export type ApiDelivery = {
     weightFareMinor: number;
     sizeFareMinor: number;
     perishableSurchargeMinor: number;
+    expressSurchargeMinor?: number;
+    fuelSurchargeMinor?: number;
     fuelReferenceMinor: number;
     protectionReserveMinor: number;
     pricingVersion: number;
@@ -29,7 +31,7 @@ export type ApiDelivery = {
     totalMinor: number;
   };
   status: string;
-  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ESCROW";
+  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ESCROW" | "PAY_ON_DELIVERY";
   deliveryType?: "EXPRESS" | "STANDARD";
   goodsAmountMinor?: number;
   senderDepositAmountMinor?: number;
@@ -61,7 +63,7 @@ export type ApiDelivery = {
 
 export type CreateDeliveryInput = {
   senderId?: string;
-  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ESCROW";
+  paymentMode?: "SENDER_ESCROW" | "RECEIVER_ESCROW" | "PAY_ON_DELIVERY";
   deliveryType?: "EXPRESS" | "STANDARD";
   goodsAmountMinor?: number;
   receiverPin?: string;
@@ -130,27 +132,6 @@ export class SwiftDropApi {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error ?? "Login failed");
     this.setAccessToken(data.accessToken);
-    return data;
-  }
-
-  async getAccountMode(): Promise<{ mode: "INDIVIDUAL" | "BUSINESS" | "MERCHANT"; accountType: string; businessRole: string | null; merchantStatus: string }> {
-    const response = await fetch(this.baseUrl + "/api/auth/mode", { headers: this.headers() });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error ?? "Unable to load account mode");
-    return data;
-  }
-
-  async setAccountMode(mode: "INDIVIDUAL" | "BUSINESS" | "MERCHANT"): Promise<any> {
-    const response = await fetch(this.baseUrl + "/api/auth/mode", { method: "PATCH", headers: this.headers(true), body: JSON.stringify({ mode }) });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error ?? "Unable to switch account mode");
-    return data;
-  }
-
-  async requestMerchantMode(): Promise<{ merchantStatus: string }> {
-    const response = await fetch(this.baseUrl + "/api/auth/merchant-mode/request", { method: "POST", headers: this.headers(true), body: JSON.stringify({}) });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error ?? "Unable to request Merchant mode");
     return data;
   }
 
@@ -521,7 +502,7 @@ export class SwiftDropApi {
   }): Promise<{
     currency: string; distanceMeters: number; durationSeconds: number;
     baseFareMinor: number; distanceFareMinor: number; weightFareMinor: number; sizeFareMinor: number;
-    perishableSurchargeMinor: number; fuelReferenceMinor: number; protectionReserveMinor: number; pricingVersion: number; serviceFeeMinor: number; totalMinor: number;
+    perishableSurchargeMinor: number; expressSurchargeMinor: number; fuelSurchargeMinor: number; fuelReferenceMinor: number; protectionReserveMinor: number; pricingVersion: number; serviceFeeMinor: number; totalMinor: number;
   }> {
     const response = await fetch(this.baseUrl + "/api/quotes", {
       method: "POST",
