@@ -17,6 +17,15 @@ CREATE TABLE IF NOT EXISTS drivers (
   online BOOLEAN NOT NULL DEFAULT false,
   vehicle_type TEXT,
   vehicle_registration TEXT,
+  payout_bank_code TEXT,
+  payout_bank_name TEXT,
+  payout_account_number TEXT,
+  payout_account_name TEXT,
+  payout_recipient_code TEXT,
+  recipient_verified BOOLEAN NOT NULL DEFAULT false,
+  recipient_verified_at TIMESTAMPTZ,
+  payout_resolved_account_name TEXT,
+  payout_account_name_entered TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -127,11 +136,55 @@ CREATE TABLE IF NOT EXISTS payouts (
     CHECK (status IN ('PENDING','ELIGIBLE','PROCESSING','RELEASED','FAILED','CANCELLED')),
   provider TEXT,
   provider_reference TEXT UNIQUE,
+  fee_minor INTEGER NOT NULL DEFAULT 0 CHECK (fee_minor >= 0),
+  net_amount_minor INTEGER CHECK (net_amount_minor IS NULL OR net_amount_minor > 0),
+  idempotency_key TEXT,
+  provider_transfer_code TEXT,
+  requires_admin_approval BOOLEAN NOT NULL DEFAULT false,
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS payouts_idempotency_key_uniq
+  ON payouts(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_payouts_status ON payouts(status);
+CREATE INDEX IF NOT EXISTS payouts_driver_id_idx ON payouts(driver_id);
+CREATE INDEX IF NOT EXISTS payouts_status_active_idx ON payouts(status)
+  WHERE status IN ('PENDING','PROCESSING','ELIGIBLE');
+CREATE INDEX IF NOT EXISTS payouts_provider_reference_idx
+  ON payouts(provider, provider_reference);
+
+CREATE TABLE IF NOT EXISTS webhook_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  provider TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  payload JSONB NOT NULL,
+  processed_at TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'received'
+    CHECK (status IN ('received','processing','processed','failed','ignored')),
+  failure_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(provider, event_id)
+);
+
+CREATE TABLE IF NOT EXISTS reconciliation_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  provider TEXT NOT NULL DEFAULT 'paystack',
+  paystack_count INTEGER NOT NULL,
+  local_count INTEGER NOT NULL,
+  mismatches_found INTEGER NOT NULL,
+  mismatches_details JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS driver_payout_request_limits (
+  driver_id UUID PRIMARY KEY REFERENCES drivers(id) ON DELETE CASCADE,
+  last_requested_at TIMESTAMPTZ NOT NULL
+);
 
 
 CREATE TABLE IF NOT EXISTS disputes (
