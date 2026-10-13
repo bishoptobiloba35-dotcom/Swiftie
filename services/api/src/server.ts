@@ -114,7 +114,7 @@ type MemoryDelivery = {
   id: string; trackingCode: string; senderId: string; receiverName: string; receiverPhone: string;
   pickup: { label: string; formattedAddress: string; location: DeliveryLocation };
   dropoff: { label: string; formattedAddress: string; location: DeliveryLocation };
-  status: Status; paymentMode: "SENDER_ESCROW" | "RECEIVER_ESCROW" | "PAY_ON_DELIVERY"; deliveryType?: "EXPRESS" | "STANDARD"; goodsAmountMinor?: number; driverId?: string; pickupPhotoUrl?: string; proofRequirements?: { pickup: string[]; dropoff: string[] }; receiverPin: string;
+  status: Status; paymentMode: "SENDER_ESCROW" | "RECEIVER_ESCROW" | "PAY_ON_DELIVERY"; deliveryType?: "EXPRESS" | "STANDARD"; goodsAmountMinor?: number; podVerifiedAt?: string | null; driverId?: string; pickupPhotoUrl?: string; proofRequirements?: { pickup: string[]; dropoff: string[] }; receiverPin: string;
   quote?: DeliveryQuote; createdAt: string; updatedAt: string;
 };
 const deliveries = new Map<string, MemoryDelivery>();
