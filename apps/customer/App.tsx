@@ -118,6 +118,9 @@ export default function App() {
   const [receiverRatingComment, setReceiverRatingComment] = React.useState("");
   const [receiverRatingSubmitted, setReceiverRatingSubmitted] = React.useState(false);
   const [receiverMode, setReceiverMode] = React.useState(false);
+  const [receiverPaymentEmail, setReceiverPaymentEmail] = React.useState("");
+  const [pendingPodPayment, setPendingPodPayment] = React.useState<ApiDelivery | null>(null);
+  const [orderPaymentMode, setOrderPaymentMode] = React.useState<"SENDER_ESCROW" | "PAY_ON_DELIVERY">("SENDER_ESCROW");
   const [email, setEmail] = React.useState("");
   const [quote, setQuote] = React.useState<Awaited<ReturnType<typeof api.quote>> | null>(null);
   const [includeProtection, setIncludeProtection] = React.useState(true);
@@ -721,7 +724,7 @@ export default function App() {
         receiverName: receiver.trim(),
         receiverPhone: phone.trim(),
         receiverPin,
-        paymentMode: "SENDER_ESCROW",
+        paymentMode: orderPaymentMode,
         declaredValueMinor: Math.round(Number(declaredValue) * 100),
         includeProtection,
         weightKg: Number(weightKg),
@@ -737,6 +740,10 @@ export default function App() {
       });
       setDelivery(created);
       setTrackingCode(created.trackingCode);
+      if (orderPaymentMode === "PAY_ON_DELIVERY") {
+        Alert.alert("Order placed", "The recipient will pay digitally through SwiftDrop when the courier arrives. Cash is never accepted. Handover waits for payment-provider verification.");
+        return;
+      }
       const escrow = await api.createEscrow(created.id);
       const payment = await api.payEscrow(created.id, "PAYSTACK_CARD", crypto.randomUUID());
       if (payment?.authorizationUrl) await WebBrowser.openBrowserAsync(payment.authorizationUrl);
@@ -1230,11 +1237,17 @@ export default function App() {
       <Text>Fuel reference: ₦{(quote.fuelReferenceMinor / 100).toLocaleString()} (2 litres)</Text><Pressable style={[styles.choice, includeProtection && styles.choiceActive]} onPress={() => setIncludeProtection(v => !v)} accessibilityRole="checkbox" accessibilityState={{ checked: includeProtection }}><Text style={styles.photoTitle}>{includeProtection ? "✓ " : ""}Refundable Protection Reserve · 10% of declared value</Text></Pressable><Text>Protection: ₦{(quote.protectionReserveMinor / 100).toLocaleString()}</Text><Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
       <Text style={styles.code}>Total: ₦{(quote.totalMinor / 100).toLocaleString()}</Text>    </View>}
     <View style={styles.card}>
-      <Text style={styles.heading}>Payment</Text>
-      <Text style={styles.muted}>Every SwiftDrop order is paid through in-app escrow. Cash on delivery is not available.</Text>
-      <Text style={styles.hint}>Payment is held until receiver PIN confirmation, then eligible stakeholder payouts are released according to the escrow ledger.</Text>
+      <Text style={styles.heading}>Payment method</Text>
+      <Pressable style={[styles.choice, orderPaymentMode === "SENDER_ESCROW" && styles.choiceActive]} onPress={() => setOrderPaymentMode("SENDER_ESCROW")} accessibilityRole="radio" accessibilityState={{ selected: orderPaymentMode === "SENDER_ESCROW" }}>
+        <Text style={styles.photoTitle}>{orderPaymentMode === "SENDER_ESCROW" ? "✓ " : ""}Pay now with SwiftDrop escrow</Text>
+        <Text style={styles.muted}>You pay digitally before dispatch. Funds remain protected until delivery completes.</Text>
+      </Pressable>
+      <Pressable style={[styles.choice, orderPaymentMode === "PAY_ON_DELIVERY" && styles.choiceActive]} onPress={() => setOrderPaymentMode("PAY_ON_DELIVERY")} accessibilityRole="radio" accessibilityState={{ selected: orderPaymentMode === "PAY_ON_DELIVERY" }}>
+        <Text style={styles.photoTitle}>{orderPaymentMode === "PAY_ON_DELIVERY" ? "✓ " : ""}Digital Pay-on-Delivery</Text>
+        <Text style={styles.muted}>The recipient pays in the app when the courier arrives. Cash is never accepted, and handover waits for provider verification.</Text>
+      </Pressable>
     </View>
-    <Pressable style={styles.primary} onPress={() => void createDelivery()}><Text style={styles.primaryText}>Place order & pay</Text></Pressable>
+    <Pressable style={styles.primary} onPress={() => void createDelivery()}><Text style={styles.primaryText}>{orderPaymentMode === "PAY_ON_DELIVERY" ? "Place order · recipient pays in app" : "Place order & pay"}</Text></Pressable>
     {delivery?.status === "PAYMENT_AUTHORIZED" && <Text style={styles.done}>✓ Payment verified — driver matching can begin.</Text>}
     {delivery && <Text style={styles.code}>Tracking code: {delivery.trackingCode}</Text>}
 
