@@ -1876,19 +1876,19 @@ export async function saveDriverPayoutAccount(input: {
   return result.rows[0] ?? null;
 }
 
-export async function setPayoutProcessing(deliveryId: string): Promise<PayoutRecord | null> {
+export async function setPayoutProcessing(deliveryId: string, feeMinor = 0): Promise<PayoutRecord | null> {
   if (!pool) return null;
   const result = await pool.query(
     `UPDATE payouts
         SET status='PROCESSING', provider='paystack',
-            net_amount_minor=amount_minor,
+            fee_minor=$2, net_amount_minor=amount_minor-$2,
             idempotency_key=CASE WHEN idempotency_key LIKE 'legacy-payout-%' THEN 'driver-payout:' || id::text ELSE COALESCE(idempotency_key, 'driver-payout:' || id::text) END,
             requested_at=COALESCE(requested_at, now()),
             requires_admin_approval=(amount_minor > 100000000),
             updated_at=now()
       WHERE delivery_id=$1 AND status='ELIGIBLE'
       RETURNING *`,
-    [deliveryId]
+    [deliveryId, feeMinor]
   );
   return result.rows[0] ? rowToPayout(result.rows[0]) : null;
 }
