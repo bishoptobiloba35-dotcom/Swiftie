@@ -125,7 +125,7 @@ export default function App() {
   const [payout, setPayout] = React.useState<{ amount_minor: number; currency: string; status: string; provider_status?: string | null; failure_reason?: string | null } | null>(null);
   const [payoutSummary, setPayoutSummary] = React.useState<{ eligibleMinor: number; processingMinor: number; releasedMinor: number; failedMinor: number }>({ eligibleMinor: 0, processingMinor: 0, releasedMinor: 0, failedMinor: 0 });
   const [payoutHistory, setPayoutHistory] = React.useState<Array<{ id: string; amount_minor: number; currency: string; status: string; failure_reason?: string | null }>>([]);
-  const [payoutAccount, setPayoutAccount] = React.useState<{ bankCode: string; bankName?: string | null; accountName: string; accountLast4: string; recipientVerified: boolean } | null>(null);
+  const [payoutAccount, setPayoutAccount] = React.useState<{ bankCode: string; bankName?: string | null; accountName: string; resolvedAccountName?: string | null; accountLast4: string; recipientVerified: boolean } | null>(null);
   const [banks, setBanks] = React.useState<Array<{ name: string; code: string }>>([]);
   const [showBankOptions, setShowBankOptions] = React.useState(false);
   const [enteredAccountName, setEnteredAccountName] = React.useState("");
@@ -612,6 +612,7 @@ export default function App() {
         <Text style={styles.done}>✓ Name verified for Paystack payouts</Text>
       </> : <>
         <Text style={styles.muted}>Add the bank account where your courier earnings should be sent. We compare the resolved account name with your legal name before enabling payouts.</Text>
+        {payoutAccount && !payoutAccount.recipientVerified ? <Text style={styles.muted}>We couldn’t verify the account name. Our team will review this within 24 hours. Paystack resolved name: {payoutAccount.resolvedAccountName ?? "Unavailable"}.</Text> : null}
         <Pressable style={styles.input} onPress={() => setShowBankOptions(value => !value)}>
           <Text>{banks.find(bank => bank.code === bankCode)?.name ?? "Select bank"}</Text>
         </Pressable>
