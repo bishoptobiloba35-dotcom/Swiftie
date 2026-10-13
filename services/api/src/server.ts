@@ -37,6 +37,7 @@ import { reportExternalError } from "./errorTracking.js";
 import { processPhase2EscrowReleases, reconcilePhase2Float } from "./phase2EscrowWorker.js";
 import escrowRoutes, { reconcileProcessingWalletPayouts, requeryPendingDvaAccounts, reconcilePendingEscrowProviderPayments } from "./escrowRoutes.js";
 import { featureEnabled } from "./featureFlags.js";
+import { applyPodPaymentVerified, markReceiverPaymentPending, podAllowsHandover } from "./podPayment.js";
 
 const app = express();
 
@@ -90,7 +91,7 @@ app.use("/api", deliveryExceptionRoutes);
 app.use("/api", errandRoutes);
 app.use("/api", escrowRoutes);
 
-type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "DELIVERED" | "CANCELLED" | "DISPUTED" | "RETURNED";
+type Status = "CREATED" | "PAYMENT_AUTHORIZED" | "PAYMENT_PENDING" | "DRIVER_ASSIGNED" | "DRIVER_AT_PICKUP" | "PICKED_UP" | "IN_TRANSIT" | "ARRIVED" | "RECEIVER_PAYMENT_PENDING" | "PAYMENT_VERIFIED" | "HANDED_OVER" | "PIN_CONFIRMED" | "DELIVERED" | "DISPUTE_WINDOW" | "RELEASED" | "CANCELLED" | "DISPUTED" | "RETURNED";
 type DeliveryLocation = { latitude: number; longitude: number; recordedAt?: string };
 type DeliveryQuote = {
   currency: "NGN";
@@ -153,7 +154,7 @@ const notificationForDelivery = async (deliveryId: string, userId: string, title
 
 
 const createDeliverySchema = z.object({
-  senderId: z.string().uuid().optional(), paymentMode: z.enum(["SENDER_ESCROW","RECEIVER_ESCROW"]).default("SENDER_ESCROW"), deliveryType: z.enum(["EXPRESS","STANDARD"]).default("EXPRESS"), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
+  senderId: z.string().uuid().optional(), paymentMode: z.enum(["SENDER_ESCROW","RECEIVER_ESCROW","PAY_ON_DELIVERY"]).default("SENDER_ESCROW"), deliveryType: z.enum(["EXPRESS","STANDARD"]).default("EXPRESS"), receiverName: z.string().min(1), receiverPhone: z.string().min(7),
 
   weightKg: z.number().positive().max(1000),
   dimensionsCm: z.object({ length: z.number().positive().max(300), width: z.number().positive().max(300), height: z.number().positive().max(300) }),
@@ -1467,6 +1468,841 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
     return res.status(200).json({ received: true });
   }
 
+  // Digital POD: server-only verification path
+  if (databaseEnabled() && payment.collectionMode === "PAY_ON_DELIVERY") {
+    const amountMinor = Number(data.amount);
+    if (event.event === "charge.success") {
+      const result = await applyPodPaymentVerified(deliveryId, reference, amountMinor);
+      if (!result.ok) {
+        console.error(JSON.stringify({ event: "pod_payment_verify_failed", deliveryId, reference, error: result.error }));
+        return res.status(200).json({ received: true, podError: result.error });
+      }
+      await updatePaymentStatus(deliveryId, "HELD", reference).catch(() => null);
+      return res.status(200).json({ received: true, pod: result.alreadyVerified ? "already_verified" : "PAYMENT_VERIFIED" });
+    }
+    await updatePaymentStatus(deliveryId, "FAILED", reference);
+    return res.status(200).json({ received: true, pod: "FAILED" });
+  }
+
+  if (Number(data.amount) !== payment.amountMinor || String(data.currency) !== payment.currency) {
+    await updatePaymentStatus(deliveryId, "FAILED", reference);
+    return res.status(200).json({ received: true });
+  }
+
+  await updatePaymentStatus(deliveryId, "HELD", reference);
+  const current = await findDelivery(deliveryId);
+  if (current?.status === "CREATED") {
+    const authorized = await transitionDelivery(deliveryId, "CREATED", "PAYMENT_AUTHORIZED");
+    if (authorized) {
+      await recordDeliveryEvent({
+        deliveryId,
+        eventType: "PAYMENT_AUTHORIZED",
+        metadata: { provider: "paystack", reference }
+      });
+      publishDeliveryUpdate(deliveryId, safeDelivery(authorized));
+    }
+  }
+  await recordDeliveryEvent({
+    deliveryId,
+    eventType: "PAYMENT_HELD",
+    metadata: { provider: "paystack", reference }
+  });
+  return res.status(200).json({ received: true, duplicate: duplicateWebhook });
+});
+
+app.post("/api/deliveries/:id/mark-receiver-payment-pending", requireAuth(), async (req, res) => {
+  if (!featureEnabled("POD")) return res.status(403).json({ error: "Digital pay-on-delivery is not enabled" });
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database unavailable" });
+  const deliveryId = String(req.params.id);
+  const userId = identity(req);
+  const delivery = await findDelivery(deliveryId);
+  if (!delivery) return res.status(404).json({ error: "Order not found" });
+  if (delivery.paymentMode !== "PAY_ON_DELIVERY") return res.status(409).json({ error: "Order is not PAY_ON_DELIVERY" });
+  const result = await markReceiverPaymentPending(deliveryId, userId);
+  if (!result.ok) return res.status(409).json({ error: result.error ?? "Unable to mark pending" });
+  const updated = await findDelivery(deliveryId);
+  return res.status(200).json({ delivery: updated });
+});
+
+app.post("/api/deliveries/:id/receiver-payment/initialize", requireAuth("CUSTOMER"), async (req, res) => {
+  const podOn = featureEnabled("POD");
+  const receiverEscrowOn = featureEnabled("RECEIVER_ESCROW");
+  if (!podOn && !receiverEscrowOn) return res.status(403).json({ error: "Receiver escrow is not enabled" });
+  if (!databaseEnabled()) return res.status(503).json({ error: "Payments require the production database" });
+  const userId = identity(req);
+  const delivery = await findDelivery(routeParam(req.params.id, "id"));
+  if (!delivery || (delivery.paymentMode !== "RECEIVER_ESCROW" && delivery.paymentMode !== "PAY_ON_DELIVERY")) {
+    return res.status(404).json({ error: "Receiver payment order not found" });
+  }
+  if (delivery.paymentMode === "PAY_ON_DELIVERY" && !featureEnabled("POD")) {
+    return res.status(403).json({ error: "Digital pay-on-delivery is not enabled" });
+  }
+  if (delivery.paymentMode === "RECEIVER_ESCROW" && !featureEnabled("RECEIVER_ESCROW")) {
+    return res.status(403).json({ error: "Receiver escrow is not enabled" });
+  }
+  if (delivery.paymentMode === "PAY_ON_DELIVERY" && delivery.status !== "RECEIVER_PAYMENT_PENDING" && delivery.status !== "ARRIVED") {
+    return res.status(409).json({ error: "Order is not awaiting receiver payment" });
+  }
+
+  const user = (await pool!.query("SELECT phone,email FROM users WHERE id=$1",[userId])).rows[0];
+  const normalize = (phone: string) => {
+    const digits = phone.replace(/\\D/g,"");
+    return digits.startsWith("234") ? digits : digits.startsWith("0") ? "234" + digits.slice(1) : digits;
+  };
+  if (!user?.phone || normalize(String(user.phone)) !== normalize(delivery.receiverPhone)) {
+    return res.status(403).json({ error: "Receiver phone verification is required" });
+  }
+
+  await pool!.query("UPDATE deliveries SET receiver_user_id=$2 WHERE id=$1 AND receiver_user_id IS NULL",[delivery.id,userId]);
+  // For pure package POD, amount is the server quote. For receiver-escrow goods, include goods amount.
+  const amountMinor = delivery.paymentMode === "PAY_ON_DELIVERY"
+    ? Number(delivery.quote?.totalMinor ?? 0)
+    : Number(delivery.goodsAmountMinor) + Number(delivery.quote?.totalMinor ?? 0);
+  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) return res.status(409).json({ error: "Receiver payment amount is not available" });
+  const email = String(req.body?.email ?? user.email ?? "").trim();
+  if (!email) return res.status(400).json({ error: "Email is required for Paystack card checkout" });
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  if ((process.env.PAYMENT_PROVIDER || "paystack") !== "paystack" || !secret) return res.status(503).json({ error: "Paystack payment configuration is not ready" });
+
+  // Ensure a payment row exists with the correct collection mode (idempotent upsert).
+  const collectionMode = delivery.paymentMode === "PAY_ON_DELIVERY" ? "PAY_ON_DELIVERY" : "RECEIVER_ESCROW";
+  await createPayment({
+    deliveryId: delivery.id,
+    provider: "paystack",
+    amountMinor,
+    currency: "NGN",
+    collectionMode
+  });
+  if (delivery.paymentMode === "PAY_ON_DELIVERY" && delivery.status === "ARRIVED") {
+    await markReceiverPaymentPending(delivery.id, userId);
+  }
+
+  const reference = "SD-" + delivery.trackingCode + "-R-" + Date.now();
+  const reservation = await reservePaymentInitialization(delivery.id, reference);
+  if (!reservation.reserved) {
+    if (reservation.payment?.authorizationUrl) return res.status(200).json({ paymentId: reservation.payment.id, authorizationUrl: reservation.payment.authorizationUrl, accessCode: reservation.payment.accessCode, amountMinor: reservation.payment.amountMinor });
+    return res.status(409).json({ error: "Payment initialization is already in progress. Retry shortly." });
+  }
+  const response = await fetch("https://api.paystack.co/transaction/initialize", {
+    method:"POST",
+    headers:{authorization:"Bearer "+secret,"content-type":"application/json"},
+    body:JSON.stringify({email,amount:String(amountMinor),currency:"NGN",reference,metadata:{deliveryId:delivery.id,trackingCode:delivery.trackingCode,payerRole:"RECEIVER"}})
+  });
+  const payload = await response.json() as any;
+  if (!response.ok || !payload.status || !payload.data?.authorization_url) return res.status(502).json({ error: "Payment provider initialization failed" });
+  const saved = await savePaymentCheckoutSession(delivery.id,payload.data.reference ?? reference,payload.data.authorization_url,payload.data.access_code);
+  if (!saved) return res.status(409).json({ error: "Payment checkout could not be saved. Retry shortly." });
+  await recordDeliveryEvent({deliveryId:delivery.id,eventType:"RECEIVER_PAYMENT_INITIALIZED",actorUserId:userId,metadata:{paymentId:saved.id,amountMinor}});
+  return res.status(201).json({paymentId:saved.id,reference:payload.data.reference ?? reference,authorizationUrl:payload.data.authorization_url,accessCode:payload.data.access_code,amountMinor});
+});
+
+app.post("/api/deliveries/:id/payment", requireAuth("CUSTOMER"), async (req, res) => {
+  const userId = identity(req);
+  const delivery = databaseEnabled()
+    ? await findDeliveryForUser(routeParam(req.params.id, "id"), userId, "CUSTOMER")
+    : await getOne(routeParam(req.params.id, "id"));
+  if (!delivery) return res.status(404).json({ error: "Delivery not found" });
+  if (delivery.paymentMode !== "SENDER_ESCROW") return res.status(410).json({ error: "Cash-on-delivery has been retired. All payments must use in-app escrow." });
+
+  const amountMinor = delivery.quote?.totalMinor;
+  if (!amountMinor || !Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+    return res.status(409).json({ error: "Delivery does not have a valid server quote" });
+  }
+
+  if (!databaseEnabled()) {
+    return res.status(503).json({ error: "Payments require the production database and payment provider" });
+  }
+
+  const payment = await createPayment({
+    deliveryId: delivery.id,
+    provider: process.env.PAYMENT_PROVIDER || "pending",
+    amountMinor,
+    currency: "NGN",
+    collectionMode: "SENDER_ESCROW"
+  });
+  await recordDeliveryEvent({
+    deliveryId: delivery.id,
+    eventType: "PAYMENT_CREATED",
+    actorUserId: userId,
+    metadata: { paymentId: payment.id, amountMinor, currency: "NGN" }
+  });
+  res.status(201).json({ payment });
+});
+
+// Digital POD: move ARRIVED → RECEIVER_PAYMENT_PENDING (server-controlled)
+app.post("/api/deliveries/:id/mark-receiver-payment-pending", requireAuth(), async (req, res) => {
+  if (!featureEnabled("POD")) return res.status(403).json({ error: "Digital pay-on-delivery is not enabled" });
+  if (!databaseEnabled()) return res.status(503).json({ error: "Database unavailable" });
+  const deliveryId = String(req.params.id);
+  const userId = identity(req);
+  const delivery = await findDelivery(deliveryId);
+  if (!delivery) return res.status(404).json({ error: "Order not found" });
+  if (delivery.paymentMode !== "PAY_ON_DELIVERY") return res.status(409).json({ error: "Order is not PAY_ON_DELIVERY" });
+  const result = await markReceiverPaymentPending(deliveryId, userId);
+  if (!result.ok) return res.status(409).json({ error: result.error ?? "Unable to mark pending" });
+  const updated = await findDelivery(deliveryId);
+  return res.status(200).json({ delivery: updated });
+});
+
+app.post("/api/payments/paystack/webhook", async (req, res) => {
+  const secret = process.env.PAYMENT_WEBHOOK_SECRET ?? process.env.PAYSTACK_SECRET_KEY;
+  const signature = req.header("x-paystack-signature");
+  if (!secret || !signature) return res.status(401).end();
+
+  const rawBody = (req as express.Request & { rawBody?: Buffer }).rawBody;
+  if (!rawBody) return res.status(400).json({ error: "Webhook body could not be verified" });
+
+  const expected = createHmac("sha512", secret).update(rawBody).digest("hex");
+  const supplied = signature.trim().toLowerCase();
+  const expectedBuffer = Buffer.from(expected, "utf8");
+  const suppliedBuffer = Buffer.from(supplied, "utf8");
+  if (suppliedBuffer.length !== expectedBuffer.length || !timingSafeEqual(suppliedBuffer, expectedBuffer)) {
+    return res.status(401).end();
+  }
+
+  const event = req.body as any;
+  const webhookHash = createHash("sha256").update(rawBody).digest("hex");
+  const webhookReference = String(event?.data?.reference ?? "");
+  let duplicateWebhook = false;
+  if (databaseEnabled()) {
+    duplicateWebhook = !(await claimPaystackWebhookEvent({
+      payloadHash: webhookHash,
+      eventType: String(event?.event ?? ""),
+      providerReference: webhookReference || null
+    }));
+  }
+  if (duplicateWebhook) return res.status(200).json({ received: true, duplicate: true });
+
+  // A webhook may legitimately be retried after a transient 5xx. Finalize the
+  // durable claim from the actual HTTP outcome so failed processing never becomes
+  // an unrecoverable "duplicate".
+  res.once("finish", () => {
+    void finalizePaystackWebhookEvent(
+      webhookHash,
+      res.statusCode >= 200 && res.statusCode < 300 ? "COMPLETED" : "FAILED"
+    ).catch((error) => {
+      console.error(JSON.stringify({
+        event: "paystack_webhook_claim_finalization_failed",
+        webhookHash,
+        error: error instanceof Error ? error.message : "unknown"
+      }));
+    });
+  });
+
+  if (typeof event?.event === "string" && event.event.startsWith("refund.")) {
+    const transactionReference = String(event?.data?.transaction_reference ?? event?.data?.transaction?.reference ?? "");
+    if(transactionReference&&databaseEnabled()){
+      const buyPayment=(await pool!.query("SELECT bop.*,bo.customer_user_id FROM buy_order_payments bop JOIN buy_orders bo ON bo.id=bop.buy_order_id WHERE bop.provider_reference=$1",[transactionReference])).rows[0];
+      if(buyPayment){
+        const refundStatus=String(event.event).replace("refund.","");
+        const refundReference=String(event?.data?.refund_reference??event?.data?.id??"");
+        const amountMinor=Number(event?.data?.amount??0);
+        if(!Number.isSafeInteger(amountMinor)||amountMinor<0){
+          return res.status(200).json({received:true});
+        }
+        if(refundStatus==="processed"){
+          if (!refundReference) {
+            return res.status(200).json({ received: true, reconciliationRequired: true });
+          }
+          const paymentUpdate = await pool!.query(
+            `UPDATE buy_order_payments
+                SET refund_status='PROCESSED',
+                    refund_reference=$2,
+                    refund_amount_minor=$3,
+                    total_refunded_minor=CASE
+                      WHEN refund_status='PROCESSED' AND refund_reference=$2 THEN total_refunded_minor
+                      ELSE LEAST(amount_minor,total_refunded_minor+$3)
+                    END,
+                    status=CASE
+                      WHEN (
+                        CASE
+                          WHEN refund_status='PROCESSED' AND refund_reference=$2 THEN total_refunded_minor
+                          ELSE LEAST(amount_minor,total_refunded_minor+$3)
+                        END
+                      )>=amount_minor THEN 'REFUNDED' ELSE status
+                    END,
+                    updated_at=now()
+              WHERE id=$1
+              RETURNING buy_order_id,total_refunded_minor,amount_minor`,
+            [buyPayment.id,refundReference,amountMinor]
+          );
+          const updatedPayment=paymentUpdate.rows[0];
+          if (updatedPayment) {
+            await pool!.query(
+              `UPDATE buy_orders
+                  SET refunded_minor=$2,
+                      payment_status=CASE WHEN $2>=COALESCE($3,0) THEN 'REFUNDED' ELSE payment_status END,
+                      updated_at=now()
+                WHERE id=$1`,
+              [updatedPayment.buy_order_id,Number(updatedPayment.total_refunded_minor),Number(updatedPayment.amount_minor)]
+            );
+          }
+        }else if(refundStatus==="failed"){
+          await pool!.query("UPDATE buy_order_payments SET refund_status='FAILED',updated_at=now() WHERE id=$1",[buyPayment.id]);
+        }else{
+          await pool!.query("UPDATE buy_order_payments SET refund_status=$2,updated_at=now() WHERE id=$1",[buyPayment.id,refundStatus.toUpperCase()]);
+        }
+        if (refundReference) {
+          await pool!.query(
+            `UPDATE buy_order_item_refunds
+                SET status=$2,
+                    failure_reason=CASE WHEN $2='FAILED' THEN COALESCE(failure_reason,'Paystack reported refund failure') ELSE NULL END,
+                    updated_at=now()
+              WHERE provider_ref=$1`,
+            [refundReference, refundStatus === "processed" ? "PROCESSED" : refundStatus === "failed" ? "FAILED" : refundStatus.toUpperCase()]
+          );
+        }
+        await pool!.query("INSERT INTO buy_order_events(buy_order_id,actor_user_id,event_type,metadata) VALUES($1,$2,$3,$4::jsonb)",[buyPayment.buy_order_id,buyPayment.customer_user_id,"REFUND_"+refundStatus.toUpperCase(),JSON.stringify({transactionReference,refundReference,amountMinor})]);
+        return res.status(200).json({received:true});
+      }
+    }
+    if (transactionReference && databaseEnabled()) {
+      const marketplacePayment=(await pool!.query(
+        "SELECT mop.id,mop.marketplace_order_id,mop.buyer_user_id,mop.amount_minor,mop.total_refunded_minor,mo.delivery_id FROM marketplace_order_payments mop JOIN marketplace_orders mo ON mo.id=mop.marketplace_order_id WHERE mop.provider_reference=$1",
+        [transactionReference]
+      )).rows[0];
+      if (marketplacePayment) {
+        const refundStatus=String(event.event).replace("refund.","");
+        const refundReference=String(event?.data?.refund_reference??event?.data?.id??"");
+        const amountMinor=Number(event?.data?.amount??0);
+        if(!Number.isSafeInteger(amountMinor)||amountMinor<0) return res.status(200).json({received:true});
+        if(refundStatus==="processed"){
+          if (!refundReference) return res.status(200).json({received:true,reconciliationRequired:true});
+          const paymentUpdate=await pool!.query(
+            `UPDATE marketplace_order_payments
+                SET refund_status='PROCESSED',
+                    refund_reference=$2,
+                    refund_amount_minor=$3,
+                    total_refunded_minor=CASE
+                      WHEN refund_status='PROCESSED' AND refund_reference=$2 THEN total_refunded_minor
+                      ELSE LEAST(amount_minor,total_refunded_minor+$3)
+                    END,
+                    status=CASE
+                      WHEN (
+                        CASE
+                          WHEN refund_status='PROCESSED' AND refund_reference=$2 THEN total_refunded_minor
+                          ELSE LEAST(amount_minor,total_refunded_minor+$3)
+                        END
+                      )>=amount_minor THEN 'REFUNDED' ELSE status
+                    END,
+                    refund_updated_at=now(),updated_at=now()
+              WHERE id=$1
+              RETURNING total_refunded_minor,amount_minor`,
+            [marketplacePayment.id,refundReference,amountMinor]
+          );
+          const updatedPayment=paymentUpdate.rows[0];
+          if(updatedPayment && Number(updatedPayment.total_refunded_minor)>=Number(updatedPayment.amount_minor)){
+            await pool!.query(
+              "UPDATE marketplace_orders SET status='CANCELLED',fulfillment_status='CANCELLED',updated_at=now() WHERE id=$1 AND status='DISPUTED'",
+              [marketplacePayment.marketplace_order_id]
+            );
+          }
+        }else if(refundStatus==="failed"){
+          await pool!.query("UPDATE marketplace_order_payments SET refund_status='FAILED',refund_updated_at=now(),updated_at=now() WHERE id=$1",[marketplacePayment.id]);
+        }else{
+          await pool!.query("UPDATE marketplace_order_payments SET refund_status=$2,refund_updated_at=now(),updated_at=now() WHERE id=$1",[marketplacePayment.id,refundStatus.toUpperCase()]);
+        }
+        if(marketplacePayment.delivery_id){
+          await recordDeliveryEvent({deliveryId:marketplacePayment.delivery_id,eventType:"MARKETPLACE_REFUND_"+refundStatus.toUpperCase(),metadata:{transactionReference,refundReference,amountMinor}});
+        }
+        return res.status(200).json({received:true});
+      }
+    }
+    const refundReference = String(event?.data?.refund_reference ?? event?.data?.id ?? "");
+    if (transactionReference && databaseEnabled()) {
+      const escrowRefund = (await pool!.query(
+        `SELECT er.*,el.total_paid_minor,el.order_id AS escrow_order_id
+           FROM escrow_refunds er
+           JOIN escrow_ledgers el ON el.order_id=er.order_id
+          WHERE er.transaction_reference=$1
+            AND er.status NOT IN ('PROCESSED','FAILED')
+          ORDER BY er.created_at DESC LIMIT 1`,
+        [transactionReference]
+      )).rows[0];
+      if (escrowRefund) {
+        const refundStatus = String(event.event).replace("refund.", "").toUpperCase();
+        const providerAmount = Number(event?.data?.amount ?? 0);
+        const currency = String(event?.data?.currency ?? "NGN");
+        if (!Number.isSafeInteger(providerAmount) || providerAmount <= 0 || providerAmount !== Number(escrowRefund.amount_minor) || currency !== String(escrowRefund.currency)) {
+          await pool!.query(`UPDATE escrow_refunds SET status='FAILED',updated_at=now() WHERE id=$1 AND status NOT IN ('PROCESSED','FAILED')`,[escrowRefund.id]);
+          await recordDeliveryEvent({deliveryId: escrowRefund.order_id,eventType:"ESCROW_REFUND_RECONCILIATION_MISMATCH",metadata:{transactionReference,refundReference,providerAmount,currency,expectedAmount:Number(escrowRefund.amount_minor),expectedCurrency:escrowRefund.currency}}).catch(()=>{});
+          return res.status(200).json({received:true,reconciliationRequired:true});
+        }
+        await pool!.query(
+          `UPDATE escrow_refunds
+              SET provider_reference=COALESCE($2,provider_reference),status=$3,updated_at=now()
+            WHERE id=$1`,
+          [escrowRefund.id, refundReference || null, refundStatus]
+        );
+        if (refundStatus === "PROCESSED") {
+          const totals = (await pool!.query(
+            `SELECT COALESCE(SUM(amount_minor) FILTER (WHERE status='PROCESSED'),0) AS refunded
+               FROM escrow_refunds WHERE order_id=$1`,[escrowRefund.order_id]
+          )).rows[0];
+          const refunded = Number(totals?.refunded ?? 0);
+          const fullyRefunded = refunded >= Number(escrowRefund.total_paid_minor);
+          await pool!.query(
+            `UPDATE escrow_ledgers
+                SET state=CASE WHEN $2 >= total_paid_minor THEN 'refunded' ELSE 'disputed' END,
+                    updated_at=now()
+              WHERE order_id=$1 AND state IN ('disputed','dispute_window','paid_escrow','picked_up','in_transit','arrived','pin_confirmed')`,
+            [escrowRefund.order_id,refunded]
+          );
+          if (fullyRefunded) await pool!.query(`UPDATE deliveries SET escrow_payment_state='refunded',updated_at=now() WHERE id=$1`,[escrowRefund.order_id]);
+        }
+        await recordDeliveryEvent({deliveryId:escrowRefund.order_id,eventType:"ESCROW_REFUND_"+refundStatus,metadata:{transactionReference,refundReference,amountMinor:providerAmount}}).catch(()=>{});
+        return res.status(200).json({received:true});
+      }
+      const result = await pool!.query("SELECT delivery_id FROM payments WHERE provider_reference=$1", [transactionReference]);
+      const deliveryId = result.rows[0]?.delivery_id as string | undefined;
+      if (deliveryId) {
+        const refundStatus = String(event.event).replace("refund.", "");
+        const amountMinor = Number(event?.data?.amount ?? 0);
+        await markPaymentRefund(deliveryId, refundReference, refundStatus, amountMinor);
+        if (refundStatus === "processed") {
+          const payment = await findPayment(deliveryId);
+          const totalRefundedMinor = payment?.totalRefundedMinor ?? 0;
+          const fullyRefunded = Boolean(payment && totalRefundedMinor >= payment.amountMinor);
+          if (fullyRefunded) {
+            await updatePaymentStatus(deliveryId, "REFUNDED", transactionReference);
+          }
+          await recordDeliveryEvent({
+            deliveryId,
+            eventType: "REFUND_PROCESSED",
+            metadata: { provider: "paystack", transactionReference, refundReference, amountMinor, totalRefundedMinor, fullyRefunded }
+          });
+        } else if (refundStatus === "failed") {
+          await recordDeliveryEvent({ deliveryId, eventType: "REFUND_FAILED", metadata: { provider: "paystack", transactionReference, refundReference } });
+        } else {
+          await recordDeliveryEvent({ deliveryId, eventType: "REFUND_" + refundStatus.toUpperCase(), metadata: { provider: "paystack", transactionReference, refundReference } });
+        }
+      }
+    }
+    return res.status(200).json({ received: true });
+  }
+
+  if (event?.event === "transfer.success" || event?.event === "transfer.failed" || event?.event === "transfer.reversed") {
+    const reference = String(event?.data?.reference ?? "");
+    if (reference && databaseEnabled()) {
+      const failureReason = event?.data?.failures?.message ?? event?.data?.failures?.reason ?? null;
+      const providerAmount = Number(event?.data?.amount);
+      const providerCurrency = String(event?.data?.currency ?? "");
+      if (!Number.isSafeInteger(providerAmount) || providerAmount < 0) return res.status(200).json({ received: true });
+      const buySettlement=(await pool!.query("SELECT id,buy_order_id,amount_minor,currency,status FROM buy_order_settlements WHERE transfer_reference=$1 FOR UPDATE",[reference])).rows[0];
+      if(buySettlement){
+        const next=event.event==="transfer.success"?"PAID":event.event==="transfer.failed"?"FAILED":"REVERSED";
+        if(event.event==="transfer.success" && (providerAmount!==Number(buySettlement.amount_minor) || providerCurrency!==String(buySettlement.currency))){
+          await pool!.query("UPDATE buy_order_settlements SET status='FAILED',provider_status='amount_mismatch',failure_reason='Paystack transfer amount mismatch',updated_at=now() WHERE id=$1",[buySettlement.id]);
+        }else{
+          await pool!.query("UPDATE buy_order_settlements SET status=$2,provider_status=$3,failure_reason=$4,paid_at=CASE WHEN $2='PAID' THEN now() ELSE paid_at END,updated_at=now() WHERE id=$1",[buySettlement.id,next,String(event.event),failureReason]);
+        }
+      }
+      const commission=(await pool!.query("SELECT id,amount_minor,status FROM drop_off_commission_ledger WHERE provider_reference=$1 FOR UPDATE",[reference])).rows[0];
+      if(commission){
+        const next=event.event==="transfer.success"?"PAID":event.event==="transfer.failed"?"AVAILABLE":"AVAILABLE";
+        if(event.event==="transfer.success" && (providerAmount!==Number(commission.amount_minor) || providerCurrency!=="NGN")){
+          await pool!.query("UPDATE drop_off_commission_ledger SET status='AVAILABLE',provider_status='amount_mismatch',updated_at=now() WHERE id=$1",[commission.id]);
+        }else{
+          await pool!.query("UPDATE drop_off_commission_ledger SET status=$2,provider_status=$3,paid_at=CASE WHEN $2='PAID' THEN now() ELSE paid_at END,updated_at=now() WHERE id=$1",[commission.id,next,String(event.event)]);
+        }
+      }
+      const status = event.event === "transfer.success" ? "RELEASED" : event.event === "transfer.failed" ? "FAILED" : "CANCELLED";
+      const payout = await updatePayoutProviderStatus(reference,status,failureReason,Number(event?.data?.amount),String(event?.data?.currency ?? ""));
+      if(payout) await recordDeliveryEvent({deliveryId:payout.deliveryId,eventType:"PAYOUT_"+status,metadata:{provider:"paystack",reference}});
+      const walletClient=await pool!.connect();
+      try{
+        await walletClient.query("BEGIN");
+        const walletPayout=(await walletClient.query(
+          "SELECT pr.*,sw.id AS wallet_id,sw.currency FROM payout_requests pr JOIN stakeholder_wallets sw ON sw.id=pr.wallet_id WHERE pr.provider_reference=$1 FOR UPDATE OF pr,sw",
+          [reference]
+        )).rows[0];
+        if(walletPayout && walletPayout.status==="PROCESSING"){
+          const amount=Number(walletPayout.amount_minor);
+          const currencyMatches=providerCurrency===String(walletPayout.currency ?? "NGN");
+          const amountMatches=providerAmount===amount;
+          if(event.event==="transfer.success" && amountMatches && currencyMatches){
+            await walletClient.query("UPDATE payout_requests SET status='RELEASED',processed_at=COALESCE(processed_at,now()),failure_reason=NULL,updated_at=now() WHERE id=$1 AND status='PROCESSING'",[walletPayout.id]);
+            await walletClient.query("UPDATE stakeholder_wallets SET pending_minor=GREATEST(0,pending_minor-$2),updated_at=now() WHERE id=$1",[walletPayout.wallet_id,amount]);
+          }else{
+            const reason=!amountMatches || !currencyMatches ? "Paystack transfer amount or currency mismatch" : (failureReason ?? "Paystack transfer failed");
+            await walletClient.query("UPDATE payout_requests SET status='FAILED',failure_reason=$2,processed_at=COALESCE(processed_at,now()),updated_at=now() WHERE id=$1 AND status='PROCESSING'",[walletPayout.id,reason]);
+            await walletClient.query("UPDATE stakeholder_wallets SET balance_minor=balance_minor+$2,pending_minor=GREATEST(0,pending_minor-$2),updated_at=now() WHERE id=$1",[walletPayout.wallet_id,amount]);
+          }
+        }
+        await walletClient.query("COMMIT");
+      }catch(error){
+        await walletClient.query("ROLLBACK");
+        console.error(JSON.stringify({event:"wallet_payout_webhook_reconciliation_failed",reference,error:error instanceof Error?error.message:"unknown"}));
+      }finally{walletClient.release();}
+    }
+    return res.status(200).json({ received: true });
+  }
+
+  if (databaseEnabled() && (event?.event === "charge.success" || event?.event === "charge.failed")) {
+    const marketplaceReference = String(event?.data?.reference ?? "");
+    if (marketplaceReference) {
+      const client = await pool!.connect();
+      try {
+        await client.query("BEGIN");
+        const payment = (await client.query(
+          `SELECT mop.*, mo.quantity, mo.status AS order_status
+             FROM marketplace_order_payments mop
+             JOIN marketplace_orders mo ON mo.id=mop.marketplace_order_id
+            WHERE mop.provider_reference=$1
+            FOR UPDATE`,
+          [marketplaceReference]
+        )).rows[0];
+        if (payment) {
+          const providerAmount = Number(event?.data?.amount);
+          const providerCurrency = String(event?.data?.currency ?? "");
+          const amountMatches = Number.isSafeInteger(providerAmount) &&
+            providerAmount === Number(payment.amount_minor) &&
+            providerCurrency === String(payment.currency).trim();
+
+          if (event.event === "charge.success" && amountMatches) {
+            if (payment.order_status === "CANCELLED") {
+              // Keep it pending so the durable reconciliation worker can refund
+              // the late successful charge without blocking this webhook response.
+              await client.query(
+                `UPDATE marketplace_order_payments
+                    SET provider_status='success_after_cancellation', updated_at=now()
+                  WHERE id=$1 AND status='PENDING'`,
+                [payment.id]
+              );
+            } else {
+              await client.query(
+                `UPDATE marketplace_order_payments
+                    SET status='AUTHORIZED', provider_status='success', updated_at=now()
+                  WHERE id=$1 AND status='PENDING'`,
+                [payment.id]
+              );
+              await client.query(
+                `UPDATE marketplace_orders
+                    SET status='PAID', updated_at=now()
+                  WHERE id=$1 AND status='PENDING_PAYMENT'`,
+                [payment.marketplace_order_id]
+              );
+            }
+          } else if (event.event === "charge.failed" || !amountMatches) {
+            await client.query(
+              `UPDATE marketplace_order_payments
+                  SET status='FAILED',
+                      provider_status=$2,
+                      updated_at=now()
+                WHERE id=$1 AND status='PENDING'`,
+              [payment.id, !amountMatches ? "amount_mismatch" : "failed"]
+            );
+            const restored = await client.query(
+              `UPDATE marketplace_listings l
+                  SET stock_quantity=l.stock_quantity+$2,
+                      status=CASE WHEN l.status='SOLD_OUT' THEN 'PUBLISHED' ELSE l.status END,
+                      updated_at=now()
+                 FROM marketplace_orders mo
+                WHERE mo.id=$1 AND l.id=mo.listing_id AND mo.status='PENDING_PAYMENT'
+                RETURNING l.stock_quantity,l.status`,
+              [payment.marketplace_order_id, payment.quantity]
+            );
+            await client.query(
+              `UPDATE marketplace_orders
+                  SET status='CANCELLED', updated_at=now()
+                WHERE id=$1 AND status='PENDING_PAYMENT'`,
+              [payment.marketplace_order_id]
+            );
+            if (!restored.rows[0]) {
+              await client.query("ROLLBACK");
+              return res.status(500).json({ error: "Marketplace stock reconciliation failed" });
+            }
+          }
+        }
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        console.error(JSON.stringify({ event: "marketplace_payment_webhook_failed", reference: marketplaceReference, error: error instanceof Error ? error.message : "unknown" }));
+        return res.status(500).json({ error: "Marketplace payment processing failed" });
+      } finally {
+        client.release();
+      }
+      return res.status(200).json({ received: true });
+    }
+  }
+
+  const buyReference = String(event?.data?.reference ?? "");
+  if (buyReference && databaseEnabled() && (event?.event === "charge.success" || event?.event === "charge.failed")) {
+    const buyPaymentResult = await pool!.query(
+      "SELECT bop.*, bo.customer_user_id, bo.business_id, u.email AS customer_email, bo.payment_status AS order_payment_status FROM buy_order_payments bop JOIN buy_orders bo ON bo.id=bop.buy_order_id JOIN users u ON u.id=bo.customer_user_id WHERE bop.provider_reference=$1",
+      [buyReference]
+    );
+    const buyPayment = buyPaymentResult.rows[0];
+    if (buyPayment) {
+      if (event.event === "charge.failed") {
+        await pool!.query("UPDATE buy_order_payments SET status='FAILED', updated_at=now() WHERE id=$1 AND status NOT IN ('HELD','RELEASED','REFUNDED')", [buyPayment.id]);
+        await pool!.query("UPDATE buy_orders SET payment_status='FAILED', updated_at=now() WHERE id=$1 AND payment_status NOT IN ('HELD','REFUNDED')", [buyPayment.buy_order_id]);
+        return res.status(200).json({ received: true, duplicate: duplicateWebhook });
+      }
+      if (Number(event?.data?.amount) !== Number(buyPayment.amount_minor) || String(event?.data?.currency ?? "") !== String(buyPayment.currency)) {
+        await pool!.query("UPDATE buy_order_payments SET status='FAILED', updated_at=now() WHERE id=$1", [buyPayment.id]);
+        await pool!.query("UPDATE buy_orders SET payment_status='FAILED', updated_at=now() WHERE id=$1", [buyPayment.buy_order_id]);
+        return res.status(200).json({ received: true, duplicate: duplicateWebhook });
+      }
+
+      const authorization = event?.data?.authorization;
+      if (
+        buyPayment.business_id &&
+        buyPayment.customer_email &&
+        authorization?.reusable === true &&
+        typeof authorization.authorization_code === "string" &&
+        authorization.authorization_code.trim()
+      ) {
+        await pool!.query(
+          `INSERT INTO business_payment_authorizations
+             (business_id,user_id,provider,authorization_code,email,status,last_used_at,updated_at,signature,card_type,card_last4,card_exp_month,card_exp_year,bank,brand)
+           VALUES ($1,$2,'paystack',$3,$4,'ACTIVE',now(),now(),$5,$6,$7,$8,$9,$10,$11)
+           ON CONFLICT (business_id,user_id,provider)
+           DO UPDATE SET
+             authorization_code=EXCLUDED.authorization_code,
+             email=EXCLUDED.email,
+             status='ACTIVE',
+             last_used_at=now(),
+             updated_at=now(),
+             signature=EXCLUDED.signature,
+             card_type=EXCLUDED.card_type,
+             card_last4=EXCLUDED.card_last4,
+             card_exp_month=EXCLUDED.card_exp_month,
+             card_exp_year=EXCLUDED.card_exp_year,
+             bank=EXCLUDED.bank,
+             brand=EXCLUDED.brand`,
+          [
+            buyPayment.business_id,
+            buyPayment.customer_user_id,
+            authorization.authorization_code.trim(),
+            buyPayment.customer_email,
+            typeof authorization.signature === "string" ? authorization.signature.trim() : null,
+            typeof authorization.card_type === "string" ? authorization.card_type : null,
+            typeof authorization.last4 === "string" ? authorization.last4 : null,
+            typeof authorization.exp_month === "string" ? authorization.exp_month : null,
+            typeof authorization.exp_year === "string" ? authorization.exp_year : null,
+            typeof authorization.bank === "string" ? authorization.bank : null,
+            typeof authorization.brand === "string" ? authorization.brand : null
+          ]
+        );
+        await pool!.query(
+          `INSERT INTO buy_order_events
+             (buy_order_id,actor_user_id,event_type,metadata)
+           VALUES ($1,$2,'RECURRING_PAYMENT_AUTHORIZATION_SAVED',$3::jsonb)`,
+          [
+            buyPayment.buy_order_id,
+            buyPayment.customer_user_id,
+            JSON.stringify({ businessId: buyPayment.business_id, provider: "paystack" })
+          ]
+        );
+      }
+      await pool!.query("UPDATE buy_order_payments SET status='HELD', updated_at=now() WHERE id=$1 AND status NOT IN ('RELEASED','REFUNDED')", [buyPayment.id]);
+      await pool!.query("UPDATE buy_orders SET payment_status='HELD', updated_at=now() WHERE id=$1 AND payment_status NOT IN ('REFUNDED')", [buyPayment.buy_order_id]);
+      await pool!.query("INSERT INTO buy_order_events (buy_order_id, actor_user_id, event_type, metadata) VALUES ($1,$2,'PAYMENT_HELD',$3::jsonb)", [buyPayment.buy_order_id, buyPayment.customer_user_id, JSON.stringify({ provider: "paystack", reference: buyReference, amountMinor: Number(buyPayment.amount_minor) })]);
+      return res.status(200).json({ received: true, duplicate: duplicateWebhook });
+    }
+  }
+
+  if (databaseEnabled() && (event?.event === "dedicatedaccount.assign.success" || event?.event === "dedicatedaccount.assign.failed")) {
+    const dvaData = event?.data ?? {};
+    const customerCode = String(dvaData?.customer_code ?? "").trim();
+    const accountNumber = String(dvaData?.account_number ?? dvaData?.dedicated_account?.account_number ?? "").trim();
+    const providerSlug = String(dvaData?.bank?.slug ?? dvaData?.preferred_bank ?? dvaData?.dedicated_account?.bank?.slug ?? "").trim();
+    const providerReference = String(dvaData?.id ?? dvaData?.dedicated_account?.id ?? "").trim();
+    const client = await pool!.connect();
+    try {
+      await client.query("BEGIN");
+      const account = (await client.query(
+        `SELECT * FROM virtual_accounts
+           WHERE ($1 <> '' AND customer_code=$1)
+              OR ($2 <> '' AND provider_reference=$2)
+              OR ($3 <> '' AND account_number=$3)
+           ORDER BY CASE
+             WHEN $1 <> '' AND customer_code=$1 THEN 0
+             WHEN $2 <> '' AND provider_reference=$2 THEN 1
+             ELSE 2
+           END
+           LIMIT 1
+           FOR UPDATE`,
+        [customerCode, providerReference, accountNumber]
+      )).rows[0];
+      if (!account) { await client.query("COMMIT"); return res.status(200).json({ received: true, ignored: true }); }
+      if (event.event === "dedicatedaccount.assign.failed") {
+        await client.query(`UPDATE virtual_accounts SET status='FAILED',updated_at=now() WHERE id=$1 AND status='PROVISIONING'`,[account.id]);
+        await client.query("COMMIT");
+        return res.status(200).json({ received: true, dva: "failed" });
+      }
+      if (!customerCode || !accountNumber || !providerSlug) {
+        await client.query("ROLLBACK");
+        return res.status(500).json({ error: "Incomplete dedicated virtual account assignment payload" });
+      }
+      const updated=(await client.query(
+        `UPDATE virtual_accounts SET customer_code=$2,account_name=$3,account_number=$4,bank_name=$5,bank_code=$6,
+           provider_reference=COALESCE(NULLIF($7,''),provider_reference),provider_slug=$8,status='ACTIVE',updated_at=now()
+         WHERE id=$1 RETURNING order_id`,
+        [account.id,customerCode,dvaData.account_name ?? dvaData.dedicated_account?.account_name ?? null,accountNumber,
+         dvaData.bank?.name ?? dvaData.dedicated_account?.bank?.name ?? null,
+         dvaData.bank?.id ? String(dvaData.bank.id) : (dvaData.dedicated_account?.bank?.id ? String(dvaData.dedicated_account.bank.id) : null),
+         providerReference,providerSlug]
+      )).rows[0];
+      await client.query(
+        `INSERT INTO escrow_payment_attempts(order_id,method,provider_reference,amount_minor,idempotency_key)
+         SELECT $1,'BANK_TRANSFER',NULL,d.escrow_total_paid_minor,$2
+           FROM deliveries d
+          WHERE d.id=$1
+            AND d.escrow_total_paid_minor > 0
+            AND d.escrow_payment_state='pending_payment'
+            AND NOT EXISTS (
+              SELECT 1 FROM escrow_payment_attempts existing
+               WHERE existing.order_id=d.id AND existing.status='SUCCESS'
+            )
+         ON CONFLICT(idempotency_key) DO NOTHING`,
+        [updated.order_id,`dva:${updated.order_id}`]
+      );
+      await client.query("COMMIT");
+      return res.status(200).json({ received: true, dva: "active" });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error(JSON.stringify({ event:"dva_assignment_webhook_failed",error:error instanceof Error?error.message:"unknown" }));
+      return res.status(500).json({ error:"Dedicated virtual account processing failed" });
+    } finally { client.release(); }
+  }
+
+  if (databaseEnabled() && (event?.event === "charge.success" || event?.event === "charge.failed")) {
+    const escrowReference = String(event?.data?.reference ?? "");
+    if (escrowReference) {
+      const receiverAccountNumber = String(event?.data?.authorization?.receiver_bank_account_number ?? "");
+      const client=await pool!.connect();
+      try {
+        await client.query("BEGIN");
+        const attempt = (await client.query(
+          `SELECT epa.id, epa.order_id, epa.amount_minor, epa.status, d.customer_id
+             FROM escrow_payment_attempts epa
+             JOIN deliveries d ON d.id=epa.order_id
+            WHERE epa.method='BANK_TRANSFER'
+              AND (
+                epa.provider_reference=$1
+                OR (
+                  $2 <> ''
+                  AND epa.order_id IN (
+                    SELECT va.order_id FROM virtual_accounts va
+                     WHERE va.account_number=$2 AND va.status='ACTIVE'
+                  )
+                )
+              )
+            ORDER BY CASE WHEN epa.provider_reference=$1 THEN 0 ELSE 1 END
+            LIMIT 1
+            FOR UPDATE OF epa, d`,
+          [escrowReference, receiverAccountNumber]
+        )).rows[0];
+
+        if (attempt) {
+          if (attempt.status !== "PENDING") {
+            await client.query("COMMIT");
+            return res.status(200).json({received:true,duplicate:true,escrow:attempt.status === "SUCCESS" ? "paid_escrow" : undefined});
+          }
+
+          const providerAmount = Number(event?.data?.amount);
+          const providerCurrency = String(event?.data?.currency ?? "");
+          const amountMatches = Number.isSafeInteger(providerAmount) &&
+            providerAmount === Number(attempt.amount_minor) &&
+            providerCurrency === "NGN";
+
+          if (event.event === "charge.failed" || !amountMatches) {
+            await client.query(
+              `UPDATE escrow_payment_attempts SET status='FAILED',updated_at=now()
+               WHERE id=$1 AND status='PENDING'`,
+              [attempt.id]
+            );
+            await client.query(
+              `UPDATE escrow_ledgers SET state='pending_payment',provider_reference=CASE WHEN provider_reference IS NULL THEN $2 ELSE provider_reference END,updated_at=now()
+               WHERE order_id=$1 AND state='pending_payment'`,
+              [attempt.order_id, escrowReference]
+            );
+            await client.query("COMMIT");
+            await recordDeliveryEvent({deliveryId:attempt.order_id,eventType:"ESCROW_PAYMENT_FAILED",metadata:{provider:"paystack",reference:escrowReference,amountMatches}});
+            return res.status(200).json({received:true,duplicate:duplicateWebhook});
+          }
+
+          await client.query(
+            `UPDATE escrow_payment_attempts SET status='SUCCESS',updated_at=now()
+             WHERE id=$1 AND status='PENDING'`,
+            [attempt.id]
+          );
+          await client.query(
+            `UPDATE escrow_ledgers
+                SET state='paid_escrow',provider='paystack',provider_reference=$2,
+                    funded_at=COALESCE(funded_at,now()),updated_at=now()
+              WHERE order_id=$1 AND state='pending_payment'`,
+            [attempt.order_id,escrowReference]
+          );
+          await client.query(
+            `UPDATE deliveries
+                SET escrow_payment_state='paid_escrow',escrow_paid_at=COALESCE(escrow_paid_at,now())
+              WHERE id=$1 AND escrow_payment_state='pending_payment'`,
+            [attempt.order_id]
+          );
+          await client.query(
+            `UPDATE payments
+                SET status='HELD',escrow_status='HELD',provider_reference=COALESCE(provider_reference,$2),updated_at=now()
+              WHERE delivery_id=$1 AND collection_mode='SENDER_ESCROW'`,
+            [attempt.order_id,escrowReference]
+          );
+
+          const floatLatest=(await client.query("SELECT balance_after_minor FROM float_transactions ORDER BY created_at DESC LIMIT 1 FOR UPDATE")).rows[0];
+          const floatBalance=Number(floatLatest?.balance_after_minor ?? 0);
+          if (!Number.isSafeInteger(floatBalance)) {
+            throw new Error("Invalid escrow float balance");
+          }
+          await client.query(
+            `INSERT INTO float_transactions(type,amount_minor,balance_after_minor,order_id,provider_reference,metadata)
+             VALUES('ESCROW_IN',$1,$2,$3,$4,'{"reason":"paystack_escrow_funding"}'::jsonb)
+             ON CONFLICT DO NOTHING`,
+            [providerAmount,floatBalance+providerAmount,attempt.order_id,escrowReference]
+          );
+          await client.query("COMMIT");
+          await recordDeliveryEvent({deliveryId:attempt.order_id,eventType:"ESCROW_PAYMENT_FUNDED",metadata:{provider:"paystack",reference:escrowReference,amountMinor:providerAmount}});
+          return res.status(200).json({received:true,duplicate:duplicateWebhook,escrow:"paid_escrow"});
+        }
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        console.error(JSON.stringify({event:"escrow_payment_webhook_failed",reference:escrowReference,error:error instanceof Error?error.message:"unknown"}));
+        return res.status(500).json({error:"Escrow payment processing failed"});
+      } finally {
+        client.release();
+      }
+    }
+  }
+
+  if (event?.event !== "charge.success") return res.status(200).json({ received: true });
+
+  const data = event.data;
+  const deliveryId = String(data?.metadata?.deliveryId ?? "");
+  const reference = String(data?.reference ?? "");
+  if (!deliveryId || !reference) return res.status(200).json({ received: true });
+
+  const payment = await findPayment(deliveryId);
+  if (!payment || payment.provider !== "paystack" || (payment.providerReference && payment.providerReference !== reference)) {
+    return res.status(200).json({ received: true });
+  }
+
+  // Digital POD: server-only verification path
+  if (databaseEnabled() && payment.collectionMode === "PAY_ON_DELIVERY") {
+    const amountMinor = Number(data.amount);
+    if (event.event === "charge.success") {
+      const result = await applyPodPaymentVerified(deliveryId, reference, amountMinor);
+      if (!result.ok) {
+        console.error(JSON.stringify({ event: "pod_payment_verify_failed", deliveryId, reference, error: result.error }));
+        return res.status(200).json({ received: true, podError: result.error });
+      }
+      await updatePaymentStatus(deliveryId, "HELD", reference).catch(() => null);
+      return res.status(200).json({ received: true, pod: result.alreadyVerified ? "already_verified" : "PAYMENT_VERIFIED" });
+    }
+    await updatePaymentStatus(deliveryId, "FAILED", reference);
+    return res.status(200).json({ received: true, pod: "FAILED" });
+  }
+
   if (Number(data.amount) !== payment.amountMinor || String(data.currency) !== payment.currency) {
     await updatePaymentStatus(deliveryId, "FAILED", reference);
     return res.status(200).json({ received: true });
@@ -2746,6 +3582,9 @@ app.post("/api/deliveries/:id/complete", requireAuth("DRIVER"), async (req, res)
   if (!driverId) return res.status(403).json({ error: "Only KYC-verified drivers can manage deliveries" });
   const current = databaseEnabled() ? await findDelivery(routeParam(req.params.id, "id")) : deliveries.get(routeParam(req.params.id, "id"));
   if (!current || current.driverId !== driverId) return res.status(403).json({ error: "Driver is not assigned to this delivery" });
+  if (current.paymentMode === "PAY_ON_DELIVERY" && !podAllowsHandover(current.paymentMode, current.status as any, (current as any).podVerifiedAt ?? null)) {
+    return res.status(409).json({ error: "Receiver must complete digital payment in SwiftDrop before hand-over. Cash is not accepted." });
+  }
   if (current.status !== "ARRIVED") return res.status(409).json({ error: "Driver must mark the parcel arrived before receiver confirmation" });
   return res.status(409).json({ error: "Receiver confirmation is required to complete delivery and release payment" });
 });
