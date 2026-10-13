@@ -1818,7 +1818,8 @@ export type DriverPayoutAccount = {
   bankName?: string | null;
   accountName: string;
   accountLast4: string;
-  recipientCode: string;
+  recipientCode: string | null;
+  recipientVerified: boolean;
   currency: string;
 };
 
@@ -1827,9 +1828,10 @@ export async function getDriverPayoutAccount(driverId: string): Promise<DriverPa
   const result = await pool.query(
     `SELECT payout_bank_code AS "bankCode", payout_bank_name AS "bankName",
       payout_account_name AS "accountName", RIGHT(payout_account_number, 4) AS "accountLast4",
-      payout_recipient_code AS "recipientCode", 'NGN' AS currency
+      payout_recipient_code AS "recipientCode", recipient_verified AS "recipientVerified",
+      'NGN' AS currency
      FROM drivers
-     WHERE id=$1 AND payout_recipient_code IS NOT NULL`,
+     WHERE id=$1 AND payout_bank_code IS NOT NULL AND payout_account_number IS NOT NULL`,
     [driverId]
   );
   return result.rows[0] ?? null;
@@ -1841,18 +1843,26 @@ export async function saveDriverPayoutAccount(input: {
   bankName?: string;
   accountNumber: string;
   accountName: string;
-  recipientCode: string;
+  enteredAccountName: string;
+  resolvedAccountName: string;
+  recipientCode: string | null;
+  recipientVerified: boolean;
 }): Promise<DriverPayoutAccount | null> {
   if (!pool) return null;
   const result = await pool.query(
     `UPDATE drivers
      SET payout_bank_code=$2, payout_bank_name=$3, payout_account_number=$4,
-         payout_account_name=$5, payout_recipient_code=$6
+         payout_account_name=$5, payout_account_name_entered=$6,
+         payout_resolved_account_name=$7, payout_recipient_code=$8,
+         recipient_verified=$9,
+         recipient_verified_at=CASE WHEN $9 THEN now() ELSE NULL END
      WHERE id=$1
      RETURNING payout_bank_code AS "bankCode", payout_bank_name AS "bankName",
        payout_account_name AS "accountName", RIGHT(payout_account_number, 4) AS "accountLast4",
-       payout_recipient_code AS "recipientCode", 'NGN' AS currency`,
-    [input.driverId, input.bankCode, input.bankName ?? null, "*".repeat(6) + input.accountNumber.slice(-4), input.accountName, input.recipientCode]
+       payout_recipient_code AS "recipientCode", recipient_verified AS "recipientVerified",
+       'NGN' AS currency`,
+    [input.driverId, input.bankCode, input.bankName ?? null, input.accountNumber, input.accountName,
+      input.enteredAccountName, input.resolvedAccountName, input.recipientCode, input.recipientVerified]
   );
   return result.rows[0] ?? null;
 }
