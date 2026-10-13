@@ -37,7 +37,7 @@ import { reportExternalError } from "./errorTracking.js";
 import { processPhase2EscrowReleases, reconcilePhase2Float } from "./phase2EscrowWorker.js";
 import escrowRoutes, { reconcileProcessingWalletPayouts, requeryPendingDvaAccounts, reconcilePendingEscrowProviderPayments } from "./escrowRoutes.js";
 import { featureEnabled } from "./featureFlags.js";
-import { generateReceiverPin } from "./security.js";
+import { generateReceiverPin, hashPin } from "./security.js";
 
 const app = express();
 
@@ -114,7 +114,7 @@ type MemoryDelivery = {
   id: string; trackingCode: string; senderId: string; receiverName: string; receiverPhone: string;
   pickup: { label: string; formattedAddress: string; location: DeliveryLocation };
   dropoff: { label: string; formattedAddress: string; location: DeliveryLocation };
-  status: Status; paymentMode: "SENDER_ESCROW" | "RECEIVER_ESCROW"; deliveryType?: "EXPRESS" | "STANDARD"; goodsAmountMinor?: number; driverId?: string; pickupPhotoUrl?: string; proofRequirements?: { pickup: string[]; dropoff: string[] }; receiverPin: string;
+  status: Status; paymentMode: "SENDER_ESCROW" | "RECEIVER_ESCROW"; deliveryType?: "EXPRESS" | "STANDARD"; goodsAmountMinor?: number; driverId?: string; pickupPhotoUrl?: string; proofRequirements?: { pickup: string[]; dropoff: string[] }; receiverPinHash: string;
   quote?: DeliveryQuote; createdAt: string; updatedAt: string;
 };
 const deliveries = new Map<string, MemoryDelivery>();
@@ -681,7 +681,7 @@ app.post("/api/deliveries", requireAuth("CUSTOMER"), async (req, res) => {
       dropoff: { label: input.dropoff.label, formattedAddress: input.dropoff.formattedAddress, location: { latitude: input.dropoff.latitude, longitude: input.dropoff.longitude } },
       quote,
       status: "CREATED",
-      receiverPin: pin,
+      receiverPinHash: hashPin(pin),
       createdAt: now,
       updatedAt: now
     };
