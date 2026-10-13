@@ -2,6 +2,9 @@ const requiredProductionEnv = [
   "DATABASE_URL",
   "JWT_SECRET",
   "PAYSTACK_SECRET_KEY",
+  "PAYSTACK_PUBLIC_KEY",
+  "SMS_PROVIDER_API_KEY",
+  "PIN_HMAC_SECRET",
   "CORS_ORIGINS",
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
@@ -12,13 +15,17 @@ const requiredProductionEnv = [
 export function validateProductionConfig(): void {
   if (process.env.NODE_ENV !== "production") return;
 
+  if (process.env.ESCROW_MODE === "mock") {
+    throw new Error("Refusing to start: mock escrow in production");
+  }
+
   const missing = requiredProductionEnv.filter((name) => !process.env[name]?.trim());
   if (missing.length > 0) {
     throw new Error(`Missing required production environment variables: ${missing.join(", ")}`);
   }
 
   if (process.env.ESCROW_MODE !== "live") {
-    throw new Error("ESCROW_MODE must be live in production; mock escrow is never permitted in production");
+    throw new Error("ESCROW_MODE must be live in production; expected live");
   }
 
   if (process.env.PAYSTACK_SECRET_KEY?.startsWith("sk_test_")) {
@@ -28,7 +35,6 @@ export function validateProductionConfig(): void {
   if (process.env.JWT_SECRET === "development-only-change-me") {
     throw new Error("JWT_SECRET must not use the development fallback in production");
   }
-
 
   const origins = process.env.CORS_ORIGINS!
     .split(",")
