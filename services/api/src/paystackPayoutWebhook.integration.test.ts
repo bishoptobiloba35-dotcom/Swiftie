@@ -75,7 +75,7 @@ async function seedProcessingPayout(reference: string, amountMinor: number) {
       WHERE id=$1`,
     [payout.id, reference]
   );
-  return { deliveryId: delivery.id, payoutId: payout.id };
+  return { deliveryId: delivery.id, payoutId: payout.id, driverUserId: driverUser.id };
 }
 
 function terminateServer(): void {
@@ -165,6 +165,11 @@ test("Paystack payout webhook route reconciles success, failure and reversal wit
     assert.equal(duplicateFailedState.currency, "NGN");
 
     const reversed = await seedProcessingPayout("WEBHOOK-REVERSED-1", 70000);
+    await pool.query("UPDATE payouts SET status='RELEASED',net_amount_minor=70000,completed_at=now() WHERE id=$1", [reversed.payoutId]);
+    const wallet = (await pool.query(
+      `INSERT INTO stakeholder_wallets(user_id,stakeholder_type,balance_minor,pending_minor,currency)
+       VALUES($1,'COURIER',1000000,0,'NGN') RETURNING id`, [reversed.driverUserId]
+    )).rows[0];
     const reversedResponse = await postPaystackWebhook({
       event: "transfer.reversed",
       data: { reference: "WEBHOOK-REVERSED-1", amount: 70000, currency: "NGN" }
@@ -176,6 +181,10 @@ test("Paystack payout webhook route reconciles success, failure and reversal wit
     )).rows[0];
     assert.equal(reversedState.status, "REVERSED");
     assert.equal(reversedState.provider_status, "reversed");
+    const walletAfterReversal = (await pool.query("SELECT balance_minor FROM stakeholder_wallets WHERE id=$1", [wallet.id])).rows[0];
+    assert.equal(Number(walletAfterReversal.balance_minor), 930000);
+    const clawbackCount = (await pool.query("SELECT count(*)::int AS count FROM wallet_transactions WHERE idempotency_key=$1", ["driver-transfer-reversal:" + reversed.payoutId])).rows[0];
+    assert.equal(clawbackCount.count, 1);
 
     const duplicateReversedResponse = await postPaystackWebhook({
       event: "transfer.reversed",
@@ -189,6 +198,10 @@ test("Paystack payout webhook route reconciles success, failure and reversal wit
     assert.equal(duplicateReversedState.status, "REVERSED");
     assert.equal(duplicateReversedState.provider_status, "reversed");
     assert.equal(Number(duplicateReversedState.amount_minor), 70000);
+    const walletAfterDuplicate = (await pool.query("SELECT balance_minor FROM stakeholder_wallets WHERE id=$1", [wallet.id])).rows[0];
+    assert.equal(Number(walletAfterDuplicate.balance_minor), 930000);
+    const duplicateClawbackCount = (await pool.query("SELECT count(*)::int AS count FROM wallet_transactions WHERE idempotency_key=$1", ["driver-transfer-reversal:" + reversed.payoutId])).rows[0];
+    assert.equal(duplicateClawbackCount.count, 1);
     assert.equal(duplicateReversedState.currency, "NGN");
 
     const mismatch = await seedProcessingPayout("WEBHOOK-MISMATCH-1", 80000);
