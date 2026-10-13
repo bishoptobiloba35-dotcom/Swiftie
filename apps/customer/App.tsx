@@ -118,6 +118,9 @@ export default function App() {
   const [receiverRatingComment, setReceiverRatingComment] = React.useState("");
   const [receiverRatingSubmitted, setReceiverRatingSubmitted] = React.useState(false);
   const [receiverMode, setReceiverMode] = React.useState(false);
+  const [receiverPaymentEmail, setReceiverPaymentEmail] = React.useState("");
+  const [pendingPodPayment, setPendingPodPayment] = React.useState<ApiDelivery | null>(null);
+  const [orderPaymentMode, setOrderPaymentMode] = React.useState<"SENDER_ESCROW" | "PAY_ON_DELIVERY">("SENDER_ESCROW");
   const [email, setEmail] = React.useState("");
   const [quote, setQuote] = React.useState<Awaited<ReturnType<typeof api.quote>> | null>(null);
   const [includeProtection, setIncludeProtection] = React.useState(true);
@@ -174,11 +177,63 @@ export default function App() {
     return () => socketRef.current?.close();
   }, []);
 
+  React.useEffect(() => {
+    if (!signedIn || !pendingPodPayment) return;
+    const order = pendingPodPayment;
+    setPendingPodPayment(null);
+    setReceiverMode(true);
+    void (async () => {
+      const checkoutEmail = receiverPaymentEmail.trim() || authEmail.trim();
+      if (!checkoutEmail) {
+        Alert.alert("Payment email required", "Enter an email address for the recipient's Paystack checkout, then tap Pay securely again.");
+        return;
+      }
+      try {
+        const checkout = await api.initializeReceiverPayment(order.id, checkoutEmail);
+        if (!checkout.authorizationUrl) throw new Error("Payment provider did not return a checkout URL.");
+        await WebBrowser.openBrowserAsync(checkout.authorizationUrl);
+        const refreshed = await api.track(trackingCode.trim().toUpperCase(), trackingPhone.trim());
+        setDelivery(refreshed);
+        if (["PAYMENT_VERIFIED", "HANDED_OVER", "PIN_CONFIRMED", "DELIVERED"].includes(refreshed.status)) {
+          Alert.alert("Payment verified", "SwiftDrop has verified the digital payment. You can now confirm receipt with your receiver PIN.");
+        } else {
+          Alert.alert("Payment verification pending", "Do not hand over the parcel yet. SwiftDrop will allow handover only after the provider webhook verifies payment.");
+        }
+      } catch (error) {
+        Alert.alert("Unable to start digital payment", error instanceof Error ? error.message : "Please try again.");
+      }
+    })();
+  }, [signedIn, pendingPodPayment]);
+
+  async function beginReceiverPodPayment() {
+    try {
+      if (!trackingCode.trim() || !trackingPhone.trim()) throw new Error("Enter the tracking code and receiver phone number first.");
+      const tracked = await api.track(trackingCode.trim().toUpperCase(), trackingPhone.trim());
+      setDelivery(tracked);
+      if (tracked.paymentMode !== "PAY_ON_DELIVERY") throw new Error("This order was not placed with digital Pay-on-Delivery.");
+      if (!["ARRIVED", "RECEIVER_PAYMENT_PENDING"].includes(tracked.status)) throw new Error("Digital payment becomes available when the courier marks the parcel as arrived.");
+      if (!receiverPaymentEmail.trim() && !authEmail.trim()) throw new Error("Enter a payment email before continuing.");
+      if (!signedIn) {
+        setPendingPodPayment(tracked);
+        setAuthPhone(trackingPhone.trim());
+        setAuthMode("login");
+        setReceiverMode(false);
+        Alert.alert("Sign in to pay", "Sign in or create a SwiftDrop customer account using the same phone number registered as the receiver. We will then open the secure digital checkout.");
+        return;
+      }
+      setPendingPodPayment(tracked);
+    } catch (error) {
+      Alert.alert("Digital Pay-on-Delivery", error instanceof Error ? error.message : "Unable to prepare receiver payment.");
+    }
+  }
+
   async function signIn() {
     try {
       const data = await api.login(authPhone.trim(), authPassword);
       if (data.user.role !== "CUSTOMER") throw new Error("This account is not a customer account.");
       await AsyncStorage.setItem("swiftdrop.customerAccessToken", data.accessToken);
+      setAuthEmail(data.user.email ?? "");
+      setAuthEmail(data.user.email ?? authEmail);
       setSignedIn(true);
       void registerPushNotifications();
       void loadNotifications();
@@ -721,7 +776,7 @@ export default function App() {
         receiverName: receiver.trim(),
         receiverPhone: phone.trim(),
         receiverPin,
-        paymentMode: "SENDER_ESCROW",
+        paymentMode: orderPaymentMode,
         declaredValueMinor: Math.round(Number(declaredValue) * 100),
         includeProtection,
         weightKg: Number(weightKg),
@@ -737,6 +792,10 @@ export default function App() {
       });
       setDelivery(created);
       setTrackingCode(created.trackingCode);
+      if (orderPaymentMode === "PAY_ON_DELIVERY") {
+        Alert.alert("Order placed", "The recipient will pay digitally through SwiftDrop when the courier arrives. Cash is never accepted. Handover waits for payment-provider verification.");
+        return;
+      }
       const escrow = await api.createEscrow(created.id);
       const payment = await api.payEscrow(created.id, "PAYSTACK_CARD", crypto.randomUUID());
       if (payment?.authorizationUrl) await WebBrowser.openBrowserAsync(payment.authorizationUrl);
@@ -810,18 +869,24 @@ export default function App() {
     setDelivery(null);
   }
 
-  if (!signedIn && receiverMode) {
+  if (receiverMode) {
     return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.auth}>
       <Text style={styles.logo}>SwiftDrop</Text><Text style={styles.brandTag}>MOVE WITH CONFIDENCE</Text><Text style={styles.eyebrow}>RECEIVER</Text>
-      <Text style={styles.subtitle}>Confirm receipt with your PIN. Payment is secured in-app before delivery. Confirmation releases the held courier payout flow.</Text>
+      <Text style={styles.subtitle}>Track the parcel, pay digitally if Pay-on-Delivery was selected, then confirm receipt with your PIN. Cash is never accepted.</Text>
+      {signedIn && <Pressable onPress={() => setReceiverMode(false)}><Text style={styles.link}>Back to my SwiftDrop account</Text></Pressable>}
+      <TextInput style={styles.input} placeholder="Email for digital Pay-on-Delivery" value={receiverPaymentEmail} onChangeText={setReceiverPaymentEmail} keyboardType="email-address" autoCapitalize="none" />
       <TextInput style={styles.input} placeholder="Tracking code" value={trackingCode} onChangeText={setTrackingCode} autoCapitalize="characters" />
       <TextInput style={styles.input} placeholder="Receiver phone number" value={trackingPhone} onChangeText={setTrackingPhone} keyboardType="phone-pad" />
       <TextInput style={styles.input} placeholder="4-digit receiver PIN" value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} keyboardType="number-pad" secureTextEntry maxLength={4} />
+      <Pressable style={styles.secondary} onPress={() => void beginReceiverPodPayment()}><Text style={styles.secondaryText}>Pay securely in app (digital Pay-on-Delivery)</Text></Pressable>
       <Pressable style={styles.primary} onPress={() => void (async () => {
         try {
           const tracked = await api.track(trackingCode.trim().toUpperCase(), trackingPhone.trim());
           setDelivery(tracked);
-          if (tracked.status !== "ARRIVED") throw new Error("The courier has not marked the parcel as arrived yet.");
+          if (tracked.paymentMode === "PAY_ON_DELIVERY" && tracked.status !== "PAYMENT_VERIFIED") {
+            throw new Error("Digital payment must be verified by SwiftDrop before handover. Tap Pay securely in app first.");
+          }
+          if (!["ARRIVED", "PAYMENT_VERIFIED", "HANDED_OVER"].includes(tracked.status)) throw new Error("The courier has not marked the parcel as arrived yet.");
           const result = await api.confirmReceiver(tracked.id, trackingPhone.trim(), receiverConfirmPin);
           setDelivery(result.delivery);
           Alert.alert("Delivery complete", "Receipt confirmed. Courier payment has been released for payout.");
@@ -875,9 +940,6 @@ export default function App() {
         setHomeSection={setHomeSection}
         openNotifications={() => { setShowNotifications(v => !v); void loadNotifications(); }}
         signOut={() => void signOut()}
-        loadAccountMode={() => api.getAccountMode()}
-        switchAccountMode={(mode) => api.setAccountMode(mode)}
-        requestMerchantMode={() => api.requestMerchantMode()}
       />
     </SafeAreaView>;
   }
@@ -1230,14 +1292,20 @@ export default function App() {
       <Text>Weight: ₦{(quote.weightFareMinor / 100).toLocaleString()}</Text>
       <Text>Size/handling: ₦{(quote.sizeFareMinor / 100).toLocaleString()}</Text>
       {quote.perishableSurchargeMinor > 0 && <Text>Perishable/food surcharge: ₦{(quote.perishableSurchargeMinor / 100).toLocaleString()}</Text>}
-      <Text>Fuel reference: ₦{(quote.fuelReferenceMinor / 100).toLocaleString()} (2 litres)</Text><Pressable style={[styles.choice, includeProtection && styles.choiceActive]} onPress={() => setIncludeProtection(v => !v)} accessibilityRole="checkbox" accessibilityState={{ checked: includeProtection }}><Text style={styles.photoTitle}>{includeProtection ? "✓ " : ""}Refundable Protection Reserve · 10% of declared value</Text></Pressable><Text>Protection: ₦{(quote.protectionReserveMinor / 100).toLocaleString()}</Text><Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
+      <Text>Fuel reference: ₦{(quote.fuelReferenceMinor / 100).toLocaleString()} (2 litres)</Text>{quote.expressSurchargeMinor > 0 && <Text>Express surcharge: ₦{(quote.expressSurchargeMinor / 100).toLocaleString()}</Text>}<Text>Fuel surcharge: ₦{((quote.fuelSurchargeMinor ?? 0) / 100).toLocaleString()}</Text><Pressable style={[styles.choice, includeProtection && styles.choiceActive]} onPress={() => setIncludeProtection(v => !v)} accessibilityRole="checkbox" accessibilityState={{ checked: includeProtection }}><Text style={styles.photoTitle}>{includeProtection ? "✓ " : ""}Refundable Protection Reserve · 5% of declared value</Text></Pressable><Text>Protection: ₦{(quote.protectionReserveMinor / 100).toLocaleString()}</Text><Text>Service fee: ₦{(quote.serviceFeeMinor / 100).toLocaleString()}</Text>
       <Text style={styles.code}>Total: ₦{(quote.totalMinor / 100).toLocaleString()}</Text>    </View>}
     <View style={styles.card}>
-      <Text style={styles.heading}>Payment</Text>
-      <Text style={styles.muted}>Every SwiftDrop order is paid through in-app escrow. Cash on delivery is not available.</Text>
-      <Text style={styles.hint}>Payment is held until receiver PIN confirmation, then eligible stakeholder payouts are released according to the escrow ledger.</Text>
+      <Text style={styles.heading}>Payment method</Text>
+      <Pressable style={[styles.choice, orderPaymentMode === "SENDER_ESCROW" && styles.choiceActive]} onPress={() => setOrderPaymentMode("SENDER_ESCROW")} accessibilityRole="radio" accessibilityState={{ selected: orderPaymentMode === "SENDER_ESCROW" }}>
+        <Text style={styles.photoTitle}>{orderPaymentMode === "SENDER_ESCROW" ? "✓ " : ""}Pay now with SwiftDrop escrow</Text>
+        <Text style={styles.muted}>You pay digitally before dispatch. Funds remain protected until delivery completes.</Text>
+      </Pressable>
+      <Pressable style={[styles.choice, orderPaymentMode === "PAY_ON_DELIVERY" && styles.choiceActive]} onPress={() => setOrderPaymentMode("PAY_ON_DELIVERY")} accessibilityRole="radio" accessibilityState={{ selected: orderPaymentMode === "PAY_ON_DELIVERY" }}>
+        <Text style={styles.photoTitle}>{orderPaymentMode === "PAY_ON_DELIVERY" ? "✓ " : ""}Digital Pay-on-Delivery</Text>
+        <Text style={styles.muted}>The recipient pays in the app when the courier arrives. Cash is never accepted, and handover waits for provider verification.</Text>
+      </Pressable>
     </View>
-    <Pressable style={styles.primary} onPress={() => void createDelivery()}><Text style={styles.primaryText}>Place order & pay</Text></Pressable>
+    <Pressable style={styles.primary} onPress={() => void createDelivery()}><Text style={styles.primaryText}>{orderPaymentMode === "PAY_ON_DELIVERY" ? "Place order · recipient pays in app" : "Place order & pay"}</Text></Pressable>
     {delivery?.status === "PAYMENT_AUTHORIZED" && <Text style={styles.done}>✓ Payment verified — driver matching can begin.</Text>}
     {delivery && <Text style={styles.code}>Tracking code: {delivery.trackingCode}</Text>}
 
