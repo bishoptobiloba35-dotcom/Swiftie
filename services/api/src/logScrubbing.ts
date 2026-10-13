@@ -17,6 +17,12 @@ export function redactSensitiveLogText(value: string): string {
 
 function redactLogValue(value: unknown, fieldName?: string): unknown {
   if (fieldName && SENSITIVE_FIELD.test(fieldName)) return "[REDACTED]";
+  if (value instanceof Error) {
+    const safeError = new Error(redactSensitiveLogText(value.message));
+    safeError.name = redactSensitiveLogText(value.name);
+    if (value.stack) safeError.stack = redactSensitiveLogText(value.stack);
+    return safeError;
+  }
   if (typeof value === "string") return redactSensitiveLogText(value);
   if (Array.isArray(value)) return value.map(item => redactLogValue(item));
   if (value && typeof value === "object") {
