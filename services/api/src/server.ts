@@ -394,7 +394,7 @@ app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) =
     });
     const resolved = await resolveResponse.json() as { status?: boolean; message?: string; data?: { account_name?: string } };
     if (!resolveResponse.ok || !resolved.status || !resolved.data?.account_name) {
-      return res.status(400).json({ error: resolved.message ?? "Unable to verify the bank account" });
+      return res.status(400).json({ error: "Unable to verify the bank account. Check the bank and account details and try again." });
     }
     const legal = (await pool!.query("SELECT full_name FROM users WHERE id=$1", [driver.userId])).rows[0]?.full_name;
     if (!legal) return res.status(409).json({ error: "Your legal name is not available for payout verification." });
@@ -424,7 +424,7 @@ app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) =
     });
   } catch (error) {
     console.error(JSON.stringify({ event: "driver_payout_account_verification_failed", driverId: driver.id,
-      error: error instanceof Error ? error.message.replace(/\d{10}/g, "[redacted-account]") : "unknown" }));
+      errorType: error instanceof Error ? error.name : "unknown" }));
     return res.status(502).json({ error: "Unable to verify the payout account right now. Please try again." });
   }
 });
@@ -523,7 +523,9 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
   try {
     recipientCode = await ensureRecipient(driver.id);
   } catch (error) {
-    return res.status(409).json({ error: error instanceof Error ? error.message : "Verified payout recipient is unavailable." });
+    const message = error instanceof Error && /not verified|incomplete|Driver profile not found|not configured/.test(error.message)
+      ? error.message : "Verified payout recipient is unavailable. Please contact support.";
+    return res.status(409).json({ error: message });
   }
 
   const processing = await setPayoutProcessing(deliveryId, feeMinor);
@@ -963,7 +965,7 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   let durableWebhookEventId: string | null = null;
   if (databaseEnabled()) {
     const eventId = String(event?.event ?? "unknown") + ":" +
-      String(event?.data?.id ?? webhookReference ?? webhookHash);
+      String(event?.data?.id ?? (webhookReference || webhookHash));
     const durable = await pool!.query(
       `INSERT INTO webhook_events(provider,event_id,event_type,payload,status)
        VALUES('paystack',$1,$2,$3::jsonb,'processing')
@@ -985,7 +987,12 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
       providerReference: webhookReference || null
     }));
   }
-  if (duplicateWebhook) return res.status(200).json({ received: true, duplicate: true });
+  if (duplicateWebhook) {
+    if (durableWebhookEventId) {
+      await pool!.query("UPDATE webhook_events SET status='processed',processed_at=now() WHERE id=$1", [durableWebhookEventId]).catch(() => {});
+    }
+    return res.status(200).json({ received: true, duplicate: true });
+  }
 
   // A webhook may legitimately be retried after a transient 5xx. Finalize the
   // durable claim from the actual HTTP outcome so failed processing never becomes
