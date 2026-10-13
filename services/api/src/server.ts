@@ -40,7 +40,7 @@ import { featureEnabled } from "./featureFlags.js";
 import { generateReceiverPin, hashPin } from "./security.js";
 import { processDriverPayoutTransferEvent } from "./driverPayoutWebhook.js";
 import { ensureRecipient } from "./driverPayoutRecipients.js";
-import { calculatePayoutFeeMinor, payoutAccountNameMatches } from "./driverPayoutLogic.js";
+import { calculatePayoutFeeMinor, isDuplicatePaystackReferenceError, payoutAccountNameMatches, shouldReuseInFlightPayout } from "./driverPayoutLogic.js";
 import { reconcileDriverTransfersDaily } from "./driverPayoutReconciliation.js";
 
 const app = express();
@@ -483,7 +483,7 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
 
   // Stable per-payout idempotency: a timeout is inconclusive, so the same payout
   // remains PROCESSING and is reconciled instead of issuing another transfer.
-  if (payout.status === "PROCESSING" && payout.providerReference) {
+  if (shouldReuseInFlightPayout(payout.status, payout.providerReference)) {
     return res.status(202).json({ payout: {
       id: payout.id, deliveryId: payout.deliveryId, amountMinor: payout.amountMinor,
       currency: payout.currency, status: payout.status, providerStatus: payout.providerStatus,
