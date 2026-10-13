@@ -24,7 +24,8 @@ export async function processDriverPayoutTransferEvent(input: {
     const amountMatches = Number.isSafeInteger(input.amountMinor) && input.amountMinor === expected;
     const currencyMatches = input.currency.trim() === String(payout.currency ?? "NGN").trim();
     const mismatch = !amountMatches || !currencyMatches;
-    const status = input.eventType === "transfer.success" ? "RELEASED"
+    const status = mismatch && input.eventType === "transfer.success" ? "FAILED"
+      : input.eventType === "transfer.success" ? "RELEASED"
       : input.eventType === "transfer.failed" ? "FAILED" : "REVERSED";
     const providerStatus = mismatch ? "amount_mismatch"
       : input.eventType === "transfer.success" ? "success"
