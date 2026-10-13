@@ -19,7 +19,7 @@
 - A Paystack initiation timeout is inconclusive. Keep the same reference and let the reconciliation worker verify it.
 - Failed transfers are not automatically retried. An administrator must review the provider record and explicitly decide whether to re-queue the eligible payout.
 - A reversal after release marks the payout `REVERSED` and attempts an idempotent debit from the courier wallet. If the wallet is missing or lacks funds, an administrator notification is created for manual recovery.
-- Payouts above ₦1,000,000 are marked as requiring administrator approval and are not sent by the courier request endpoint.
+- Payouts above ₦1,000,000 are marked as requiring administrator approval and are not sent by the courier request endpoint until an authenticated admin uses POST /api/admin/payouts/:deliveryId/approve. Approval records the admin identity, timestamp, delivery event, and admin case audit.
 - A driver may initiate at most one payout request per minute.
 
 ## Manual retry procedure (admin only)
