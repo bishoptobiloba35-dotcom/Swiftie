@@ -671,8 +671,8 @@ router.get("/marketplace/listings/:id", async (req, res) => {
   return res.json({ listing: publicListing, recommended: publicRecommended });
 });
 
-// Any authenticated SwiftDrop user may sell ordinary everyday goods.
-// Selling is no longer restricted to the cancelled Merchant mode or approved Agents.
+// Individual users may sell ordinary everyday goods; approved Merchant accounts retain a dedicated account mode and workspace.
+// Listing ownership remains attached to the authenticated user, regardless of their currently selected mode.
 router.post("/marketplace/listings", requireAuth(), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Database is not configured" });
   const parsed = listingSchema.safeParse(req.body);

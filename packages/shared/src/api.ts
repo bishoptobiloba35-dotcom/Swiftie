@@ -133,6 +133,27 @@ export class SwiftDropApi {
     return data;
   }
 
+  async getAccountMode(): Promise<{ mode: "INDIVIDUAL" | "BUSINESS" | "MERCHANT"; accountType: string; businessRole: string | null; merchantStatus: string }> {
+    const response = await fetch(this.baseUrl + "/api/auth/mode", { headers: this.headers() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to load account mode");
+    return data;
+  }
+
+  async setAccountMode(mode: "INDIVIDUAL" | "BUSINESS" | "MERCHANT"): Promise<any> {
+    const response = await fetch(this.baseUrl + "/api/auth/mode", { method: "PATCH", headers: this.headers(true), body: JSON.stringify({ mode }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to switch account mode");
+    return data;
+  }
+
+  async requestMerchantMode(): Promise<{ merchantStatus: string }> {
+    const response = await fetch(this.baseUrl + "/api/auth/merchant-mode/request", { method: "POST", headers: this.headers(true), body: JSON.stringify({}) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Unable to request Merchant mode");
+    return data;
+  }
+
   async createEscrow(orderId: string): Promise<any> {
     const response = await fetch(this.baseUrl + "/api/escrow/create", { method:"POST", headers:this.headers(true), body:JSON.stringify({orderId})});
     const data=await response.json(); if(!response.ok) throw new Error(data.error ?? "Unable to create escrow"); return data.escrow;

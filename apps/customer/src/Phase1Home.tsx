@@ -8,19 +8,26 @@ type Props = {
   setHomeSection: (section: "HOME" | "ORDER" | "ERRAND" | "TRACK" | "SHOP" | "LOCATIONS" | "HISTORY" | "WALLET" | "ESCROW" | "PAYOUT") => void;
   openNotifications: () => void;
   signOut: () => void;
+  loadAccountMode: () => Promise<{ mode: "INDIVIDUAL" | "BUSINESS" | "MERCHANT"; merchantStatus: string }>;
+  switchAccountMode: (mode: "INDIVIDUAL" | "BUSINESS" | "MERCHANT") => Promise<any>;
+  requestMerchantMode: () => Promise<{ merchantStatus: string }>;
 };
 
 type Appearance = "system" | "light" | "dark";
-type Mode = "individual" | "business";
+type Mode = "individual" | "business" | "merchant";
+type ServerMode = "INDIVIDUAL" | "BUSINESS" | "MERCHANT";
 
 const palette = {
   light: { bg: "#E4EEE8", home: "#F3F7F4", card: "#FFFFFF", surf: "#FFFFFF", ink: "#0F1F17", mut: "#6B7D73", line: "#E1EBE5", primary: "#0F8A55", primaryDark: "#0B5A3A", accent: "#F5A524" },
   dark: { bg: "#08110D", home: "#0A150F", card: "#0E1A14", surf: "#15251D", ink: "#EAF3EE", mut: "#93AA9E", line: "#223A2E", primary: "#0F8A55", primaryDark: "#0F8A55", accent: "#F5A524" }
 };
 
-export default function Phase1Home({ delivery, notifications, setHomeSection, openNotifications, signOut }: Props) {
+export default function Phase1Home({ delivery, notifications, setHomeSection, openNotifications, signOut, loadAccountMode, switchAccountMode, requestMerchantMode }: Props) {
   const [appearance, setAppearance] = React.useState<Appearance>("system");
   const [mode, setMode] = React.useState<Mode>("individual");
+  const [merchantStatus, setMerchantStatus] = React.useState("NOT_REQUESTED");
+  const [modeError, setModeError] = React.useState("");
+  const [modeBusy, setModeBusy] = React.useState(false);
   const systemScheme = useColorScheme();
 
   React.useEffect(() => {
@@ -28,8 +35,13 @@ export default function Phase1Home({ delivery, notifications, setHomeSection, op
       const appearanceValue = entries[0][1];
       const modeValue = entries[1][1];
       if (appearanceValue === "system" || appearanceValue === "light" || appearanceValue === "dark") setAppearance(appearanceValue);
-      if (modeValue === "individual" || modeValue === "business") setMode(modeValue);
-    });
+      if (modeValue === "individual" || modeValue === "business" || modeValue === "merchant") setMode(modeValue);
+    }).catch(() => undefined);
+    loadAccountMode().then(value => {
+      setMode(value.mode.toLowerCase() as Mode);
+      setMerchantStatus(value.merchantStatus ?? "NOT_REQUESTED");
+      void AsyncStorage.setItem("swiftdrop.mode", value.mode.toLowerCase());
+    }).catch(() => undefined);
   }, []);
 
   const saveAppearance = async (value: Appearance) => {
@@ -37,8 +49,31 @@ export default function Phase1Home({ delivery, notifications, setHomeSection, op
     await AsyncStorage.setItem("swiftdrop.appearance", value);
   };
   const saveMode = async (value: Mode) => {
-    setMode(value);
-    await AsyncStorage.setItem("swiftdrop.mode", value);
+    setModeError("");
+    setModeBusy(true);
+    try {
+      await switchAccountMode(value.toUpperCase() as ServerMode);
+      setMode(value);
+      await AsyncStorage.setItem("swiftdrop.mode", value);
+      setHomeSection(value === "merchant" ? "SHOP" : "HOME");
+    } catch (error) {
+      setModeError(error instanceof Error ? error.message : "Unable to switch account mode");
+    } finally {
+      setModeBusy(false);
+    }
+  };
+
+  const applyForMerchantMode = async () => {
+    setModeError("");
+    setModeBusy(true);
+    try {
+      const result = await requestMerchantMode();
+      setMerchantStatus(result.merchantStatus);
+    } catch (error) {
+      setModeError(error instanceof Error ? error.message : "Unable to request Merchant mode");
+    } finally {
+      setModeBusy(false);
+    }
   };
 
   const isDark = appearance === "dark" || (appearance === "system" && systemScheme === "dark");
@@ -134,8 +169,24 @@ export default function Phase1Home({ delivery, notifications, setHomeSection, op
         </View>
 
         <View style={[styles.modeCard, { backgroundColor: c.card, borderColor: c.line }]}>
-          <View style={styles.modeText}><Text style={[styles.sectionTitle, { color: c.ink, marginBottom: 4 }]}>Account mode</Text><Text style={{ color: c.mut }}>{mode === "individual" ? "Individual · personal deliveries" : "Business · role workspace"}</Text></View>
-          <Pressable onPress={() => void saveMode(mode === "individual" ? "business" : "individual")} style={[styles.switch, { backgroundColor: c.primary }]}><View style={styles.switchKnob} /></Pressable>
+          <View style={styles.modeText}>
+            <Text style={[styles.sectionTitle, { color: c.ink, marginBottom: 4 }]}>Account mode</Text>
+            <Text style={{ color: c.mut }}>{mode === "individual" ? "Individual · personal deliveries" : mode === "merchant" ? "Merchant · listings, sales and fulfilment" : "Business · approved role workspace"}</Text>
+          </View>
+          <View style={[styles.segment, { backgroundColor: c.home }]}>
+            {(["individual", "business", "merchant"] as Mode[]).map(value => (
+              <Pressable key={value} disabled={modeBusy} onPress={() => void saveMode(value)} style={[styles.segmentItem, mode === value && { backgroundColor: c.primary }, { flex: 1, alignItems: "center" }]}>
+                <Text style={{ color: mode === value ? "#fff" : c.mut, fontWeight: "700", fontSize: 12 }}>{value === "individual" ? "Individual" : value === "business" ? "Business" : "Merchant"}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {merchantStatus !== "APPROVED" ? (
+            <View style={{ marginTop: 10 }}>
+              <Text style={{ color: c.mut, fontSize: 12 }}>Merchant mode status: {merchantStatus.toLowerCase().replaceAll("_", " ")}. Approval is required before switching into Merchant mode.</Text>
+              {merchantStatus !== "PENDING" && <Pressable disabled={modeBusy} onPress={() => void applyForMerchantMode()} style={[styles.aiButton, { marginTop: 8, alignSelf: "flex-start" }]}><Text style={styles.aiButtonText}>{modeBusy ? "Please wait…" : "Request Merchant access"}</Text></Pressable>}
+            </View>
+          ) : null}
+          {modeError ? <Text accessibilityRole="alert" style={{ color: "#B42318", fontSize: 12, marginTop: 8 }}>{modeError}</Text> : null}
         </View>
 
         <View style={[styles.appearanceCard, { backgroundColor: c.card, borderColor: c.line }]}>

@@ -875,6 +875,9 @@ export default function App() {
         setHomeSection={setHomeSection}
         openNotifications={() => { setShowNotifications(v => !v); void loadNotifications(); }}
         signOut={() => void signOut()}
+        loadAccountMode={() => api.getAccountMode()}
+        switchAccountMode={(mode) => api.setAccountMode(mode)}
+        requestMerchantMode={() => api.requestMerchantMode()}
       />
     </SafeAreaView>;
   }
