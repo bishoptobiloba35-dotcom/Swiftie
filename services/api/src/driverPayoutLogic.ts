@@ -8,7 +8,7 @@ export function calculatePayoutFeeMinor(amountMinor: number, mode: DriverPayoutM
 
 function nameParts(value: string): string[] {
   const honorifics = new Set(["mr", "mrs", "ms", "miss", "dr", "prof", "chief", "alhaji", "alhaja", "hon", "sir", "madam"]);
-  return value.toLocaleLowerCase("en-NG").replace(/[^a-z\\s'-]/g, " ").split(/[\\s'-]+/)
+  return value.toLocaleLowerCase("en-NG").replace(/[^a-z\s'-]/g, " ").split(/[\s'-]+/)
     .filter(Boolean).filter(part => !honorifics.has(part));
 }
 
