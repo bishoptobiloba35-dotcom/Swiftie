@@ -8,7 +8,7 @@ ALTER TABLE drivers
 
 ALTER TABLE payouts
   ADD COLUMN IF NOT EXISTS fee_minor INTEGER NOT NULL DEFAULT 0 CHECK (fee_minor >= 0),
-  ADD COLUMN IF NOT EXISTS net_amount_minor INTEGER,
+  ADD COLUMN IF NOT EXISTS net_amount_minor INTEGER CHECK (net_amount_minor IS NULL OR net_amount_minor > 0),
   ADD COLUMN IF NOT EXISTS idempotency_key TEXT,
   ADD COLUMN IF NOT EXISTS provider_transfer_code TEXT,
   ADD COLUMN IF NOT EXISTS requires_admin_approval BOOLEAN NOT NULL DEFAULT false,
