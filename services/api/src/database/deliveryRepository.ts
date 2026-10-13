@@ -1047,6 +1047,15 @@ export async function setPayoutProviderReference(deliveryId: string, providerRef
   return result.rows[0] ? rowToPayout(result.rows[0]) : null;
 }
 
+export async function setPayoutProviderTransferCode(providerReference: string, transferCode: string): Promise<void> {
+  if (!pool) return;
+  await pool.query(
+    `UPDATE payouts SET provider_transfer_code=$2, updated_at=now()
+      WHERE provider_reference=$1 AND provider='paystack'`,
+    [providerReference, transferCode]
+  );
+}
+
 export type AdminCaseAuditRecord = {
   id: string;
   deliveryId?: string | null;
@@ -1870,9 +1879,15 @@ export async function saveDriverPayoutAccount(input: {
 export async function setPayoutProcessing(deliveryId: string): Promise<PayoutRecord | null> {
   if (!pool) return null;
   const result = await pool.query(
-    `UPDATE payouts SET status='PROCESSING', provider='paystack', updated_at=now()
-     WHERE delivery_id=$1 AND status='ELIGIBLE'
-     RETURNING *`,
+    `UPDATE payouts
+        SET status='PROCESSING', provider='paystack',
+            net_amount_minor=amount_minor,
+            idempotency_key=COALESCE(idempotency_key, 'driver-payout:' || id::text),
+            requested_at=COALESCE(requested_at, now()),
+            requires_admin_approval=(amount_minor > 100000000),
+            updated_at=now()
+      WHERE delivery_id=$1 AND status='ELIGIBLE'
+      RETURNING *`,
     [deliveryId]
   );
   return result.rows[0] ? rowToPayout(result.rows[0]) : null;
