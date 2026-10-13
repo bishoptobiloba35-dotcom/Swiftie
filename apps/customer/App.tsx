@@ -177,11 +177,63 @@ export default function App() {
     return () => socketRef.current?.close();
   }, []);
 
+  React.useEffect(() => {
+    if (!signedIn || !pendingPodPayment) return;
+    const order = pendingPodPayment;
+    setPendingPodPayment(null);
+    setReceiverMode(true);
+    void (async () => {
+      const checkoutEmail = receiverPaymentEmail.trim() || authEmail.trim();
+      if (!checkoutEmail) {
+        Alert.alert("Payment email required", "Enter an email address for the recipient's Paystack checkout, then tap Pay securely again.");
+        return;
+      }
+      try {
+        const checkout = await api.initializeReceiverPayment(order.id, checkoutEmail);
+        if (!checkout.authorizationUrl) throw new Error("Payment provider did not return a checkout URL.");
+        await WebBrowser.openBrowserAsync(checkout.authorizationUrl);
+        const refreshed = await api.track(trackingCode.trim().toUpperCase(), trackingPhone.trim());
+        setDelivery(refreshed);
+        if (["PAYMENT_VERIFIED", "HANDED_OVER", "PIN_CONFIRMED", "DELIVERED"].includes(refreshed.status)) {
+          Alert.alert("Payment verified", "SwiftDrop has verified the digital payment. You can now confirm receipt with your receiver PIN.");
+        } else {
+          Alert.alert("Payment verification pending", "Do not hand over the parcel yet. SwiftDrop will allow handover only after the provider webhook verifies payment.");
+        }
+      } catch (error) {
+        Alert.alert("Unable to start digital payment", error instanceof Error ? error.message : "Please try again.");
+      }
+    })();
+  }, [signedIn, pendingPodPayment]);
+
+  async function beginReceiverPodPayment() {
+    try {
+      if (!trackingCode.trim() || !trackingPhone.trim()) throw new Error("Enter the tracking code and receiver phone number first.");
+      const tracked = await api.track(trackingCode.trim().toUpperCase(), trackingPhone.trim());
+      setDelivery(tracked);
+      if (tracked.paymentMode !== "PAY_ON_DELIVERY") throw new Error("This order was not placed with digital Pay-on-Delivery.");
+      if (!["ARRIVED", "RECEIVER_PAYMENT_PENDING"].includes(tracked.status)) throw new Error("Digital payment becomes available when the courier marks the parcel as arrived.");
+      if (!receiverPaymentEmail.trim() && !authEmail.trim()) throw new Error("Enter a payment email before continuing.");
+      if (!signedIn) {
+        setPendingPodPayment(tracked);
+        setAuthPhone(trackingPhone.trim());
+        setAuthMode("login");
+        setReceiverMode(false);
+        Alert.alert("Sign in to pay", "Sign in or create a SwiftDrop customer account using the same phone number registered as the receiver. We will then open the secure digital checkout.");
+        return;
+      }
+      setPendingPodPayment(tracked);
+    } catch (error) {
+      Alert.alert("Digital Pay-on-Delivery", error instanceof Error ? error.message : "Unable to prepare receiver payment.");
+    }
+  }
+
   async function signIn() {
     try {
       const data = await api.login(authPhone.trim(), authPassword);
       if (data.user.role !== "CUSTOMER") throw new Error("This account is not a customer account.");
       await AsyncStorage.setItem("swiftdrop.customerAccessToken", data.accessToken);
+      setAuthEmail(data.user.email ?? "");
+      setAuthEmail(data.user.email ?? authEmail);
       setSignedIn(true);
       void registerPushNotifications();
       void loadNotifications();
@@ -817,18 +869,24 @@ export default function App() {
     setDelivery(null);
   }
 
-  if (!signedIn && receiverMode) {
+  if (receiverMode) {
     return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.auth}>
       <Text style={styles.logo}>SwiftDrop</Text><Text style={styles.brandTag}>MOVE WITH CONFIDENCE</Text><Text style={styles.eyebrow}>RECEIVER</Text>
-      <Text style={styles.subtitle}>Confirm receipt with your PIN. Payment is secured in-app before delivery. Confirmation releases the held courier payout flow.</Text>
+      <Text style={styles.subtitle}>Track the parcel, pay digitally if Pay-on-Delivery was selected, then confirm receipt with your PIN. Cash is never accepted.</Text>
+      {signedIn && <Pressable onPress={() => setReceiverMode(false)}><Text style={styles.link}>Back to my SwiftDrop account</Text></Pressable>}
+      <TextInput style={styles.input} placeholder="Email for digital Pay-on-Delivery" value={receiverPaymentEmail} onChangeText={setReceiverPaymentEmail} keyboardType="email-address" autoCapitalize="none" />
       <TextInput style={styles.input} placeholder="Tracking code" value={trackingCode} onChangeText={setTrackingCode} autoCapitalize="characters" />
       <TextInput style={styles.input} placeholder="Receiver phone number" value={trackingPhone} onChangeText={setTrackingPhone} keyboardType="phone-pad" />
       <TextInput style={styles.input} placeholder="4-digit receiver PIN" value={receiverConfirmPin} onChangeText={setReceiverConfirmPin} keyboardType="number-pad" secureTextEntry maxLength={4} />
+      <Pressable style={styles.secondary} onPress={() => void beginReceiverPodPayment()}><Text style={styles.secondaryText}>Pay securely in app (digital Pay-on-Delivery)</Text></Pressable>
       <Pressable style={styles.primary} onPress={() => void (async () => {
         try {
           const tracked = await api.track(trackingCode.trim().toUpperCase(), trackingPhone.trim());
           setDelivery(tracked);
-          if (tracked.status !== "ARRIVED") throw new Error("The courier has not marked the parcel as arrived yet.");
+          if (tracked.paymentMode === "PAY_ON_DELIVERY" && tracked.status !== "PAYMENT_VERIFIED") {
+            throw new Error("Digital payment must be verified by SwiftDrop before handover. Tap Pay securely in app first.");
+          }
+          if (!["ARRIVED", "PAYMENT_VERIFIED", "HANDED_OVER"].includes(tracked.status)) throw new Error("The courier has not marked the parcel as arrived yet.");
           const result = await api.confirmReceiver(tracked.id, trackingPhone.trim(), receiverConfirmPin);
           setDelivery(result.delivery);
           Alert.alert("Delivery complete", "Receipt confirmed. Courier payment has been released for payout.");
