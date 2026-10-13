@@ -470,10 +470,15 @@ export type PayoutRecord = {
   deliveryId: string;
   driverId: string;
   amountMinor: number;
+  feeMinor: number;
+  netAmountMinor: number | null;
   currency: string;
   status: "PENDING" | "ELIGIBLE" | "PROCESSING" | "RELEASED" | "FAILED" | "CANCELLED" | "REVERSED";
   provider?: string | null;
   providerReference?: string | null;
+  providerTransferCode?: string | null;
+  idempotencyKey?: string | null;
+  requiresAdminApproval?: boolean;
   providerStatus?: string | null;
   failureReason?: string | null;
   processedAt?: string | null;
@@ -485,10 +490,15 @@ function rowToPayout(row: any): PayoutRecord {
     deliveryId: row.delivery_id,
     driverId: row.driver_id,
     amountMinor: Number(row.amount_minor),
+    feeMinor: Number(row.fee_minor ?? 0),
+    netAmountMinor: row.net_amount_minor == null ? null : Number(row.net_amount_minor),
     currency: row.currency,
     status: row.status,
     provider: row.provider ?? null,
     providerReference: row.provider_reference ?? null,
+    providerTransferCode: row.provider_transfer_code ?? null,
+    idempotencyKey: row.idempotency_key ?? null,
+    requiresAdminApproval: Boolean(row.requires_admin_approval),
     providerStatus: row.provider_status ?? null,
     failureReason: row.failure_reason ?? null,
     processedAt: row.processed_at ? new Date(row.processed_at).toISOString() : null
