@@ -22,12 +22,12 @@ UPDATE payouts
  WHERE net_amount_minor IS NULL OR idempotency_key IS NULL OR requested_at IS NULL;
 
 ALTER TABLE payouts
-  ALTER COLUMN net_amount_minor SET NOT NULL,
-  ALTER COLUMN idempotency_key SET NOT NULL,
   ALTER COLUMN requested_at SET DEFAULT now();
 
+-- Legacy delivery-eligible payouts may not yet have transfer idempotency keys.
+-- The driver-transfer route sets the key before calling Paystack.
 CREATE UNIQUE INDEX IF NOT EXISTS payouts_idempotency_key_uniq
-  ON payouts(idempotency_key);
+  ON payouts(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS payouts_driver_id_idx ON payouts(driver_id);
 CREATE INDEX IF NOT EXISTS payouts_status_active_idx ON payouts(status)
   WHERE status IN ('PENDING','PROCESSING','ELIGIBLE');
