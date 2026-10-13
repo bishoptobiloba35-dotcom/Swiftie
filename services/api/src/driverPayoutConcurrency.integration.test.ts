@@ -42,6 +42,8 @@ test("driver cannot begin a second payout while another payout is processing", a
     assert.equal(active?.deliveryId, deliveryA.id);
     assert.equal(await findActiveDriverPayout(driver.id, payoutA.id), null);
   } finally {
+    const deliveryIds = [deliveryA?.id, deliveryB?.id].filter((id): id is string => Boolean(id));
+    if (deliveryIds.length) await pool.query("DELETE FROM payouts WHERE delivery_id = ANY($1::uuid[])", [deliveryIds]);
     if (deliveryA) await pool.query("DELETE FROM deliveries WHERE id=$1", [deliveryA.id]);
     if (deliveryB) await pool.query("DELETE FROM deliveries WHERE id=$1", [deliveryB.id]);
     await pool.query("DELETE FROM drivers WHERE id=$1", [driver.id]);
