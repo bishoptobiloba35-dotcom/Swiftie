@@ -74,13 +74,6 @@ async function ensureBusinessSpendReservation(orderId: string): Promise<void> {
        FROM buy_orders bo
       WHERE bo.id=$1
         AND bo.business_id IS NOT NULL
-        AND EXISTS (
-          SELECT 1
-            FROM business_spend_ledger r
-           WHERE r.business_id=bo.business_id
-             AND r.reference_id=bo.id
-             AND r.reference_type='BUY_ORDER_RESERVATION'
-        )
         AND (
           SELECT COALESCE(SUM(
             CASE WHEN ledger.reference_type='BUY_ORDER_RESERVATION' THEN ledger.amount_minor
