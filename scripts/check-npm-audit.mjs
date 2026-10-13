@@ -39,7 +39,8 @@ const highOrCritical = severity => severity === "high" || severity === "critical
 function isCoveredByException(packageName, seen = new Set()) {
   const vulnerability = vulnerabilities[packageName];
   if (!vulnerability || !highOrCritical(vulnerability.severity)) return true;
-  if (seen.has(packageName) || !Array.isArray(vulnerability.via) || vulnerability.via.length === 0) return false;
+  if (seen.has(packageName)) return true; // Dependency cycles are allowed only after every direct advisory edge is checked.
+  if (!Array.isArray(vulnerability.via) || vulnerability.via.length === 0) return false;
 
   const nextSeen = new Set(seen);
   nextSeen.add(packageName);
@@ -48,7 +49,10 @@ function isCoveredByException(packageName, seen = new Set()) {
     if (!item || typeof item !== "object") return false;
     if (item.severity && !highOrCritical(item.severity)) return true;
     const advisory = typeof item.url === "string" ? item.url.match(/GHSA-[a-z0-9-]+/i)?.[0]?.toUpperCase() : undefined;
-    if (advisory && exceptionAdvisories.has(advisory) && exceptionPackages.has(packageName)) return true;
+    if (typeof item.url === "string") {
+      const affectedPackage = typeof item.name === "string" ? item.name : packageName;
+      return Boolean(advisory && exceptionAdvisories.has(advisory) && exceptionPackages.has(affectedPackage));
+    }
     // A parent dependency is exempt only when every high/critical child is
     // transitively covered by a specifically documented package exception.
     if (typeof item.name === "string") return isCoveredByException(item.name, nextSeen);
