@@ -28,7 +28,7 @@
 2. Inspect the Paystack dashboard and call Paystack's transfer-verify endpoint for the exact reference.
 3. Check the latest `reconciliation_runs`, webhook event status, amount/currency, and wallet ledger.
 4. Do not re-send a transfer if Paystack shows it as pending, successful, or already associated with that reference.
-5. For payouts above ₦1,000,000, record explicit admin approval through `POST /api/admin/payouts/:id/approve` before initiating the transfer. Only after Paystack confirms the original transfer failed and the failure has been reviewed should an administrator reset that payout to an eligible state. Keep the original provider reference in audit history; use a new idempotency key/reference for an explicitly approved new attempt.
+5. For payouts above ₦1,000,000, record explicit admin approval through `POST /api/admin/payouts/:id/approve` before initiating the transfer. Only after Paystack confirms the original transfer failed and the failure has been reviewed should an administrator reset that payout to an eligible state. The local payout idempotency key remains stable for the payout; the prior provider reference is copied into the retry event and admin case audit before a new provider reference is reserved.
 6. Record the administrator, reason, original reference, and replacement reference in the admin case audit.
 
 ## Reconciliation runbook
