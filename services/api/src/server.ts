@@ -46,6 +46,71 @@ function routeParam(value: string | string[] | undefined, name: string): string 
   throw new Error(`Missing or invalid route parameter: ${name}`);
 }
 
+const PAYSTACK_BANK_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+let paystackBankCache: { expiresAt: number; banks: Array<{ name: string; code: string; slug?: string }> } | null = null;
+
+function comparableLegalName(value: string): string[] {
+  const ignored = new Set(["mr", "mrs", "ms", "miss", "dr", "prof", "chief", "alhaji", "alhaja", "hon", "sir", "madam"]);
+  return value.toLocaleLowerCase("en-NG").replace(/[^a-z\\s'-]/g, " ").split(/[\\s'-]+/)
+    .filter(Boolean).filter(part => !ignored.has(part));
+}
+
+function payoutAccountNameMatches(legalName: string, resolvedName: string): boolean {
+  const legal = comparableLegalName(legalName);
+  const resolved = comparableLegalName(resolvedName);
+  if (legal.length < 2 || resolved.length < 2) return false;
+  // Compare first and last names only, allowing omitted middle names and honorifics.
+  return legal[0] === resolved[0] && legal[legal.length - 1] === resolved[resolved.length - 1];
+}
+
+async function ensureRecipient(driverId: string): Promise<string> {
+  if (!pool) throw new Error("Payouts require the production database");
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  if (!secret) throw new Error("Paystack transfers are not configured");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const row = (await client.query(
+      `SELECT payout_bank_code, payout_bank_name, payout_account_number, payout_account_name,
+              payout_recipient_code, recipient_verified
+         FROM drivers WHERE id=$1 FOR UPDATE`, [driverId]
+    )).rows[0];
+    if (!row) throw new Error("Driver profile not found");
+    if (!row.recipient_verified) throw new Error("Payout bank account is not verified");
+    if (row.payout_recipient_code) {
+      await client.query("COMMIT");
+      return String(row.payout_recipient_code);
+    }
+    if (!row.payout_bank_code || !row.payout_account_number || !row.payout_account_name) {
+      throw new Error("Verified payout bank details are incomplete");
+    }
+    const response = await fetch("https://api.paystack.co/transferrecipient", {
+      method: "POST",
+      headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "nuban", name: row.payout_account_name,
+        account_number: row.payout_account_number, bank_code: row.payout_bank_code, currency: "NGN"
+      }),
+      signal: AbortSignal.timeout(15_000)
+    });
+    const payload = await response.json() as { status?: boolean; message?: string; data?: { recipient_code?: string } };
+    if (!response.ok || !payload.status || !payload.data?.recipient_code) {
+      throw new Error(payload.message ?? "Unable to create payout recipient");
+    }
+    await client.query(
+      "UPDATE drivers SET payout_recipient_code=$2 WHERE id=$1 AND recipient_verified=true",
+      [driverId, payload.data.recipient_code]
+    );
+    await client.query("COMMIT");
+    return payload.data.recipient_code;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 const httpServer = createServer(app);
 const allowedOrigins = (process.env.CORS_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean);
 app.use(cors({
@@ -333,12 +398,38 @@ app.post("/api/deliveries/:id/rating/receiver", async (req, res) => {
   }
 });
 
+app.get("/api/driver/banks", requireAuth("DRIVER"), async (_req, res) => {
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  if (!secret) return res.status(503).json({ error: "Paystack bank directory is not configured" });
+  if (paystackBankCache && paystackBankCache.expiresAt > Date.now()) return res.json({ banks: paystackBankCache.banks });
+  try {
+    const response = await fetch("https://api.paystack.co/bank?country=nigeria&perPage=200", {
+      headers: { authorization: "Bearer " + secret }, signal: AbortSignal.timeout(10_000)
+    });
+    const payload = await response.json() as { status?: boolean; message?: string; data?: Array<{ name?: string; code?: string; slug?: string }> };
+    if (!response.ok || !payload.status || !Array.isArray(payload.data)) {
+      return res.status(502).json({ error: "Unable to load the Nigerian bank directory" });
+    }
+    const banks = payload.data.filter(bank => bank.name && bank.code)
+      .map(bank => ({ name: String(bank.name), code: String(bank.code), slug: bank.slug ? String(bank.slug) : undefined }))
+      .sort((a,b) => a.name.localeCompare(b.name));
+    paystackBankCache = { expiresAt: Date.now() + PAYSTACK_BANK_CACHE_TTL_MS, banks };
+    return res.json({ banks });
+  } catch {
+    return res.status(503).json({ error: "Bank directory temporarily unavailable" });
+  }
+});
+
 app.get("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Payout account requires the production database" });
   const driver = await driverForUser(identity(req));
   if (!driver) return res.status(404).json({ error: "Driver profile not found" });
   const account = await getDriverPayoutAccount(driver.id);
-  return res.json({ account: account ? { bankCode: account.bankCode, bankName: account.bankName, accountName: account.accountName, accountLast4: account.accountLast4, currency: account.currency } : null });
+  return res.json({ account: account ? {
+    bankCode: account.bankCode, bankName: account.bankName, accountName: account.accountName,
+    accountLast4: account.accountLast4, currency: account.currency,
+    recipientVerified: account.recipientVerified
+  } : null });
 });
 
 app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) => {
@@ -346,32 +437,53 @@ app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) =
   const driver = await driverForUser(identity(req));
   if (!driver) return res.status(404).json({ error: "Driver profile not found" });
   const parsed = z.object({
-    bankCode: z.string().regex(/^\d{3,6}$/),
-    accountNumber: z.string().regex(/^\d{10}$/)
+    bankCode: z.string().regex(/^\\d{3,6}$/),
+    bankName: z.string().trim().min(2).max(100).optional(),
+    accountNumber: z.string().regex(/^\\d{10}$/),
+    accountName: z.string().trim().min(2).max(120)
   }).safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "A valid Nigerian bank code and 10-digit account number are required" });
+  if (!parsed.success) return res.status(400).json({ error: "Select a bank and enter the 10-digit account number and account holder name." });
   const secret = process.env.PAYSTACK_SECRET_KEY;
   if (!secret) return res.status(503).json({ error: "Paystack transfers are not configured" });
-  const resolveResponse = await fetch("https://api.paystack.co/bank/resolve?account_number=" + encodeURIComponent(parsed.data.accountNumber) + "&bank_code=" + encodeURIComponent(parsed.data.bankCode), {
-    headers: { authorization: "Bearer " + secret }
-  });
-  const resolved = await resolveResponse.json() as { status?: boolean; message?: string; data?: { account_name?: string } };
-  if (!resolveResponse.ok || !resolved.status || !resolved.data?.account_name) return res.status(400).json({ error: resolved.message ?? "Unable to verify the bank account" });
-  const recipientResponse = await fetch("https://api.paystack.co/transferrecipient", {
-    method: "POST",
-    headers: { authorization: "Bearer " + secret, "content-type": "application/json" },
-    body: JSON.stringify({ type: "nuban", name: resolved.data.account_name, account_number: parsed.data.accountNumber, bank_code: parsed.data.bankCode, currency: "NGN" })
-  });
-  const recipient = await recipientResponse.json() as { status?: boolean; message?: string; data?: { recipient_code?: string } };
-  if (!recipientResponse.ok || !recipient.status || !recipient.data?.recipient_code) return res.status(400).json({ error: recipient.message ?? "Unable to create payout recipient" });
-  const account = await saveDriverPayoutAccount({
-    driverId: driver.id,
-    bankCode: parsed.data.bankCode,
-    accountNumber: parsed.data.accountNumber,
-    accountName: resolved.data.account_name,
-    recipientCode: recipient.data.recipient_code
-  });
-  return res.status(201).json({ account: account ? { bankCode: account.bankCode, bankName: account.bankName, accountName: account.accountName, accountLast4: account.accountLast4, currency: account.currency } : null });
+  try {
+    const resolveResponse = await fetch("https://api.paystack.co/bank/resolve?account_number=" + encodeURIComponent(parsed.data.accountNumber) + "&bank_code=" + encodeURIComponent(parsed.data.bankCode), {
+      headers: { authorization: "Bearer " + secret }, signal: AbortSignal.timeout(10_000)
+    });
+    const resolved = await resolveResponse.json() as { status?: boolean; message?: string; data?: { account_name?: string } };
+    if (!resolveResponse.ok || !resolved.status || !resolved.data?.account_name) {
+      return res.status(400).json({ error: resolved.message ?? "Unable to verify the bank account" });
+    }
+    const legal = (await pool!.query("SELECT full_name FROM users WHERE id=$1", [driver.userId])).rows[0]?.full_name;
+    if (!legal) return res.status(409).json({ error: "Your legal name is not available for payout verification." });
+    const verified = payoutAccountNameMatches(String(legal), String(resolved.data.account_name));
+    // Keep the driver's entered name separate from the provider's resolved name.
+    // An unmatched resolved name is never written into payout_account_name.
+    const account = await saveDriverPayoutAccount({
+      driverId: driver.id,
+      bankCode: parsed.data.bankCode,
+      bankName: parsed.data.bankName,
+      accountNumber: parsed.data.accountNumber,
+      accountName: verified ? String(resolved.data.account_name) : parsed.data.accountName,
+      enteredAccountName: parsed.data.accountName,
+      resolvedAccountName: String(resolved.data.account_name),
+      recipientCode: null,
+      recipientVerified: verified
+    });
+    return res.status(verified ? 200 : 202).json({
+      account: account ? {
+        bankCode: account.bankCode, bankName: account.bankName, accountName: account.accountName,
+        accountLast4: account.accountLast4, currency: account.currency, recipientVerified: account.recipientVerified
+      } : null,
+      verificationPending: !verified,
+      message: verified
+        ? "Bank account name verified. Paystack recipient will be created securely when your first payout is requested."
+        : "We couldn't verify the account name. Our team will review this within 24 hours."
+    });
+  } catch (error) {
+    console.error(JSON.stringify({ event: "driver_payout_account_verification_failed", driverId: driver.id,
+      error: error instanceof Error ? error.message.replace(/\\d{10}/g, "[redacted-account]") : "unknown" }));
+    return res.status(502).json({ error: "Unable to verify the payout account right now. Please try again." });
+  }
 });
 
 app.get("/api/driver/payouts", requireAuth("DRIVER"), async (req, res) => {
