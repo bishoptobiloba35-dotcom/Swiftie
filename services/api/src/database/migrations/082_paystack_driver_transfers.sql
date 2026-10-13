@@ -24,6 +24,11 @@ UPDATE payouts
 ALTER TABLE payouts
   ALTER COLUMN requested_at SET DEFAULT now();
 
+-- Keep the existing uppercase state convention while making reversals explicit.
+ALTER TABLE payouts DROP CONSTRAINT IF EXISTS payouts_status_check;
+ALTER TABLE payouts ADD CONSTRAINT payouts_status_check
+  CHECK (status IN ('PENDING','ELIGIBLE','PROCESSING','RELEASED','FAILED','CANCELLED','REVERSED'));
+
 -- Legacy delivery-eligible payouts may not yet have transfer idempotency keys.
 -- The driver-transfer route sets the key before calling Paystack.
 CREATE UNIQUE INDEX IF NOT EXISTS payouts_idempotency_key_uniq
@@ -63,3 +68,9 @@ CREATE TABLE IF NOT EXISTS driver_payout_request_limits (
   driver_id UUID PRIMARY KEY REFERENCES drivers(id) ON DELETE CASCADE,
   last_requested_at TIMESTAMPTZ NOT NULL
 );
+
+-- New operational tables contain financial/provider metadata; only the trusted API role
+-- should access them directly. No end-user RLS policies are created.
+ALTER TABLE webhook_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reconciliation_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE driver_payout_request_limits ENABLE ROW LEVEL SECURITY;
