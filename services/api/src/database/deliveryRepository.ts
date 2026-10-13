@@ -479,6 +479,8 @@ export type PayoutRecord = {
   providerTransferCode?: string | null;
   idempotencyKey?: string | null;
   requiresAdminApproval?: boolean;
+  adminApprovedAt?: string | null;
+  adminApprovedBy?: string | null;
   providerStatus?: string | null;
   failureReason?: string | null;
   processedAt?: string | null;
@@ -499,6 +501,8 @@ function rowToPayout(row: any): PayoutRecord {
     providerTransferCode: row.provider_transfer_code ?? null,
     idempotencyKey: row.idempotency_key ?? null,
     requiresAdminApproval: Boolean(row.requires_admin_approval),
+    adminApprovedAt: row.admin_approved_at ? new Date(row.admin_approved_at).toISOString() : null,
+    adminApprovedBy: row.admin_approved_by ?? null,
     providerStatus: row.provider_status ?? null,
     failureReason: row.failure_reason ?? null,
     processedAt: row.processed_at ? new Date(row.processed_at).toISOString() : null
@@ -879,10 +883,11 @@ export async function resolveDispute(deliveryId: string, status: "RESOLVED_REFUN
 export async function createEligiblePayout(deliveryId: string, driverId: string, amountMinor: number): Promise<PayoutRecord | null> {
   if (!pool) return null;
   const result = await pool.query(
-    `INSERT INTO payouts (delivery_id, driver_id, amount_minor, status)
-     VALUES ($1,$2,$3,'ELIGIBLE')
+    `INSERT INTO payouts (delivery_id, driver_id, amount_minor, status, requires_admin_approval)
+     VALUES ($1,$2,$3,'ELIGIBLE',($3 > 100000000))
      ON CONFLICT (delivery_id) DO UPDATE
-      SET updated_at=now()
+      SET requires_admin_approval=(EXCLUDED.amount_minor > 100000000 AND payouts.admin_approved_at IS NULL),
+          updated_at=now()
       WHERE payouts.status IN ('PENDING','ELIGIBLE')
      RETURNING *`,
     [deliveryId, driverId, amountMinor]
@@ -1908,7 +1913,6 @@ export async function setPayoutProcessing(deliveryId: string, feeMinor = 0): Pro
             fee_minor=$2, net_amount_minor=amount_minor-$2,
             idempotency_key=CASE WHEN idempotency_key LIKE 'legacy-payout-%' THEN 'driver-payout:' || id::text ELSE COALESCE(idempotency_key, 'driver-payout:' || id::text) END,
             requested_at=COALESCE(requested_at, now()),
-            requires_admin_approval=(amount_minor > 100000000),
             updated_at=now()
       WHERE delivery_id=$1 AND status='ELIGIBLE'
       RETURNING *`,
