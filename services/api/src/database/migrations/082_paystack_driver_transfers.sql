@@ -22,7 +22,8 @@ UPDATE payouts
  WHERE net_amount_minor IS NULL OR idempotency_key IS NULL OR requested_at IS NULL;
 
 ALTER TABLE payouts
-  ALTER COLUMN requested_at SET DEFAULT now();
+  ALTER COLUMN requested_at SET DEFAULT now(),
+  ALTER COLUMN requested_at SET NOT NULL;
 
 -- Keep the existing uppercase state convention while making reversals explicit.
 ALTER TABLE payouts DROP CONSTRAINT IF EXISTS payouts_status_check;
