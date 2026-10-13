@@ -31,7 +31,7 @@ export async function processDriverPayoutTransferEvent(input: {
       : input.eventType === "transfer.success" ? "success"
       : input.eventType === "transfer.failed" ? "failed" : "reversed";
     const failure = mismatch ? "Paystack transfer amount or currency mismatch"
-      : input.eventType === "transfer.failed" ? (input.failureReason ?? "Paystack transfer failed") : null;
+      : input.eventType === "transfer.failed" ? "Paystack transfer failed; support will review." : null;
 
     // Repeated success/reversal callbacks are idempotent; a reversal after success
     // is intentionally processed because it is a new financial state.
