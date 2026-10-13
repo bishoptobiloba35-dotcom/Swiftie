@@ -153,7 +153,7 @@ router.post("/escrow/:orderId/pay", requireAuth(), async (req,res)=>{
       ussdCode=payload.data.ussd_code;
       if(parsed.data.method==="SMS_LINK"){
         const baseUrl=String(process.env.TERMII_BASE_URL ?? "").replace(/\/$/,"");
-        const apiKey=process.env.TERMII_API_KEY;
+        const apiKey=process.env.SMS_PROVIDER_API_KEY ?? process.env.TERMII_API_KEY;
         const senderId=process.env.TERMII_SENDER_ID;
         if(!baseUrl||!apiKey||!senderId){
           await client.query("ROLLBACK");

@@ -1,0 +1,84 @@
+name: SwiftDrop Staging Deploy
+
+on:
+  workflow_run:
+    workflows: ["SwiftDrop CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: swiftdrop-staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 20
+    steps:
+      - name: Check out the exact commit that passed CI
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - run: npm install --global npm@11
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Apply staging database migrations
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$DATABASE_URL" || { echo "::error::STAGING_DATABASE_URL is required"; exit 1; }
+          npm run migrate --workspace=@swiftdrop/api
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT id, applied_at FROM schema_migrations ORDER BY id"
+
+      - name: Deploy API to Railway staging
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_STAGING_SERVICE_ID: ${{ vars.RAILWAY_STAGING_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$RAILWAY_TOKEN" || { echo "::error::RAILWAY_TOKEN is required"; exit 1; }
+          test -n "$RAILWAY_PROJECT_ID" || { echo "::error::RAILWAY_PROJECT_ID is required"; exit 1; }
+          test -n "$RAILWAY_STAGING_SERVICE_ID" || { echo "::error::RAILWAY_STAGING_SERVICE_ID is required"; exit 1; }
+          npm install --global @railway/cli
+          railway up --ci --project "$RAILWAY_PROJECT_ID" --environment staging --service "$RAILWAY_STAGING_SERVICE_ID"
+
+      - name: Verify staging health (30-second request timeout)
+        env:
+          STAGING_API_URL: ${{ vars.STAGING_API_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$STAGING_API_URL" || { echo "::error::STAGING_API_URL is required"; exit 1; }
+          health="$(curl --fail --silent --show-error --max-time 30 "${STAGING_API_URL%/}/health")"
+          echo "$health" | jq -e '.ok == true and .database == true' >/dev/null
+          ready="$(curl --fail --silent --show-error --max-time 30 "${STAGING_API_URL%/}/ready")"
+          echo "$ready" | jq -e '.ready == true and .database == true' >/dev/null
+          printf 'health=%s\nready=%s\n' "$health" "$ready"
+
+      - name: Notify Slack with status and SHA
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          JOB_STATUS: ${{ job.status }}
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          test -n "$SLACK_WEBHOOK_URL" || { echo "::error::SLACK_WEBHOOK_URL is required for deployment notifications"; exit 1; }
+          payload="$(jq -n --arg status "$JOB_STATUS" --arg sha "$DEPLOY_SHA" --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" '{text: ("SwiftDrop staging deploy " + $status + " · SHA " + $sha + " · " + $url)}')"
+          curl --fail --silent --show-error --max-time 15 -H 'Content-Type: application/json' -d "$payload" "$SLACK_WEBHOOK_URL"
