@@ -21,7 +21,8 @@ ALTER TABLE payments
   CHECK (collection_mode IN (
     'SENDER_ESCROW',
     'RECEIVER_ESCROW',
-    'PAY_ON_DELIVERY'
+    'PAY_ON_DELIVERY',
+    'RECEIVER_ON_DELIVERY' -- legacy-only label; API never permits new cash orders
   ));
 
 -- 2. Expand allowed delivery statuses for the POD lifecycle
