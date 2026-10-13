@@ -471,7 +471,7 @@ export type PayoutRecord = {
   driverId: string;
   amountMinor: number;
   currency: string;
-  status: "PENDING" | "ELIGIBLE" | "PROCESSING" | "RELEASED" | "FAILED" | "CANCELLED";
+  status: "PENDING" | "ELIGIBLE" | "PROCESSING" | "RELEASED" | "FAILED" | "CANCELLED" | "REVERSED";
   provider?: string | null;
   providerReference?: string | null;
   providerStatus?: string | null;
@@ -1882,7 +1882,7 @@ export async function setPayoutProcessing(deliveryId: string): Promise<PayoutRec
     `UPDATE payouts
         SET status='PROCESSING', provider='paystack',
             net_amount_minor=amount_minor,
-            idempotency_key=COALESCE(idempotency_key, 'driver-payout:' || id::text),
+            idempotency_key=CASE WHEN idempotency_key LIKE 'legacy-payout-%' THEN 'driver-payout:' || id::text ELSE COALESCE(idempotency_key, 'driver-payout:' || id::text) END,
             requested_at=COALESCE(requested_at, now()),
             requires_admin_approval=(amount_minor > 100000000),
             updated_at=now()
