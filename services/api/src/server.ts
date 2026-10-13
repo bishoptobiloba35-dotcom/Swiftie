@@ -1010,6 +1010,23 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   const event = req.body as any;
   const webhookHash = createHash("sha256").update(rawBody).digest("hex");
   const webhookReference = String(event?.data?.reference ?? "");
+  let durableWebhookEventId: string | null = null;
+  if (databaseEnabled()) {
+    const eventId = String(event?.event ?? "unknown") + ":" +
+      String(event?.data?.id ?? webhookReference ?? webhookHash);
+    const durable = await pool!.query(
+      `INSERT INTO webhook_events(provider,event_id,event_type,payload,status)
+       VALUES('paystack',$1,$2,$3::jsonb,'processing')
+       ON CONFLICT(provider,event_id) DO UPDATE
+         SET status='processing', failure_reason=NULL, created_at=now()
+       WHERE webhook_events.status='failed'
+          OR (webhook_events.status='processing' AND webhook_events.created_at < now()-interval '5 minutes')
+       RETURNING id`,
+      [eventId, String(event?.event ?? "unknown"), rawBody.toString("utf8")]
+    );
+    if (!durable.rowCount) return res.status(200).json({ received: true, duplicate: true });
+    durableWebhookEventId = String(durable.rows[0].id);
+  }
   let duplicateWebhook = false;
   if (databaseEnabled()) {
     duplicateWebhook = !(await claimPaystackWebhookEvent({
@@ -1024,16 +1041,21 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
   // durable claim from the actual HTTP outcome so failed processing never becomes
   // an unrecoverable "duplicate".
   res.once("finish", () => {
-    void finalizePaystackWebhookEvent(
-      webhookHash,
-      res.statusCode >= 200 && res.statusCode < 300 ? "COMPLETED" : "FAILED"
-    ).catch((error) => {
+    const succeeded = res.statusCode >= 200 && res.statusCode < 300;
+    void finalizePaystackWebhookEvent(webhookHash, succeeded ? "COMPLETED" : "FAILED").catch((error) => {
       console.error(JSON.stringify({
-        event: "paystack_webhook_claim_finalization_failed",
-        webhookHash,
+        event: "paystack_webhook_claim_finalization_failed", webhookHash,
         error: error instanceof Error ? error.message : "unknown"
       }));
     });
+    if (durableWebhookEventId) {
+      void pool!.query(
+        `UPDATE webhook_events SET status=$2, processed_at=CASE WHEN $2='processed' THEN now() ELSE processed_at END,
+                failure_reason=CASE WHEN $2='failed' THEN 'Webhook processing returned HTTP ' || $3::text ELSE NULL END
+          WHERE id=$1`,
+        [durableWebhookEventId, succeeded ? "processed" : "failed", res.statusCode]
+      ).catch(() => {});
+    }
   });
 
   if (typeof event?.event === "string" && event.event.startsWith("refund.")) {
