@@ -557,7 +557,7 @@ app.post("/api/deliveries/:id/payout/withdraw", requireAuth("DRIVER"), async (re
     };
     if (!response.ok || !data.status || !data.data?.reference) {
       const providerMessage = String(data.message ?? "");
-      const duplicateReference = /duplicate|already exists|reference.*(used|unique|exist)|unique.*reference/i.test(providerMessage + " " + String(data.code ?? ""));
+      const duplicateReference = isDuplicatePaystackReferenceError(providerMessage, String(data.code ?? ""));
       if (duplicateReference) {
         // Paystack's duplicate-reference response is treated as an existing transfer,
         // never permission to send a second transfer. Verify that exact reference.
