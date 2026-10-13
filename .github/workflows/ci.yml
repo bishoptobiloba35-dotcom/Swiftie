@@ -126,12 +126,9 @@ jobs:
           git -C "$probe_dir" init -q
           git -C "$probe_dir" config user.email "ci@example.invalid"
           git -C "$probe_dir" config user.name "SwiftDrop CI"
-          key_prefix="ghp_"
-          key_suffix_part_a="aBcD1234eFgH5678"
-          key_suffix_part_b="iJkL9012mNoP3456qRsT"
-          key_suffix="${key_suffix_part_a}${key_suffix_part_b}"
-          printf '// Synthetic scanner-only probe; never a real credential.\n// %s%s\n' "$key_prefix" "$key_suffix" > "$probe_dir/probe.ts"
-          git -C "$probe_dir" add probe.ts
+          # Generate a throwaway private key only inside the runner. It is never committed to this repository.
+          openssl genrsa -out "$probe_dir/probe-private.pem" 2048 >/dev/null 2>&1
+          git -C "$probe_dir" add probe-private.pem
           git -C "$probe_dir" commit -qm "synthetic secret scanner probe"
           set +e
           docker run --rm -v "$probe_dir:/tmp/probe" -w /tmp/probe ghcr.io/trufflesecurity/trufflehog:latest git file:///tmp/probe --results=verified,unverified,unknown --no-verification --fail --no-update > "$probe_dir/trufflehog.log" 2>&1
@@ -142,4 +139,4 @@ jobs:
             echo "Expected TruffleHog to return 183 for a detected synthetic key; received $scan_status." >&2
             exit 1
           fi
-          echo "TruffleHog correctly rejected a synthetic key (exit 183)."
+          echo "TruffleHog correctly rejected an ephemeral private key (exit 183)."
