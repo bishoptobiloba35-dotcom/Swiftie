@@ -63,6 +63,9 @@ export async function reconcileDriverTransfersDaily(options: { force?: boolean }
       continue;
     }
     const status = String(transfer.status ?? "").toLowerCase();
+    const expectedLocalStatus = status === "success" ? "RELEASED" : status === "failed" ? "FAILED" : status === "reversed" ? "REVERSED" : null;
+    // Do not replay terminal transitions/notifications on every daily run.
+    if (expectedLocalStatus && local.status === expectedLocalStatus) continue;
     if (status === "success" || status === "failed" || status === "reversed") {
       await processDriverPayoutTransferEvent({
         reference: String(transfer.reference),
