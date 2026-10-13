@@ -207,8 +207,8 @@ if (db) {
     await assert.rejects(
       db.query(
         `INSERT INTO deliveries
-          (sender_id,tracking_code,receiver_name,receiver_phone,pickup_address,dropoff_address,status,receiver_pin_hash,payment_mode)
-         VALUES($1,$2,'Legacy Receiver','+2349070000012','Pickup','Dropoff','CREATED','test-pin-hash','RECEIVER_ON_DELIVERY')`,
+          (sender_id,tracking_code,receiver_name,receiver_phone,pickup_address,dropoff_address,status,receiver_pin_hash,payment_mode,declared_value_minor)
+         VALUES($1,$2,'Legacy Receiver','+2349070000012','Pickup','Dropoff','CREATED','test-pin-hash','RECEIVER_ON_DELIVERY',100000)`,
         [directModeUser.id, `DIRECT-COD-${Date.now()}`]
       ),
       /deliveries_payment_mode_check|constraint/i
