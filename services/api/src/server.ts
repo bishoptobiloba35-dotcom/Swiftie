@@ -1327,8 +1327,12 @@ app.post("/api/payments/paystack/webhook", async (req, res) => {
          providerReference,providerSlug]
       )).rows[0];
       await client.query(
-        `INSERT INTO escrow_payment_attempts(order_id,method,provider_reference,amount_minor,idempotency_key)
-         SELECT $1,'BANK_TRANSFER',NULL,d.escrow_total_paid_minor,$2
+        `INSERT INTO escrow_payment_attempts(
+           order_id,payer_id,payer_role,provider,method,provider_reference,
+           amount_minor,currency,collection_channel,idempotency_key
+         )
+         SELECT d.id,d.sender_id,'SENDER','paystack','BANK_TRANSFER',NULL,
+                d.escrow_total_paid_minor,'NGN','BANK_TRANSFER',$2
            FROM deliveries d
           WHERE d.id=$1
             AND d.escrow_total_paid_minor > 0
