@@ -73,6 +73,7 @@ const migrations = [
   { id: "075_one_active_escrow_payment", file: "075_one_active_escrow_payment.sql" },
   { id: "076_retire_receiver_payment_mode", file: "076_retire_receiver_payment_mode.sql" },
   { id: "077_mvp_v12_delivery_types", file: "077_mvp_v12_delivery_types.sql" },
+  { id: "078_digital_pay_on_delivery", file: "078_digital_pay_on_delivery.sql" },
 ];
 
 export async function runMigrations(): Promise<void> {
