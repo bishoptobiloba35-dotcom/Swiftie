@@ -429,6 +429,28 @@ app.post("/api/driver/payout-account", requireAuth("DRIVER"), async (req, res) =
   }
 });
 
+app.post("/api/admin/payouts/:id/approve", requireAuth("ADMIN"), async (req, res) => {
+  if (!databaseEnabled()) return res.status(503).json({ error: "Payout approval requires the production database" });
+  const payoutId = routeParam(req.params.id, "id");
+  const adminUserId = identity(req);
+  const approved = (await pool!.query(
+    `UPDATE payouts
+        SET requires_admin_approval=false, admin_approved_by=$2, admin_approved_at=now(), updated_at=now()
+      WHERE id=$1 AND status='ELIGIBLE' AND amount_minor > 100000000
+        AND admin_approved_at IS NULL
+      RETURNING id,delivery_id,amount_minor,currency`,
+    [payoutId, adminUserId]
+  )).rows[0];
+  if (!approved) return res.status(409).json({ error: "Payout is not eligible for approval, is already approved, or does not exceed ₦1,000,000." });
+  await recordDeliveryEvent({
+    deliveryId: approved.delivery_id,
+    eventType: "PAYOUT_ADMIN_APPROVED",
+    actorUserId: adminUserId,
+    metadata: { payoutId: approved.id, amountMinor: Number(approved.amount_minor), currency: approved.currency }
+  });
+  return res.status(200).json({ approved: true, payoutId: approved.id, approvedAt: new Date().toISOString() });
+});
+
 app.get("/api/driver/payouts", requireAuth("DRIVER"), async (req, res) => {
   if (!databaseEnabled()) return res.status(503).json({ error: "Payouts require the production database" });
   const driver = await driverForUser(identity(req));
