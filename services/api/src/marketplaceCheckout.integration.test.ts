@@ -35,7 +35,7 @@ test("marketplace checkout creates once, reserves stock atomically, and replays 
 
     const buyerId = randomUUID();
     const sellerId = randomUUID();
-    const suffix = `${String(process.pid).slice(-4)}${Math.floor(Math.random() * 10000).toString().padStart(4, "0")}`;
+    const suffix = (BigInt("0x" + randomUUID().replaceAll("-", "")) % 100000000n).toString().padStart(8, "0");
 
     await pool.query(
       `INSERT INTO users(id,role,full_name,phone,email,password_hash)
